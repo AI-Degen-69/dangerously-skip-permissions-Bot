@@ -4,7 +4,7 @@
 Build a Python live-trading bot that reproduces the measured execution behavior of `0xc533…69a9` (buy-only straddle-plus-lean, 30-share clips, every 5-min BTC window, hold-to-redeem) with a pluggable lean signal, validated by 24h paper fidelity before any live size.
 
 ## Current Phase
-Phase 5 (delivery next)
+Phase 5 complete — hand off to Station IV (review)
 
 ## Phases
 
@@ -44,10 +44,10 @@ Phase 5 (delivery next)
 - **Status:** complete 2026-11-07
 
 ### Phase 5: Delivery
-- [ ] Paper fidelity report + live micro-size runbook
-- [ ] Redeem verification + kill-switch drill
-- [ ] Hand off with run/operate docs
-- **Status:** pending
+- [x] Paper fidelity report + live micro-size runbook (`docs/bot-fidelity-report.md` + `bot/RUNBOOK.md`)
+- [x] Redeem verification + kill-switch drill (`redeem.py --dry-run` 10 redeemable, kill drill 2026-11-07 green)
+- [x] Hand off with run/operate docs (`bot/RUNBOOK.md`)
+- **Status:** complete 2026-11-07
 
 ## Key Questions
 1. Python (py-sdk) vs TypeScript (ts-sdk) for live trader? Default: Python, matches repo.
