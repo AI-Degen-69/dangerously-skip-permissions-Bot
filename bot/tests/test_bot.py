@@ -50,11 +50,12 @@ class SignalTests(unittest.TestCase):
         sig = BookMicropriceLean().lean_for_window("btc-updown-5m-0")
         self.assertEqual((sig.lean, sig.confidence), (0.0, 0.0))
 
-    def test_lean_bounds(self):
-        for lean, conf in [(-1.0, 1.0), (1.0, 1.0), (0.5, 0.8)]:
-            s = LeanSignal(lean=lean, confidence=conf)
-            self.assertTrue(-1.0 <= s.lean <= 1.0)
-            self.assertTrue(0.0 <= s.confidence <= 1.0)
+    def test_extreme_lean_keeps_both_sides(self):
+        # Regression guard: tilted plans must stay straddles (CSV: 97.2%
+        # both-sides). A past mapping collapsed any negative lean to Down-only.
+        for lean in (-1.0, 1.0):
+            plan = plan_window("w", LeanSignal(lean=lean, confidence=1.0), RiskState())
+            self.assertGreater(len({f.outcome for f in plan.fills}), 1)
 
 
 class RiskTests(unittest.TestCase):
@@ -129,6 +130,12 @@ class ExecutorTests(unittest.TestCase):
         up = plan_window("w", LeanSignal(lean=1.0, confidence=1.0), RiskState())
         up_share = lambda p: sum(1 for f in p.fills if f.outcome == "Up") / len(p.fills)
         self.assertLess(up_share(down), up_share(up))
+
+    def test_plan_matches_m_shape(self):
+        # M_BUCKETS scaled to the 45-median target -> [8, 10, 11, 10, 5] = 44 fills.
+        plan = plan_window("w", DumbLean().lean_for_window("w"), RiskState())
+        per_minute = [sum(1 for f in plan.fills if f.minute == m) for m in range(5)]
+        self.assertEqual(per_minute, [8, 10, 11, 10, 5])
 
     def test_risk_caps_stop_plan(self):
         st = RiskState(killed=True, kill_reason="test")
