@@ -129,14 +129,35 @@ def client():
     return _client
 
 
+NEXT_WINDOW_REVEAL_SEC = 15  # 4:45 into a 5:00 window
+
+
+def visible_slots(now_ts: int | None = None) -> list[int]:
+    """Current window only, until its last 15s — then current + next.
+
+    The Live page used to carry both panels for the whole window, which
+    split attention across a market that had not opened yet.
+    """
+    from bot.discovery import WINDOW_S, current_slot
+
+    now = int(time.time()) if now_ts is None else now_ts
+    slot = current_slot(now)
+    if now - slot >= WINDOW_S - NEXT_WINDOW_REVEAL_SEC:
+        return [slot, slot + WINDOW_S]
+    return [slot]
+
+
 def live_markets(cfg: dict) -> list[dict]:
-    """Current + next 5m window with live CLOB quotes (public reads only)."""
-    from bot.discovery import WINDOW_S, current_slot, get_window
+    """Current 5m window with live CLOB quotes (public reads only).
+
+    The next window joins at 4:45 (its last 15s), so the page shows one
+    panel for most of the window and two only at the handover.
+    """
+    from bot.discovery import WINDOW_S, get_window
 
     c = client()
-    slot = current_slot()
     out = []
-    for s in (slot, slot + WINDOW_S):
+    for s in visible_slots():
         slug = f"btc-updown-5m-{s}"
         try:
             spec = get_window(c, slug)
@@ -555,15 +576,22 @@ def perf() -> dict:
     }
 
 
+def slot_ms(slug: str) -> int:
+    """Window epoch from a `btc-updown-5m-<epoch>` slug, in ms."""
+    try:
+        return int(str(slug).split("-")[-1]) * 1000
+    except (ValueError, IndexError):
+        return 0
+
+
 def trades_view(limit: int) -> list[dict]:
     out: list[dict] = []
+    run_slugs: set[str | None] = set()
     for r in sorted(runs(), key=lambda x: x.get("event_slug", ""))[-12:]:
-        try:
-            rts = int(str(r.get("event_slug", "")).split("-")[-1]) * 1000
-        except (ValueError, IndexError):
-            rts = 0
+        rts = slot_ms(r.get("event_slug", ""))
+        run_slugs.add(r.get("event_slug"))
         for f in r.get("fills", [])[:200]:
-            out.append({"ts": rts, "kind": "entry",
+            out.append({"ts": int(f.get("ts") or rts), "kind": "entry",
                         "slug": r.get("event_slug"), "interval": "5m",
                         "side": f.get("outcome"), "shares": f.get("shares"),
                         "price": f.get("price"), "usd": f.get("usd"),
@@ -574,6 +602,22 @@ def trades_view(limit: int) -> list[dict]:
                     "reason": "awaiting-resolution" if r.get("pending") else "paper-resolve",
                     "mode": "paper",
                     "detail": {"winner": r.get("winner"), "fills": r.get("trades")}})
+
+    # Open window: its fills live in state.json until the window closes and a
+    # run file appears. Without this the table froze on the previous window's
+    # "awaiting-resolution" row for the whole next window.
+    st = state() or {}
+    live_slug = st.get("slug")
+    if live_slug and live_slug not in run_slugs:
+        base = slot_ms(live_slug)
+        for f in (st.get("fills") or [])[:200]:
+            out.append({"ts": int(f.get("ts") or base + int(f.get("minute") or 0) * 60_000),
+                        "kind": "entry", "slug": live_slug, "interval": "5m",
+                        "side": f.get("outcome"), "shares": f.get("shares"),
+                        "price": f.get("price"), "usd": f.get("usd"),
+                        "reason": "paper-fill", "mode": "paper"})
+
+    out.sort(key=lambda t: int(t.get("ts") or 0))
     return out[-limit:]
 
 
@@ -587,7 +631,7 @@ EDITABLE = {
     "entry.openDelaySec": [0, 120],
     "entry.hedgeDelaySec": [0, 120],
     "entry.stopBeforeCloseSec": [0, 120],
-    "entry.minFillPrice": [0, 0.5],
+    "entry.minFillPrice": [0.01, 0.5],
     "risk.maxUsdPerWindow": [50, 50000],
     "risk.maxFillsPerWindow": [5, 500],
     "risk.dailyLossCapUsd": [10, 100000],

@@ -60,7 +60,7 @@ def fidelity(runs_dir: str = "bot/paper_runs") -> dict:
         "target": {"windows": C.NUM_WINDOWS_24H,
                      "median": C.MEDIAN_TRADES_PER_WINDOW,
                      "mean": C.MEAN_TRADES_PER_WINDOW,
-                     "both_sides": f"{int(C.NUM_WINDOWS_24H * C.BOTH_SIDES_RATE)}/{C.NUM_WINDOWS_24H}",
+                     "both_sides": f"{round(C.NUM_WINDOWS_24H * C.BOTH_SIDES_RATE)}/{C.NUM_WINDOWS_24H}",
                      "m_shape": list(C.M_BUCKETS)},
     }
 

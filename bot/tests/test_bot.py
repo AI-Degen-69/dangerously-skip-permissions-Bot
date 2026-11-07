@@ -221,5 +221,98 @@ class MicropriceLeanTests(unittest.TestCase):
         self.assertEqual(sig.lean, 0.0)
 
 
+class BuyPriceGuardTests(unittest.TestCase):
+    """A $0.00 quote is an empty book, not a free fill.
+
+    Regression: the first 6 live windows recorded 92 fills at $0.00 (91 of
+    them in M4) because `get_price(side=BUY)` answers 0 for a side with no
+    asks. That skewed the cadence bucket and booked free shares.
+    """
+
+    def _px(self, returned):
+        from bot import live_paper
+
+        c = MagicMock()
+        c.get_price.return_value = returned
+        return live_paper.live_buy_price(c, "tok")
+
+    def test_zero_and_negative_quotes_are_no_liquidity(self):
+        from decimal import Decimal
+
+        self.assertIsNone(self._px(Decimal("0")))
+        self.assertIsNone(self._px(0.0))
+        self.assertIsNone(self._px(-0.01))
+
+    def test_out_of_range_quote_rejected(self):
+        self.assertIsNone(self._px(1.5))
+
+    def test_valid_quote_is_a_float(self):
+        from decimal import Decimal
+
+        self.assertAlmostEqual(self._px(Decimal("0.42")), 0.42)
+        self.assertAlmostEqual(self._px(0.57), 0.57)
+
+    def test_book_error_is_no_liquidity(self):
+        from bot import live_paper
+
+        c = MagicMock()
+        c.get_price.side_effect = RuntimeError("no book")
+        self.assertIsNone(live_paper.live_buy_price(c, "tok"))
+
+
+class LiveWindowVisibilityTests(unittest.TestCase):
+    """The next window only appears at 4:45 (last 15s) of the current one."""
+
+    def test_current_only_until_last_15s(self):
+        from bot.api import visible_slots
+        from bot.discovery import WINDOW_S
+
+        base = 1794082800
+        self.assertEqual(visible_slots(base), [base])  # window just opened
+        self.assertEqual(visible_slots(base + 284), [base])  # 4:44
+        self.assertEqual(visible_slots(base + 285), [base, base + WINDOW_S])  # 4:45
+        self.assertEqual(visible_slots(base + 299), [base, base + WINDOW_S])
+        self.assertEqual(visible_slots(base + WINDOW_S), [base + WINDOW_S])  # next is current
+
+
+class TradesViewLiveTests(unittest.TestCase):
+    """An open window's fills must reach the table before it closes.
+
+    Regression: trades_view() read paper_runs/ only, so the Live fills table
+    froze on the previous window's "awaiting-resolution" row for the whole
+    next window.
+    """
+
+    def test_live_state_fills_appear_without_a_run_file(self):
+        import bot.api as api
+
+        with tempfile.TemporaryDirectory() as td:
+            runs = Path(td) / "runs"
+            runs.mkdir()
+            (runs / "btc-updown-5m-100.json").write_text(json.dumps({
+                "event_slug": "btc-updown-5m-100", "trades": 1, "cost_usd": 5.0,
+                "payout_usd": 0.0, "net_usd": -5.0, "pending": True,
+                "fills": [{"minute": 0, "outcome": "Up", "price": 0.5,
+                           "shares": 10, "usd": 5.0}],
+            }))
+            st = Path(td) / "state.json"
+            st.write_text(json.dumps({
+                "slug": "btc-updown-5m-400", "updatedAtMs": 1,
+                "fills": [{"minute": 2, "outcome": "Down", "price": 0.4,
+                           "shares": 30, "usd": 12.0}],
+            }))
+            with patch.object(api, "RUNS_DIR", runs), patch.object(api, "STATE_PATH", st):
+                items = api.trades_view(50)
+
+        live = [t for t in items if t["slug"] == "btc-updown-5m-400"]
+        self.assertEqual(len(live), 1)
+        self.assertEqual(live[0]["price"], 0.4)
+        self.assertEqual(live[0]["ts"], 400_000 + 2 * 60_000)
+        # The UI reverses the list, so the open window must be last here.
+        self.assertEqual(items[-1]["slug"], "btc-updown-5m-400")
+        # The pending settle row is still present, just no longer newest.
+        self.assertEqual([t["kind"] for t in items], ["entry", "settle", "entry"])
+
+
 if __name__ == "__main__":
     unittest.main()

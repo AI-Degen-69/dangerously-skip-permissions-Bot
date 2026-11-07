@@ -86,6 +86,7 @@ export function PolymarketLiveChart({ markets, positions = [] }: { markets: Mark
             market={market}
             position={positions.find((p) => p.slug === market.slug)}
             params={config?.config.intervalParams[market.interval] ?? null}
+            wide={markets.length === 1}
           />
         ))
       )}
@@ -97,10 +98,12 @@ function MarketChartPanel({
   market,
   position,
   params,
+  wide = false,
 }: {
   market: MarketView
   position?: PositionView
   params: BotConfigView['intervalParams'][Interval] | null
+  wide?: boolean
 }) {
   const points = useOddsSeries(market)
   const total = Math.max(1, market.endMs - market.startMs)
@@ -171,7 +174,7 @@ function MarketChartPanel({
   const eventUrl = `https://polymarket.com/event/${slug}?utm_medium=embed&utm_campaign=market&utm_content=spread-hunter`
 
   return (
-    <Card aria-label={`Live odds for ${slug}`} className="flex flex-col p-5">
+    <Card aria-label={`Live odds for ${slug}`} className={cx('flex flex-col p-5', wide && 'lg:col-span-2')}>
       <p className="flex items-center gap-1.5 text-[11px] text-faint">
         <Radio className="size-3 text-danger" aria-hidden />
         Live odds · via Polymarket

@@ -82,10 +82,21 @@ def microprice_lean(c: PublicClient, up_id: str, down_id: str) -> LeanSignal:
 
 
 def live_buy_price(c: PublicClient, token_id: str) -> float | None:
+    """Best executable BUY price, or None when the book has no usable ask.
+
+    The CLOB answers 0 for a side with no asks (a decided market, or a thin
+    late book). An earlier version recorded those as $0.00 fills — 91 of the
+    92 landed in M4 and inflated that bucket. A quote at 0 means "no
+    liquidity", never a free buy, so reject it at the source rather than
+    trusting config to filter it out later.
+    """
     try:
-        return float(c.get_price(token_id=token_id, side="BUY"))
+        px = float(c.get_price(token_id=token_id, side="BUY"))
     except Exception:
         return None
+    if not 0.0 < px <= 1.0:
+        return None
+    return px
 
 
 def write_state(slug: str, end_ms: int, started_ms: int, fills: list[dict], lean: LeanSignal) -> None:
@@ -104,7 +115,9 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
     open_delay = entry.get("openDelaySec", 13)
     hedge_delay = entry.get("hedgeDelaySec", 15)
     stop_before = entry.get("stopBeforeCloseSec", 15)
-    min_fill = float(entry.get("minFillPrice", 0.01))
+    # Floor the dust guard: minFillPrice is user-editable from the desk, and 0
+    # would let $0.00 "fills" back in through the M1-M4 loop.
+    min_fill = max(0.01, float(entry.get("minFillPrice", 0.01)))
     clip_default = entry.get("clipSharesDefault", C.CLIP_SHARES_DEFAULT)
     clip_nth = entry.get("clipEveryNth", 3)
     median_shares = entry.get("medianShares", C.MEDIAN_SHARES)
@@ -143,7 +156,8 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
         if check_window(len(fills), cost, state):
             break
         shares = clip_shares(clip_default)
-        fills.append({"minute": 0, "outcome": outcome, "price": px, "shares": shares, "usd": round(px * shares, 2)})
+        fills.append({"minute": 0, "ts": int(time.time() * 1000), "outcome": outcome,
+                      "price": px, "shares": shares, "usd": round(px * shares, 2)})
         cost += px * shares
         log_event("entry", "straddle-open" if len(fills) == 1 else "hedge-leg", slug,
                   side=outcome, detail={"price": px, "shares": shares, "lean": round(lean.lean, 2)})
@@ -183,7 +197,8 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
             continue
         shares = clip_shares(clip_default if len(fills) % clip_nth == 0 else median_shares)
         shares = min(shares, max_shares)
-        fills.append({"minute": minute, "outcome": outcome, "price": px, "shares": shares, "usd": round(px * shares, 2)})
+        fills.append({"minute": minute, "ts": int(time.time() * 1000), "outcome": outcome,
+                      "price": px, "shares": shares, "usd": round(px * shares, 2)})
         cost += px * shares
         if len(fills) % 10 == 0:
             log_event("hold", "thesis-intact", slug, side=outcome,
