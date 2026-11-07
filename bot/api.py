@@ -15,6 +15,7 @@ bot/events.jsonl. Live market reads via PublicClient (public, no keys).
 import argparse
 import json
 import os
+import statistics
 import subprocess
 import sys
 import time
@@ -303,6 +304,257 @@ def kpis() -> dict:
         "equitySeries": series, "recentClosed": recent[-12:]}}
 
 
+# ------------------------------------------------------- fidelity + performance
+
+
+def _num(value, default: float = 0.0) -> float:
+    """Paper-run JSON is hand-editable, so never let one bad field 500 the desk."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _minute_shape(fills: list[dict]) -> list[int]:
+    shape = [0, 0, 0, 0, 0]
+    for f in fills:
+        try:
+            m = int(f.get("minute", 0))
+        except (TypeError, ValueError):
+            m = 0
+        if 0 <= m <= 4:
+            shape[m] += 1
+    return shape
+
+
+def _window_row(r: dict) -> dict:
+    """One settled/pending window flattened for the dashboard tables."""
+    fills = r.get("fills") or []
+    cost = _num(r.get("cost_usd"))
+    payout = _num(r.get("payout_usd"))
+    pending = bool(r.get("pending")) or not r.get("winner")
+    try:
+        start_ms = int(str(r.get("event_slug", "")).split("-")[-1]) * 1000
+    except (TypeError, ValueError):
+        start_ms = 0
+    sides = {f.get("outcome") for f in fills if f.get("outcome")}
+    return {
+        "slug": r.get("event_slug"),
+        "market": r.get("market"),
+        "startMs": start_ms,
+        "trades": len(fills) if fills else int(r.get("trades") or 0),
+        "costUsd": round(cost, 2),
+        "payoutUsd": round(payout, 2),
+        "netUsd": None if pending else round(payout - cost, 2),
+        "winner": r.get("winner"),
+        "pending": pending,
+        "redeemed": bool(r.get("redeemedAt")),
+        "bothSides": len(sides) > 1,
+        "upFills": sum(1 for f in fills if f.get("outcome") == "Up"),
+        "downFills": sum(1 for f in fills if f.get("outcome") == "Down"),
+        "zeroPriceFills": sum(1 for f in fills if _num(f.get("price")) <= 0),
+        "mShape": _minute_shape(fills),
+    }
+
+
+def _median(values: list[float]) -> float:
+    return round(statistics.median(values), 2) if values else 0.0
+
+
+def _mean(values: list[float]) -> float:
+    return round(statistics.mean(values), 2) if values else 0.0
+
+
+def _band_status(value: float, target: float, tight: float, loose: float) -> str:
+    delta = abs(value - target)
+    if delta <= target * tight:
+        return "pass"
+    if delta <= target * loose:
+        return "warn"
+    return "fail"
+
+
+def perf() -> dict:
+    """Fidelity + performance for the straddle-plus-lean paper loop.
+
+    Everything here is computed from bot/paper_runs/*.json (no network), so the
+    desk can answer two questions in one read: how much did the paper loop make,
+    and how close is its behaviour to the frozen tape (45 fills, 280/288 both
+    sides, $316/$447 cost, M0-M4 shape).
+    """
+    from bot import constants as C
+
+    rows = [_window_row(r) for r in sorted(runs(), key=lambda r: str(r.get("event_slug", "")))]
+    settled = [w for w in rows if not w["pending"]]
+    pending = [w for w in rows if w["pending"]]
+
+    cost = round(sum(w["costUsd"] for w in settled), 2)
+    payout = round(sum(w["payoutUsd"] for w in settled), 2)
+    net = round(payout - cost, 2)
+    fills = sum(w["trades"] for w in settled)
+    profitable = sum(1 for w in settled if (w["netUsd"] or 0) > 0)
+    both = sum(1 for w in settled if w["bothSides"])
+    zero_fills = sum(w["zeroPriceFills"] for w in settled)
+    up_fills = sum(w["upFills"] for w in settled)
+    down_fills = sum(w["downFills"] for w in settled)
+    nets = [w["netUsd"] or 0.0 for w in settled]
+
+    median_fills = _median([float(w["trades"]) for w in settled])
+    mean_fills = _mean([float(w["trades"]) for w in settled])
+    median_cost = _median([w["costUsd"] for w in settled])
+    mean_cost = _mean([w["costUsd"] for w in settled])
+
+    live_shape = [0, 0, 0, 0, 0]
+    for w in settled:
+        for i, n in enumerate(w["mShape"]):
+            live_shape[i] += n
+    live_total = sum(live_shape) or 1
+    live_share = [round(n / live_total, 4) for n in live_shape]
+    target_shape = [int(n) for n in C.M_BUCKETS]
+    target_total = sum(target_shape)
+    target_share = [round(n / target_total, 4) for n in target_shape]
+    shape_tv = round(0.5 * sum(abs(a - b) for a, b in zip(live_share, target_share)), 4)
+
+    both_rate = round(both / len(settled), 4) if settled else 0.0
+    judged = len(settled) >= 48  # below this the metrics are noise, not a verdict
+
+    def mark(status: str) -> str:
+        return status if judged else "sample"
+
+    both_status = "pass" if both_rate >= C.BOTH_SIDES_RATE else ("warn" if both_rate >= 0.93 else "fail")
+    shape_status = "pass" if shape_tv <= 0.10 else ("warn" if shape_tv <= 0.20 else "fail")
+
+    gate = [
+        {"key": "windows", "label": "Windows settled",
+         "value": f"{len(settled)} / {C.NUM_WINDOWS_24H}",
+         "target": f"{C.NUM_WINDOWS_24H}",
+         "status": "pass" if len(settled) >= C.NUM_WINDOWS_24H else "sample",
+         "judged": len(settled) >= C.NUM_WINDOWS_24H,
+         "detail": "A full 24h slate is the gate; one JSON per settled window."},
+        {"key": "medianFills", "label": "Median fills / window",
+         "value": f"{median_fills:g}", "target": f"{C.MEDIAN_TRADES_PER_WINDOW:g}",
+         "status": mark(_band_status(median_fills, C.MEDIAN_TRADES_PER_WINDOW, 0.2, 0.35)),
+         "judged": judged, "detail": "Tape median ticket count per 5m window."},
+        {"key": "bothSides", "label": "Both sides covered",
+         "value": f"{both}/{len(settled)}" if settled else "0/0",
+         "target": f"{round(C.NUM_WINDOWS_24H * C.BOTH_SIDES_RATE)}/{C.NUM_WINDOWS_24H}",
+         "status": mark(both_status), "judged": judged,
+         "detail": "The straddle must touch both outcomes, not pick a direction."},
+        {"key": "medianCost", "label": "Median cost / window",
+         "value": f"${median_cost:,.2f}", "target": f"${C.MEDIAN_USD_PER_WINDOW:,.0f}",
+         "status": mark(_band_status(median_cost, C.MEDIAN_USD_PER_WINDOW, 0.25, 0.4)),
+         "judged": judged, "detail": "Live spreads run wider than the flat 0.476 model, so cost is watched, not tuned."},
+        {"key": "meanCost", "label": "Mean cost / window",
+         "value": f"${mean_cost:,.2f}", "target": f"${C.MEAN_USD_PER_WINDOW:,.0f}",
+         "status": mark(_band_status(mean_cost, C.MEAN_USD_PER_WINDOW, 0.25, 0.4)),
+         "judged": judged, "detail": "Sensitive to the few fat windows in the tape."},
+        {"key": "shape", "label": "M0-M4 cadence",
+         "value": f"{shape_tv * 100:.1f}% TV", "target": "≤10%",
+         "status": mark(shape_status), "judged": judged,
+         "detail": "Total-variation distance from the tape's minute mix (3,081/3,821/4,289/3,914/1,750)."},
+    ]
+
+    redeem_due = [w for w in settled if w["winner"] and not w["redeemed"]]
+    redeem_payout = round(sum(w["payoutUsd"] for w in redeem_due), 2)
+
+    pid = loop_running()
+    st = state()
+    age_ms = None
+    if st and st.get("updatedAtMs"):
+        age_ms = max(0, int(time.time() * 1000) - int(st["updatedAtMs"]))
+    health = {
+        "loopRunning": pid is not None,
+        "pid": pid,
+        "killSwitch": KILL_PATH.exists(),
+        "stateSlug": (st or {}).get("slug"),
+        "stateFills": len((st or {}).get("fills") or []),
+        "snapshotAgeSec": round(age_ms / 1000, 1) if age_ms is not None else None,
+        "windowEndsInSec": max(0, round((int((st or {}).get("endMs") or 0) - time.time() * 1000) / 1000)) if st else None,
+    }
+
+    notes: list[dict] = []
+
+    def note(tone: str, title: str, body: str) -> None:
+        notes.append({"tone": tone, "title": title, "body": body})
+
+    if not health["loopRunning"]:
+        note("warning", "Loop is stopped",
+             "No new windows are being taken. Start it from the header; the paper loop runs one window at a time.")
+    if health["killSwitch"]:
+        note("danger", "Kill switch engaged",
+             "Entries stay paused between windows while bot/kill exists. Resume from Live, or `rm bot/kill`.")
+    age_s = health["snapshotAgeSec"]
+    if health["loopRunning"] and age_s is not None and age_s > 120:
+        note("warning", f"Heartbeat is {age_s:.0f}s old",
+             "The window may have died mid-fill. Restart the loop — do not delete state.json while it owns the window (assert_single_window).")
+    if pending:
+        note("info", f"{len(pending)} window{'s' if len(pending) != 1 else ''} still settling",
+             "Payout is not final until the market resolves; these are excluded from net, cost and the gate.")
+    if redeem_due:
+        note("warning", f"{len(redeem_due)} winning window{'s' if len(redeem_due) != 1 else ''} unredeemed (${redeem_payout:,.2f})",
+             "Hold-to-redeem is the strategy: paper only books the win when claimed. Run python bot/redeem.py --dry-run, then without the flag.")
+    if zero_fills:
+        note("danger", f"{zero_fills} fills at $0.00",
+             "No capital moved, but they still count toward the fill median and skew the M4 bucket. Fix the late dust path before trusting fill fidelity.")
+    if settled and shape_tv > 0.20:
+        note("warning", "Cadence is M4-heavy",
+             f"Live minute mix {'/'.join(f'{s * 100:.0f}%' for s in live_share)} vs the tape's {'/'.join(f'{s * 100:.0f}%' for s in target_share)}. Late dust quotes are inflating the last bucket.")
+    if settled and both < len(settled):
+        note("warning", f"{len(settled) - both} single-sided window{'s' if len(settled) - both != 1 else ''}",
+             "A missed hedge leg breaks the straddle. Both-sides coverage is a hard fidelity target (280/288).")
+    if fills and max(up_fills, down_fills) / fills > 0.75:
+        lead = "Up" if up_fills >= down_fills else "Down"
+        share = max(up_fills, down_fills) / fills
+        note("warning", f"Fill mix is {share * 100:.0f}% {lead}",
+             f"{up_fills} Up vs {down_fills} Down fills. The tape tilts about 28%, never this hard — the lean/alternation is not flipping sides the way the strategy expects.")
+    if settled:
+        roi = net / cost if cost else 0.0
+        note("success" if net > 0 else "danger",
+             f"Paper net {'+' if net >= 0 else '−'}${abs(net):,.2f} on ${cost:,.2f} staked",
+             f"{profitable}/{len(settled)} windows profitable ({roi * 100:+.1f}% on cost). Winners pay $1/share at resolution; there are no sells.")
+    if len(settled) < C.NUM_WINDOWS_24H:
+        note("info", f"Sample is {len(settled)}/{C.NUM_WINDOWS_24H} windows",
+             "Median, cost and cadence drift heavily at this size. python bot/run_paper.py (288 deterministic windows) is the gate until a full live slate exists.")
+
+    severity = {"danger": 0, "warning": 1, "info": 2, "success": 3}
+    notes.sort(key=lambda n: severity.get(n["tone"], 9))
+
+    return {
+        "summary": {
+            "settled": len(settled), "pending": len(pending), "fills": fills,
+            "costUsd": cost, "payoutUsd": payout, "netUsd": net,
+            "roi": round(net / cost, 4) if cost else 0.0,
+            "profitable": profitable,
+            "hitRate": round(profitable / len(settled), 4) if settled else 0.0,
+            "bothSides": both, "bothSidesRate": both_rate,
+            "medianFills": median_fills, "meanFills": mean_fills,
+            "medianCostUsd": median_cost, "meanCostUsd": mean_cost,
+            "bestUsd": round(max(nets), 2) if nets else 0.0,
+            "worstUsd": round(min(nets), 2) if nets else 0.0,
+            "zeroPriceFills": zero_fills,
+            "upFills": up_fills, "downFills": down_fills,
+            "upWins": sum(1 for w in settled if w["winner"] == "Up"),
+            "downWins": sum(1 for w in settled if w["winner"] == "Down"),
+        },
+        "targets": {
+            "windows": C.NUM_WINDOWS_24H,
+            "medianFills": C.MEDIAN_TRADES_PER_WINDOW,
+            "meanFills": C.MEAN_TRADES_PER_WINDOW,
+            "medianCostUsd": C.MEDIAN_USD_PER_WINDOW,
+            "meanCostUsd": C.MEAN_USD_PER_WINDOW,
+            "bothSides": round(C.NUM_WINDOWS_24H * C.BOTH_SIDES_RATE),
+        },
+        "gate": gate,
+        "mShape": {"live": live_shape, "target": target_shape,
+                   "liveShare": live_share, "targetShare": target_share, "distance": shape_tv},
+        "redeem": {"count": len(redeem_due), "payoutUsd": redeem_payout},
+        "health": health,
+        "notes": notes,
+        "windows": rows,
+        "generatedAt": utc_now_iso(),
+    }
+
+
 def trades_view(limit: int) -> list[dict]:
     out: list[dict] = []
     for r in sorted(runs(), key=lambda x: x.get("event_slug", ""))[-12:]:
@@ -408,14 +660,26 @@ class Handler(BaseHTTPRequestHandler):
         qs = urllib.parse.parse_qs(url.query)
         try:
             if url.path == "/api/bot/snapshot":
-                snap = snapshot()
-                self._send(200, {"online": True, "snapshot": snap, "ageMs": 0})
+                pid = loop_running()
+                st = state()
+                age = None
+                if st and st.get("updatedAtMs"):
+                    age = max(0, int(time.time() * 1000) - int(st["updatedAtMs"]))
+                # A stopped loop has nothing live to stream (and no reason to hit
+                # the CLOB every 2s), so report offline rather than serving stale
+                # state.json as if it were current.
+                if not pid:
+                    self._send(200, {"online": False, "snapshot": None, "ageMs": age})
+                else:
+                    self._send(200, {"online": True, "snapshot": snapshot(), "ageMs": age})
             elif url.path == "/api/bot/events":
                 self._send(200, {"items": events(int(qs.get("limit", ["150"])[0]))})
             elif url.path == "/api/bot/trades":
                 self._send(200, {"items": trades_view(int(qs.get("limit", ["80"])[0]))})
             elif url.path == "/api/bot/kpis":
                 self._send(200, kpis())
+            elif url.path == "/api/bot/perf":
+                self._send(200, perf())
             elif url.path == "/api/bot/control":
                 pid = loop_running()
                 st = state()

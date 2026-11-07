@@ -1,7 +1,9 @@
 const currency = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
+const currency2 = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const compact = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 1 })
 
 export const money = (value: number) => currency.format(value)
+export const money2 = (value: number) => currency2.format(value)
 export const moneyCompact = (value: number) => compact.format(value)
 
 export function relativeTime(ts: number, now = Date.now()): string {
