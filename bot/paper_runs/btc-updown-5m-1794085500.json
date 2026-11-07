@@ -1,0 +1,131 @@
+{
+  "event_slug": "btc-updown-5m-1794085500",
+  "market": "Bitcoin Up or Down - November 7, 4:05PM-4:10PM ET",
+  "trades": 17,
+  "cost_usd": 111.27,
+  "payout_usd": 60.0,
+  "net_usd": -51.27,
+  "winner": "Down",
+  "resolvedAt": "2026-11-07T21:14:21.412676+00:00",
+  "fills": [
+    {
+      "minute": 0,
+      "outcome": "Down",
+      "price": 0.59,
+      "shares": 30.0,
+      "usd": 17.7
+    },
+    {
+      "minute": 0,
+      "outcome": "Up",
+      "price": 0.4,
+      "shares": 30.0,
+      "usd": 12.0
+    },
+    {
+      "minute": 0,
+      "outcome": "Up",
+      "price": 0.25,
+      "shares": 13.86,
+      "usd": 3.46
+    },
+    {
+      "minute": 0,
+      "outcome": "Up",
+      "price": 0.27,
+      "shares": 30.0,
+      "usd": 8.1
+    },
+    {
+      "minute": 0,
+      "outcome": "Up",
+      "price": 0.36,
+      "shares": 13.86,
+      "usd": 4.99
+    },
+    {
+      "minute": 0,
+      "outcome": "Up",
+      "price": 0.33,
+      "shares": 13.86,
+      "usd": 4.57
+    },
+    {
+      "minute": 0,
+      "outcome": "Up",
+      "price": 0.33,
+      "shares": 30.0,
+      "usd": 9.9
+    },
+    {
+      "minute": 1,
+      "outcome": "Up",
+      "price": 0.32,
+      "shares": 13.86,
+      "usd": 4.44
+    },
+    {
+      "minute": 1,
+      "outcome": "Up",
+      "price": 0.29,
+      "shares": 13.86,
+      "usd": 4.02
+    },
+    {
+      "minute": 1,
+      "outcome": "Up",
+      "price": 0.28,
+      "shares": 30.0,
+      "usd": 8.4
+    },
+    {
+      "minute": 1,
+      "outcome": "Up",
+      "price": 0.24,
+      "shares": 13.86,
+      "usd": 3.33
+    },
+    {
+      "minute": 1,
+      "outcome": "Up",
+      "price": 0.25,
+      "shares": 13.86,
+      "usd": 3.46
+    },
+    {
+      "minute": 1,
+      "outcome": "Down",
+      "price": 0.45,
+      "shares": 30.0,
+      "usd": 13.5
+    },
+    {
+      "minute": 1,
+      "outcome": "Up",
+      "price": 0.31,
+      "shares": 13.86,
+      "usd": 4.3
+    },
+    {
+      "minute": 1,
+      "outcome": "Up",
+      "price": 0.19,
+      "shares": 13.86,
+      "usd": 2.63
+    },
+    {
+      "minute": 1,
+      "outcome": "Up",
+      "price": 0.16,
+      "shares": 30.0,
+      "usd": 4.8
+    },
+    {
+      "minute": 2,
+      "outcome": "Up",
+      "price": 0.12,
+      "shares": 13.86,
+      "usd": 1.66
+    }
+  ]
+}

@@ -1,0 +1,152 @@
+{
+  "event_slug": "btc-updown-5m-1794084600",
+  "market": "Bitcoin Up or Down - November 7, 3:50PM-3:55PM ET",
+  "trades": 20,
+  "cost_usd": 29.7,
+  "payout_usd": 30.0,
+  "net_usd": 0.3,
+  "winner": "Down",
+  "resolvedAt": "2026-11-07T20:58:46.157206+00:00",
+  "fills": [
+    {
+      "minute": 0,
+      "outcome": "Down",
+      "price": 0.95,
+      "shares": 30.0,
+      "usd": 28.5
+    },
+    {
+      "minute": 0,
+      "outcome": "Up",
+      "price": 0.04,
+      "shares": 30.0,
+      "usd": 1.2
+    },
+    {
+      "minute": 4,
+      "outcome": "Up",
+      "price": 0.0,
+      "shares": 13.86,
+      "usd": 0.0
+    },
+    {
+      "minute": 4,
+      "outcome": "Up",
+      "price": 0.0,
+      "shares": 30.0,
+      "usd": 0.0
+    },
+    {
+      "minute": 4,
+      "outcome": "Up",
+      "price": 0.0,
+      "shares": 13.86,
+      "usd": 0.0
+    },
+    {
+      "minute": 4,
+      "outcome": "Up",
+      "price": 0.0,
+      "shares": 13.86,
+      "usd": 0.0
+    },
+    {
+      "minute": 4,
+      "outcome": "Up",
+      "price": 0.0,
+      "shares": 30.0,
+      "usd": 0.0
+    },
+    {
+      "minute": 4,
+      "outcome": "Up",
+      "price": 0.0,
+      "shares": 13.86,
+      "usd": 0.0
+    },
+    {
+      "minute": 4,
+      "outcome": "Up",
+      "price": 0.0,
+      "shares": 13.86,
+      "usd": 0.0
+    },
+    {
+      "minute": 4,
+      "outcome": "Up",
+      "price": 0.0,
+      "shares": 30.0,
+      "usd": 0.0
+    },
+    {
+      "minute": 4,
+      "outcome": "Up",
+      "price": 0.0,
+      "shares": 13.86,
+      "usd": 0.0
+    },
+    {
+      "minute": 4,
+      "outcome": "Up",
+      "price": 0.0,
+      "shares": 13.86,
+      "usd": 0.0
+    },
+    {
+      "minute": 4,
+      "outcome": "Up",
+      "price": 0.0,
+      "shares": 30.0,
+      "usd": 0.0
+    },
+    {
+      "minute": 4,
+      "outcome": "Up",
+      "price": 0.0,
+      "shares": 13.86,
+      "usd": 0.0
+    },
+    {
+      "minute": 4,
+      "outcome": "Up",
+      "price": 0.0,
+      "shares": 13.86,
+      "usd": 0.0
+    },
+    {
+      "minute": 4,
+      "outcome": "Up",
+      "price": 0.0,
+      "shares": 30.0,
+      "usd": 0.0
+    },
+    {
+      "minute": 4,
+      "outcome": "Up",
+      "price": 0.0,
+      "shares": 13.86,
+      "usd": 0.0
+    },
+    {
+      "minute": 4,
+      "outcome": "Up",
+      "price": 0.0,
+      "shares": 13.86,
+      "usd": 0.0
+    },
+    {
+      "minute": 4,
+      "outcome": "Up",
+      "price": 0.0,
+      "shares": 30.0,
+      "usd": 0.0
+    },
+    {
+      "minute": 4,
+      "outcome": "Up",
+      "price": 0.0,
+      "shares": 13.86,
+      "usd": 0.0
+    }
+  ]
+}

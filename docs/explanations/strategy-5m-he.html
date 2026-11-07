@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>אסטרטגיית בוט הנייר — BTC Up/Down חלונות של 5 דקות</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#12161f; --panel2:#171c28; --line:#232a3a;
+    --txt:#e8ecf4; --mut:#9aa4b8; --up:#34d399; --down:#f87171;
+    --accent:#7c9aff; --gold:#fbbf24;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font-family:"Segoe UI","Noto Sans Hebrew",Arial,sans-serif;line-height:1.75}
+  .wrap{max-width:960px;margin:0 auto;padding:32px 20px 80px}
+  h1{font-size:2rem;margin:0 0 4px}
+  .sub{color:var(--mut);margin:0 0 28px}
+  h2{font-size:1.35rem;margin:44px 0 12px;padding-top:20px;border-top:1px solid var(--line)}
+  h2 .n{display:inline-flex;width:30px;height:30px;border-radius:50%;background:var(--accent);
+    color:#0b0e14;font-weight:700;align-items:center;justify-content:center;margin-left:10px;font-size:1rem}
+  p{margin:10px 0}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:14px 0}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin:14px 0}
+  .stat{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .stat b{display:block;font-size:1.4rem}
+  .stat span{color:var(--mut);font-size:.85rem}
+  .up{color:var(--up)} .down{color:var(--down)} .gold{color:var(--gold)} .acc{color:var(--accent)}
+  /* timeline */
+  .tl{position:relative;margin:22px 0 6px;padding:0;list-style:none}
+  .tl::before{content:"";position:absolute;top:34px;right:24px;left:24px;height:4px;border-radius:2px;
+    background:linear-gradient(to left,var(--up) 0%,var(--up) 8%,var(--accent) 8%,var(--accent) 82%,var(--gold) 82%,var(--gold) 93%,var(--mut) 93%)}
+  .tl li{display:inline-block;width:19%;vertical-align:top;text-align:center;font-size:.82rem;color:var(--mut)}
+  .tl .dot{width:16px;height:16px;border-radius:50%;background:var(--bg);border:3px solid var(--accent);margin:26px auto 6px;position:relative;z-index:1}
+  .tl b{color:var(--txt);display:block;font-size:.9rem}
+  table{width:100%;border-collapse:collapse;font-size:.9rem;margin:12px 0}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:right}
+  th{background:var(--panel2);color:var(--mut);font-weight:600}
+  .tag{display:inline-block;padding:1px 10px;border-radius:20px;font-size:.78rem;font-weight:700}
+  .tag.up{background:rgba(52,211,153,.15);color:var(--up)}
+  .tag.down{background:rgba(248,113,113,.15);color:var(--down)}
+  .tag.info{background:rgba(124,154,255,.15);color:var(--accent)}
+  .flow{display:flex;align-items:stretch;gap:0;margin:16px 0;flex-wrap:wrap}
+  .step{flex:1;min-width:140px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;
+    padding:10px 12px;font-size:.85rem;text-align:center}
+  .arrow{align-self:center;color:var(--accent);font-weight:700;padding:0 6px}
+  code{direction:ltr;display:inline-block;background:#0e1420;border:1px solid var(--line);
+    border-radius:6px;padding:0 8px;font-family:Consolas,monospace;font-size:.85em}
+  .note{border-right:4px solid var(--gold);background:rgba(251,191,36,.07);padding:10px 14px;border-radius:8px;margin:14px 0}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>אסטרטגיית בוט הנייר: סטרדל + נטייה <span class="tag info">paper · ללא מפתחות · ללא מימון</span></h1>
+<p class="sub">חיקוי של ארנק היעד בשוקי <b>Bitcoin Up/Down בחלונות של 5 דקות</b> בפולימרקט — קנייה בלבד של שני הצדדים, החזקה עד פדיון, והכרעה לפי תוצאת השוק עצמה.</p>
+
+<div class="grid">
+  <div class="stat"><b>5 דקות</b><span>אורך חלון (300 שניות)</span></div>
+  <div class="stat"><b>45</b><span>יעד מילואים לחלון (חציון נמדד)</span></div>
+  <div class="stat"><b class="up">30 / 13.86</b><span>קליפ מלא כל מילוי 3 · השאר חציוני</span></div>
+  <div class="stat"><b class="gold">1¢</b><span>רצפת מחיר — לא ממלאים מתחת</span></div>
+</div>
+
+<h2><span class="n">1</span>הרעיון במשפט אחד</h2>
+<div class="card">
+<p>במקום לנחש <b>Up</b> או <b>Down</b> — קונים את <b>שני הצדדים</b> לאורך החלון (סטרדל), עם <b>הטייה קלה</b> לצד שהספר מרמז עליו (lean). צד אחד מנצח ומשלם <b>$1 למניה</b>; ההפסד הוא הצד המפסיד. הרווח מגיע מכך שהצד המנצח נקנה בזול בממוצע — במיוחד בקצוות של הדקה האחרונה.</p>
+</div>
+
+<h2><span class="n">2</span>אנטומיית חלון: 300 שניות</h2>
+<ul class="tl">
+  <li><div class="dot"></div><b>T+13s</b>מגע ראשון: רגל סטרדל ראשונה<span class="tag up">entry</span></li>
+  <li><div class="dot"></div><b>T+28s</b>רגל גידור נגדית<span class="tag up">hedge</span></li>
+  <li><div class="dot"></div><b>M1–M3</b>עבודה: קליפים בקצב, הטיית lean<span class="tag info">work</span></li>
+  <li><div class="dot"></div><b>M4</b>צליפת קצוות בלבד (0¢ / 99¢)<span class="tag down">snipe</span></li>
+  <li><div class="dot"></div><b>−15s</b>עצירה לפני הסגירה → סליקה ברקע</li>
+</ul>
+<div class="card">
+<p><b>פתיחה:</b> בשנייה 13 נדגם ה‑lean ונקנית הרגל הראשונה (הצד המוטה). 15 שניות אחר כך נקנית הרגל הנגדית — זה הגידור שמבטיח כיסוי דו־צדדי מההתחלה (נמדד: 97.2% מהחלונות מכוסים בשני הצדדים).</p>
+<p><b>עבודה (M1–M3):</b> מילואים מפוזרים על פני הזמן שנשאר, בקצב <code>left / remaining</code> — כלומר הבוט "עובד" את החלון במקום לירות הכל בבת אחת. כל מילוי 3 הוא קליפ מלא של 30 מניות, השאר 13.86 (הטביעת האצבע של היעד: 30.4% מילואים של בדיוק־30).</p>
+<p><b>צליפת M4:</b> בדקות 1–3 מתעלמים מקצוות (מתחת 15¢ / מעל 85¢) — בדקה 4 <b>רק</b> קצוות נלקחים. זה מחקה את ההתנהגות הנמדדת: קצוות מופיעים כמעט רק ב‑M4.</p>
+<p><b>סגירה:</b> 15 שניות לפני הסוף עוצרים כניסות. הסליקה רצה ב‑thread ברקע — החלון הבא אף פעם לא מתפספס בגלל המתנה להכרעה.</p>
+</div>
+
+<h2><span class="n">3</span>ה‑lean: מה זה בכלל?</h2>
+<div class="card">
+<p>ה‑lean הוא מספר יחיד בסקאלה <code>−1 … +1</code> שהבוט מחשב מחדש <b>לפני כל מילוי</b>. <span class="tag up">+1 = נטייה מקסימלית ל‑Up</span> · <span class="tag down">−1 = נטייה מקסימלית ל‑Down</span> · <code>0</code> = סטרדל ניטרלי, חצי־חצי. אליו מצורף <b>ציון ביטחון</b> <code>0 … 1</code> — כמה אפשר לסמוך על האות ברגע זה.</p>
+<p><b>מהו מיקרו־מחיר?</b> לא המחיר האחרון ולא ה‑bid או ה‑ask לבד — אלא <b>אמצע הספר החי</b> (midpoint) של כל טוקן: נקודת האיזון בין הקונים למוכרים כרגע. אם הקונים לוחצים, המיד עולה; אם המוכרים — יורד. זה ה"דופק" הכי מהיר של השוק, לפני שהמחיר האחרון מספיק לזוז.</p>
+</div>
+<div class="card">
+<p><b>החישוב המדויק</b> (<code>microprice_lean</code> ב‑<code>bot/live_paper.py</code>):</p>
+<p>1. נדגמים שני המידים החיים: <code>up_mid</code> לטוקן Up, <code>down_mid</code> לטוקן Down.</p>
+<p>2. <b>היתרון:</b> <code>edge = (up_mid − down_mid) / 2</code> — חיובי מטה ל‑Up, שלילי ל‑Down. שני הטוקנים אמורים להשלים ל־$1, אז כל סטייה מהסימטריה היא האות.</p>
+<p>3. <b>ה‑lean:</b> <code>lean = edge × 4</code> (מהודק ל‑<code>±1</code>) — מכפיל שהופך סטייה של 25¢ לנטייה מלאה.</p>
+<p>4. <b>הביטחון:</b> <code>spread = |up_mid + down_mid − 1|</code> — כמה הספר "מסכים עם עצמו". ספר בריא מסתכם ל־$1. <code>confidence = 1 − spread × 5</code> (מהודק ל‑<code>0…1</code>): ספר הדוק → ביטחון גבוה; ספר רחב או רועש → הביטחון מתאפס והאות מוחלש אוטומטית.</p>
+<p>5. <b>מצבי נפילה:</b> אם הספר לא זמין, או אם <code>leanSource</code> מכוון ל‑<code>dumb</code> — חוזרים ל‑<code>lean=0, confidence=0</code>, כלומר סטרדל ניטרלי. הבוט אף פעם לא מנחש על עיוור.</p>
+</div>
+<div class="card">
+<p><b>דוגמה מספרית:</b> נניח <code>up_mid = 0.60</code>, <code>down_mid = 0.38</code>.</p>
+<table>
+<tr><th>שלב</th><th>חישוב</th><th>תוצאה</th></tr>
+<tr><td>edge</td><td><code>(0.60 − 0.38) / 2</code></td><td>0.11 → מטה ל‑Up</td></tr>
+<tr><td>lean</td><td><code>0.11 × 4</code></td><td><span class="acc">0.44</span></td></tr>
+<tr><td>spread</td><td><code>|0.60 + 0.38 − 1|</code></td><td>0.02</td></tr>
+<tr><td>confidence</td><td><code>1 − 0.02 × 5</code></td><td><span class="acc">0.90</span></td></tr>
+<tr><td>up_bias</td><td><code>0.5 + 0.44 × 0.25 × (0.5 + 0.45)</code></td><td><span class="up">≈ 0.60</span> — 60% מהמילואים לצד Up</td></tr>
+</table>
+<p>ובמקרה חלש — <code>up_mid = 0.52</code>, <code>down_mid = 0.47</code>: ‏lean יוצא 0.10 בלבד, וההטיה כמעט נעלמת (‎≈52%). האות חזק רק כשהספר באמת נחרץ.</p>
+</div>
+<div class="note"><b>למה הטייה ולא בחירה?</b> מניתוח 288 החלונות: הצד הראשון שנקנה מנבא את המנצח הסופי רק ב‑61% — לכן ה‑lean <b>מטה</b> את חלוקת המילואים (עד ±25 נקודות אחוז מההטלה ההוגנת) אבל <b>אף פעם לא מבטל צד</b>. שני הצדדים תמיד נקנים; הגידור נשמר.</div>
+
+<h2><span class="n">4</span>כללי הגנה</h2>
+<div class="flow">
+  <div class="step">רצפת 1¢<br><span class="tag down">dust-quote</span><br>מדלגים על ציטוטים מתים</div><span class="arrow">◀</span>
+  <div class="step">תקרה לחלון<br>$4,000 · 500 מילואים</div><span class="arrow">◀</span>
+  <div class="step">עצירת הפסד יומית<br>$500 · drawdown $900</div><span class="arrow">◀</span>
+  <div class="step">kill-switch<br>קובץ <code>bot/kill</code> משהה כניסות</div>
+</div>
+<div class="note"><b>שים לב:</b> אין מכירה בחסר, אין יציאה מוקדמת — רק קנייה והחזקה עד פדיון (hold-to-redeem). ההפסד המקסימלי לחלון הוא עלות שני הצדדים.</div>
+
+<h2><span class="n">5</span>דוגמה חיה: חלון 22:50</h2>
+<table>
+  <tr><th>מדד</th><th>ערך</th></tr>
+  <tr><td>חלון</td><td><code>btc-updown-5m-1794084600</code> · 22:50–22:55</td></tr>
+  <tr><td>מילואים</td><td>20 (היעד 45 — חלון דליל בגלל סינון dust)</td></tr>
+  <tr><td>עלות</td><td>$29.70</td></tr>
+  <tr><td>מנצח</td><td><span class="tag down">Down</span> → תשלום $30.00</td></tr>
+  <tr><td>נטו</td><td class="up">+$0.30</td></tr>
+</table>
+<p class="sub">הלוגיקה: 20 מילואים × ~$1.5 בממוצע, הצד המנצח (Down) שילם $1 למניה על ~30 מניות. חלונות כאלה — עשרות סנטים לכאן או לכאן — הם הנורמה; היתרון נבנה מנפח, לא ממכה אחת.</p>
+
+<h2><span class="n">6</span>במה זה שונה מבוט ה‑15 דקות?</h2>
+<table>
+  <tr><th></th><th>בוט 5 דקות (זה)</th><th>בוט 15 דקות</th></tr>
+  <tr><td>הימור</td><td>סטרדל דו־צדדי + הטייה</td><td>כיווני (side picker)</td></tr>
+  <tr><td>יציאה</td><td>החזקה עד פדיון בלבד</td><td>יציאה מוקדמת / סטופ</td></tr>
+  <tr><td>קצוות</td><td>צליפת M4 מכוונת</td><td>סינון רעש + אירועים</td></tr>
+  <tr><td>סליקה</td><td>ברקע, לא חוסמת</td><td>סינכרונית</td></tr>
+</table>
+
+<h2><span class="n">7</span>דוגמה נצפית: ניתוח עומק של חלון אמיתי</h2>
+<div class="card">
+<p>חלון שנבחר מהטייפ של ארנק היעד (<code>dangerously-skip-permissions_24h_trades.csv</code>) — העשיר ביותר ביממה: <b>404 מילויי TRADE</b> (ועוד 2 שורות REDEEM של הסליקה).<br>
+<code>btc-updown-5m-1793998500</code> · ‏6 בנובמבר, <b>15:55–16:00 ET</b> · מנצח: <span class="tag up">Up</span></p>
+<div class="grid">
+<div class="stat"><b>404</b><span>מילויי קנייה (BUY)</span></div>
+<div class="stat"><b class="up">$4,023.80</b><span>פדיון (4,023.8 מניות Up × $1)</span></div>
+<div class="stat"><b>$3,803.59</b><span>עלות כוללת</span></div>
+<div class="stat"><b class="up">+$220.21</b><span>נטו (+5.8%)</span></div>
+</div>
+<table>
+<tr><th></th><th>M0</th><th>M1</th><th>M2</th><th>M3</th><th>M4</th><th>סה"כ</th></tr>
+<tr><th>Up (מחיר ממוצע)</th><td>28 × 36¢</td><td>34 × 42¢</td><td>54 × 36¢</td><td>71 × 47¢</td><td>36 × 30¢</td><td><b>224</b></td></tr>
+<tr><th>Down (מחיר ממוצע)</th><td>16 × 59¢</td><td>22 × 53¢</td><td>53 × 59¢</td><td>52 × 50¢</td><td>38 × 58¢</td><td><b>182</b></td></tr>
+<tr><th>סה"כ לדקה</th><td>44</td><td>56</td><td>107</td><td>123</td><td>74</td><td><b>404</b></td></tr>
+</table>
+<p><b>גדלי קליפים:</b> ‏185 מילואים של בדיוק־30 (46%), אחריהם 5 (22×), 10 (14×), 15 (8×) — חלון כבד מהרגיל, עם זנב של קליפים קטנים.</p>
+</div>
+<div class="note"><b>מה ללמוד מהחלון הזה:</b><br>
+• <b>נטייה מוקדמת נכונה</b> — כבר ב‑M0 הארנק קנה Up בזול (36¢) מול Down יקר (59¢), והמנצח אכן Up. ה‑lean היה שם מההתחלה.<br>
+• <b>שיא ב‑M3, דעיכה ב‑M4</b> — הקצב עולה עד 123 מילואים ב‑M3 ואז יורד ל‑74 ב‑M4: כשההכרעה מתקרבת, הספר מתייקר והארנק מאט.<br>
+• <b>המנצח נקנה ב‑40¢ בממוצע</b> ($1,628.68 / 4,023.8 מניות) ונפדה ב‑$1 — שם נולדו ה‑$220.<br>
+• <b>אין מילואי $0 כאן</b> — בניגוד לחלונות מתים, כאן שני הצדדים נסחרו במחירים חיים עד הסוף; לכן רצפת ה‑1¢ שלנו לא הייתה משנה דבר בחלון כזה.<br>
+• <b>פתיחה מהירה:</b> מילוי ראשון כבר 4 שניות אחרי הפתיחה (Down @ 56¢ × 30) — הארנק לא מחכה; הסטרדל נפתח מיד.</div>
+<div class="card">
+<p><b>הטייפ המלא — 404 מילואים</b> (זמן מתחילת החלון, דקה, צד, מחיר, מניות, עלות):</p>
+<div style="max-height:420px;overflow:auto;border:1px solid var(--line);border-radius:10px">
+<table>
+<tr><th>#</th><th>זמן</th><th>דקה</th><th>צד</th><th>מחיר</th><th>מניות</th><th>עלות</th></tr>
+<tr><td>1</td><td dir="ltr">0:04</td><td>M0</td><td><span class="tag down">Down</span></td><td dir="ltr">0.56</td><td dir="ltr">30</td><td dir="ltr">$17.32</td></tr>
+<tr><td>2</td><td dir="ltr">0:06</td><td>M0</td><td><span class="tag down">Down</span></td><td dir="ltr">0.56</td><td dir="ltr">2.27273</td><td dir="ltr">$1.27</td></tr>
+<tr><td>3</td><td dir="ltr">0:06</td><td>M0</td><td><span class="tag down">Down</span></td><td dir="ltr">0.56</td><td dir="ltr">2.27273</td><td dir="ltr">$1.27</td></tr>
+<tr><td>4</td><td dir="ltr">0:06</td><td>M0</td><td><span class="tag down">Down</span></td><td dir="ltr">0.57</td><td dir="ltr">30</td><td dir="ltr">$17.61</td></tr>
+<tr><td>5</td><td dir="ltr">0:07</td><td>M0</td><td><span class="tag down">Down</span></td><td dir="ltr">0.56</td><td dir="ltr">1.28068</td><td dir="ltr">$0.72</td></tr>
+<tr><td>6</td><td dir="ltr">0:09</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.44</td><td dir="ltr">30</td><td dir="ltr">$13.72</td></tr>
+<tr><td>7</td><td dir="ltr">0:09</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.44</td><td dir="ltr">30</td><td dir="ltr">$13.72</td></tr>
+<tr><td>8</td><td dir="ltr">0:12</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.43</td><td dir="ltr">5</td><td dir="ltr">$2.24</td></tr>
+<tr><td>9</td><td dir="ltr">0:13</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.43</td><td dir="ltr">1.75439</td><td dir="ltr">$0.75</td></tr>
+<tr><td>10</td><td dir="ltr">0:16</td><td>M0</td><td><span class="tag down">Down</span></td><td dir="ltr">0.52</td><td dir="ltr">15</td><td dir="ltr">$8.06</td></tr>
+<tr><td>11</td><td dir="ltr">0:16</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.48</td><td dir="ltr">30</td><td dir="ltr">$14.92</td></tr>
+<tr><td>12</td><td dir="ltr">0:19</td><td>M0</td><td><span class="tag down">Down</span></td><td dir="ltr">0.54</td><td dir="ltr">15</td><td dir="ltr">$8.36</td></tr>
+<tr><td>13</td><td dir="ltr">0:21</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.38</td><td dir="ltr">30</td><td dir="ltr">$11.89</td></tr>
+<tr><td>14</td><td dir="ltr">0:22</td><td>M0</td><td><span class="tag down">Down</span></td><td dir="ltr">0.61</td><td dir="ltr">30</td><td dir="ltr">$18.80</td></tr>
+<tr><td>15</td><td dir="ltr">0:24</td><td>M0</td><td><span class="tag down">Down</span></td><td dir="ltr">0.61</td><td dir="ltr">5</td><td dir="ltr">$3.13</td></tr>
+<tr><td>16</td><td dir="ltr">0:25</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.35</td><td dir="ltr">30</td><td dir="ltr">$10.98</td></tr>
+<tr><td>17</td><td dir="ltr">0:27</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.35</td><td dir="ltr">5</td><td dir="ltr">$1.75</td></tr>
+<tr><td>18</td><td dir="ltr">0:27</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.35</td><td dir="ltr">2.06154</td><td dir="ltr">$0.72</td></tr>
+<tr><td>19</td><td dir="ltr">0:28</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.35</td><td dir="ltr">7.69231</td><td dir="ltr">$2.69</td></tr>
+<tr><td>20</td><td dir="ltr">0:31</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.35</td><td dir="ltr">2.03077</td><td dir="ltr">$0.71</td></tr>
+<tr><td>21</td><td dir="ltr">0:31</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.35</td><td dir="ltr">3.19</td><td dir="ltr">$1.12</td></tr>
+<tr><td>22</td><td dir="ltr">0:31</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.35</td><td dir="ltr">10</td><td dir="ltr">$3.50</td></tr>
+<tr><td>23</td><td dir="ltr">0:33</td><td>M0</td><td><span class="tag down">Down</span></td><td dir="ltr">0.52</td><td dir="ltr">15</td><td dir="ltr">$7.80</td></tr>
+<tr><td>24</td><td dir="ltr">0:33</td><td>M0</td><td><span class="tag down">Down</span></td><td dir="ltr">0.57</td><td dir="ltr">30</td><td dir="ltr">$17.10</td></tr>
+<tr><td>25</td><td dir="ltr">0:33</td><td>M0</td><td><span class="tag down">Down</span></td><td dir="ltr">0.54</td><td dir="ltr">15</td><td dir="ltr">$8.10</td></tr>
+<tr><td>26</td><td dir="ltr">0:33</td><td>M0</td><td><span class="tag down">Down</span></td><td dir="ltr">0.61</td><td dir="ltr">25</td><td dir="ltr">$15.25</td></tr>
+<tr><td>27</td><td dir="ltr">0:34</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.43</td><td dir="ltr">30</td><td dir="ltr">$13.41</td></tr>
+<tr><td>28</td><td dir="ltr">0:34</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.42</td><td dir="ltr">27.79</td><td dir="ltr">$11.67</td></tr>
+<tr><td>29</td><td dir="ltr">0:34</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.42</td><td dir="ltr">2.2069</td><td dir="ltr">$0.93</td></tr>
+<tr><td>30</td><td dir="ltr">0:36</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.46</td><td dir="ltr">30</td><td dir="ltr">$14.32</td></tr>
+<tr><td>31</td><td dir="ltr">0:36</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.38</td><td dir="ltr">30</td><td dir="ltr">$11.89</td></tr>
+<tr><td>32</td><td dir="ltr">0:39</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.32</td><td dir="ltr">30</td><td dir="ltr">$10.06</td></tr>
+<tr><td>33</td><td dir="ltr">0:43</td><td>M0</td><td><span class="tag down">Down</span></td><td dir="ltr">0.71</td><td dir="ltr">13.6</td><td dir="ltr">$9.66</td></tr>
+<tr><td>34</td><td dir="ltr">0:43</td><td>M0</td><td><span class="tag down">Down</span></td><td dir="ltr">0.71</td><td dir="ltr">12</td><td dir="ltr">$8.52</td></tr>
+<tr><td>35</td><td dir="ltr">0:43</td><td>M0</td><td><span class="tag down">Down</span></td><td dir="ltr">0.71</td><td dir="ltr">4.4</td><td dir="ltr">$3.12</td></tr>
+<tr><td>36</td><td dir="ltr">0:45</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.29</td><td dir="ltr">3.77465</td><td dir="ltr">$1.09</td></tr>
+<tr><td>37</td><td dir="ltr">0:45</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.29</td><td dir="ltr">2.22535</td><td dir="ltr">$0.65</td></tr>
+<tr><td>38</td><td dir="ltr">0:45</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.29</td><td dir="ltr">1.40845</td><td dir="ltr">$0.41</td></tr>
+<tr><td>39</td><td dir="ltr">0:45</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.29</td><td dir="ltr">2</td><td dir="ltr">$0.58</td></tr>
+<tr><td>40</td><td dir="ltr">0:45</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.29</td><td dir="ltr">2.22535</td><td dir="ltr">$0.65</td></tr>
+<tr><td>41</td><td dir="ltr">0:45</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.29</td><td dir="ltr">2</td><td dir="ltr">$0.58</td></tr>
+<tr><td>42</td><td dir="ltr">0:46</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.29</td><td dir="ltr">14.35</td><td dir="ltr">$4.16</td></tr>
+<tr><td>43</td><td dir="ltr">0:46</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.29</td><td dir="ltr">2</td><td dir="ltr">$0.58</td></tr>
+<tr><td>44</td><td dir="ltr">0:58</td><td>M0</td><td><span class="tag up">Up</span></td><td dir="ltr">0.23</td><td dir="ltr">1.2987</td><td dir="ltr">$0.30</td></tr>
+<tr><td>45</td><td dir="ltr">1:00</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.24</td><td dir="ltr">30</td><td dir="ltr">$7.58</td></tr>
+<tr><td>46</td><td dir="ltr">1:00</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.23</td><td dir="ltr">24.3</td><td dir="ltr">$5.89</td></tr>
+<tr><td>47</td><td dir="ltr">1:00</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.23</td><td dir="ltr">1.2987</td><td dir="ltr">$0.30</td></tr>
+<tr><td>48</td><td dir="ltr">1:06</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.30</td><td dir="ltr">30</td><td dir="ltr">$9.44</td></tr>
+<tr><td>49</td><td dir="ltr">1:09</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.30</td><td dir="ltr">9.77143</td><td dir="ltr">$2.93</td></tr>
+<tr><td>50</td><td dir="ltr">1:09</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.30</td><td dir="ltr">14.2714</td><td dir="ltr">$4.28</td></tr>
+<tr><td>51</td><td dir="ltr">1:13</td><td>M1</td><td><span class="tag down">Down</span></td><td dir="ltr">0.51</td><td dir="ltr">30</td><td dir="ltr">$15.82</td></tr>
+<tr><td>52</td><td dir="ltr">1:15</td><td>M1</td><td><span class="tag down">Down</span></td><td dir="ltr">0.52</td><td dir="ltr">2</td><td dir="ltr">$1.07</td></tr>
+<tr><td>53</td><td dir="ltr">1:15</td><td>M1</td><td><span class="tag down">Down</span></td><td dir="ltr">0.51</td><td dir="ltr">30</td><td dir="ltr">$15.82</td></tr>
+<tr><td>54</td><td dir="ltr">1:16</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.45</td><td dir="ltr">25.3</td><td dir="ltr">$11.82</td></tr>
+<tr><td>55</td><td dir="ltr">1:18</td><td>M1</td><td><span class="tag down">Down</span></td><td dir="ltr">0.55</td><td dir="ltr">15.01</td><td dir="ltr">$8.52</td></tr>
+<tr><td>56</td><td dir="ltr">1:21</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.43</td><td dir="ltr">10</td><td dir="ltr">$4.47</td></tr>
+<tr><td>57</td><td dir="ltr">1:22</td><td>M1</td><td><span class="tag down">Down</span></td><td dir="ltr">0.55</td><td dir="ltr">30</td><td dir="ltr">$17.02</td></tr>
+<tr><td>58</td><td dir="ltr">1:22</td><td>M1</td><td><span class="tag down">Down</span></td><td dir="ltr">0.55</td><td dir="ltr">30</td><td dir="ltr">$17.02</td></tr>
+<tr><td>59</td><td dir="ltr">1:24</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.41</td><td dir="ltr">5.4</td><td dir="ltr">$2.31</td></tr>
+<tr><td>60</td><td dir="ltr">1:25</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.42</td><td dir="ltr">5.3</td><td dir="ltr">$2.32</td></tr>
+<tr><td>61</td><td dir="ltr">1:25</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.41</td><td dir="ltr">24.6</td><td dir="ltr">$10.09</td></tr>
+<tr><td>62</td><td dir="ltr">1:25</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.42</td><td dir="ltr">30</td><td dir="ltr">$13.11</td></tr>
+<tr><td>63</td><td dir="ltr">1:27</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.44</td><td dir="ltr">17.8571</td><td dir="ltr">$7.86</td></tr>
+<tr><td>64</td><td dir="ltr">1:27</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.44</td><td dir="ltr">5.28</td><td dir="ltr">$2.41</td></tr>
+<tr><td>65</td><td dir="ltr">1:28</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.44</td><td dir="ltr">12.7871</td><td dir="ltr">$5.63</td></tr>
+<tr><td>66</td><td dir="ltr">1:28</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.44</td><td dir="ltr">5.07</td><td dir="ltr">$2.23</td></tr>
+<tr><td>67</td><td dir="ltr">1:28</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.44</td><td dir="ltr">1.78571</td><td dir="ltr">$0.79</td></tr>
+<tr><td>68</td><td dir="ltr">1:30</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.44</td><td dir="ltr">17.21</td><td dir="ltr">$7.57</td></tr>
+<tr><td>69</td><td dir="ltr">1:31</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.42</td><td dir="ltr">6.64</td><td dir="ltr">$2.79</td></tr>
+<tr><td>70</td><td dir="ltr">1:31</td><td>M1</td><td><span class="tag down">Down</span></td><td dir="ltr">0.56</td><td dir="ltr">30</td><td dir="ltr">$17.32</td></tr>
+<tr><td>71</td><td dir="ltr">1:43</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.46</td><td dir="ltr">10</td><td dir="ltr">$4.77</td></tr>
+<tr><td>72</td><td dir="ltr">1:43</td><td>M1</td><td><span class="tag down">Down</span></td><td dir="ltr">0.56</td><td dir="ltr">30</td><td dir="ltr">$16.80</td></tr>
+<tr><td>73</td><td dir="ltr">1:43</td><td>M1</td><td><span class="tag down">Down</span></td><td dir="ltr">0.56</td><td dir="ltr">30</td><td dir="ltr">$16.80</td></tr>
+<tr><td>74</td><td dir="ltr">1:43</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.46</td><td dir="ltr">2.5</td><td dir="ltr">$1.15</td></tr>
+<tr><td>75</td><td dir="ltr">1:45</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.49</td><td dir="ltr">10.2</td><td dir="ltr">$5.18</td></tr>
+<tr><td>76</td><td dir="ltr">1:46</td><td>M1</td><td><span class="tag down">Down</span></td><td dir="ltr">0.45</td><td dir="ltr">23.74</td><td dir="ltr">$11.09</td></tr>
+<tr><td>77</td><td dir="ltr">1:46</td><td>M1</td><td><span class="tag down">Down</span></td><td dir="ltr">0.48</td><td dir="ltr">30</td><td dir="ltr">$14.92</td></tr>
+<tr><td>78</td><td dir="ltr">1:48</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.49</td><td dir="ltr">2.87118</td><td dir="ltr">$1.41</td></tr>
+<tr><td>79</td><td dir="ltr">1:48</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.49</td><td dir="ltr">7.07</td><td dir="ltr">$3.46</td></tr>
+<tr><td>80</td><td dir="ltr">1:48</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.49</td><td dir="ltr">1.69608</td><td dir="ltr">$0.83</td></tr>
+<tr><td>81</td><td dir="ltr">1:48</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.49</td><td dir="ltr">4.56863</td><td dir="ltr">$2.24</td></tr>
+<tr><td>82</td><td dir="ltr">1:48</td><td>M1</td><td><span class="tag down">Down</span></td><td dir="ltr">0.46</td><td dir="ltr">30</td><td dir="ltr">$13.80</td></tr>
+<tr><td>83</td><td dir="ltr">1:48</td><td>M1</td><td><span class="tag down">Down</span></td><td dir="ltr">0.46</td><td dir="ltr">30</td><td dir="ltr">$13.80</td></tr>
+<tr><td>84</td><td dir="ltr">1:48</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.49</td><td dir="ltr">1.96079</td><td dir="ltr">$0.96</td></tr>
+<tr><td>85</td><td dir="ltr">1:48</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.49</td><td dir="ltr">12.73</td><td dir="ltr">$6.24</td></tr>
+<tr><td>86</td><td dir="ltr">1:48</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.55</td><td dir="ltr">30</td><td dir="ltr">$17.11</td></tr>
+<tr><td>87</td><td dir="ltr">1:48</td><td>M1</td><td><span class="tag down">Down</span></td><td dir="ltr">0.46</td><td dir="ltr">30</td><td dir="ltr">$13.80</td></tr>
+<tr><td>88</td><td dir="ltr">1:48</td><td>M1</td><td><span class="tag down">Down</span></td><td dir="ltr">0.46</td><td dir="ltr">6.26</td><td dir="ltr">$2.88</td></tr>
+<tr><td>89</td><td dir="ltr">1:49</td><td>M1</td><td><span class="tag down">Down</span></td><td dir="ltr">0.51</td><td dir="ltr">30</td><td dir="ltr">$15.82</td></tr>
+<tr><td>90</td><td dir="ltr">1:49</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.49</td><td dir="ltr">18.88</td><td dir="ltr">$9.25</td></tr>
+<tr><td>91</td><td dir="ltr">1:49</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.46</td><td dir="ltr">17.5</td><td dir="ltr">$8.05</td></tr>
+<tr><td>92</td><td dir="ltr">1:52</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.49</td><td dir="ltr">30</td><td dir="ltr">$15.07</td></tr>
+<tr><td>93</td><td dir="ltr">1:52</td><td>M1</td><td><span class="tag down">Down</span></td><td dir="ltr">0.48</td><td dir="ltr">30</td><td dir="ltr">$14.96</td></tr>
+<tr><td>94</td><td dir="ltr">1:54</td><td>M1</td><td><span class="tag down">Down</span></td><td dir="ltr">0.50</td><td dir="ltr">30</td><td dir="ltr">$15.53</td></tr>
+<tr><td>95</td><td dir="ltr">1:55</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.48</td><td dir="ltr">30</td><td dir="ltr">$14.40</td></tr>
+<tr><td>96</td><td dir="ltr">1:57</td><td>M1</td><td><span class="tag down">Down</span></td><td dir="ltr">0.65</td><td dir="ltr">30</td><td dir="ltr">$19.98</td></tr>
+<tr><td>97</td><td dir="ltr">1:57</td><td>M1</td><td><span class="tag down">Down</span></td><td dir="ltr">0.66</td><td dir="ltr">30</td><td dir="ltr">$20.27</td></tr>
+<tr><td>98</td><td dir="ltr">1:57</td><td>M1</td><td><span class="tag down">Down</span></td><td dir="ltr">0.63</td><td dir="ltr">30</td><td dir="ltr">$19.39</td></tr>
+<tr><td>99</td><td dir="ltr">1:58</td><td>M1</td><td><span class="tag up">Up</span></td><td dir="ltr">0.38</td><td dir="ltr">13.24</td><td dir="ltr">$5.03</td></tr>
+<tr><td>100</td><td dir="ltr">1:58</td><td>M1</td><td><span class="tag down">Down</span></td><td dir="ltr">0.64</td><td dir="ltr">30</td><td dir="ltr">$19.20</td></tr>
+<tr><td>101</td><td dir="ltr">2:00</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.39</td><td dir="ltr">30</td><td dir="ltr">$12.20</td></tr>
+<tr><td>102</td><td dir="ltr">2:00</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.35</td><td dir="ltr">30</td><td dir="ltr">$10.98</td></tr>
+<tr><td>103</td><td dir="ltr">2:01</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.64</td><td dir="ltr">30</td><td dir="ltr">$19.68</td></tr>
+<tr><td>104</td><td dir="ltr">2:01</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.64</td><td dir="ltr">30</td><td dir="ltr">$19.68</td></tr>
+<tr><td>105</td><td dir="ltr">2:01</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.40</td><td dir="ltr">30</td><td dir="ltr">$12.50</td></tr>
+<tr><td>106</td><td dir="ltr">2:03</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.65</td><td dir="ltr">30</td><td dir="ltr">$19.98</td></tr>
+<tr><td>107</td><td dir="ltr">2:03</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.69</td><td dir="ltr">45</td><td dir="ltr">$31.05</td></tr>
+<tr><td>108</td><td dir="ltr">2:03</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.69</td><td dir="ltr">5</td><td dir="ltr">$3.52</td></tr>
+<tr><td>109</td><td dir="ltr">2:03</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.65</td><td dir="ltr">30</td><td dir="ltr">$19.98</td></tr>
+<tr><td>110</td><td dir="ltr">2:04</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.30</td><td dir="ltr">30</td><td dir="ltr">$9.44</td></tr>
+<tr><td>111</td><td dir="ltr">2:04</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.30</td><td dir="ltr">1.41</td><td dir="ltr">$0.42</td></tr>
+<tr><td>112</td><td dir="ltr">2:04</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.30</td><td dir="ltr">10</td><td dir="ltr">$3.15</td></tr>
+<tr><td>113</td><td dir="ltr">2:06</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.69</td><td dir="ltr">4.99</td><td dir="ltr">$3.52</td></tr>
+<tr><td>114</td><td dir="ltr">2:06</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.67</td><td dir="ltr">30</td><td dir="ltr">$20.56</td></tr>
+<tr><td>115</td><td dir="ltr">2:06</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.33</td><td dir="ltr">30</td><td dir="ltr">$10.36</td></tr>
+<tr><td>116</td><td dir="ltr">2:06</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.33</td><td dir="ltr">30</td><td dir="ltr">$10.36</td></tr>
+<tr><td>117</td><td dir="ltr">2:09</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.28</td><td dir="ltr">30</td><td dir="ltr">$8.82</td></tr>
+<tr><td>118</td><td dir="ltr">2:09</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.30</td><td dir="ltr">5</td><td dir="ltr">$1.50</td></tr>
+<tr><td>119</td><td dir="ltr">2:09</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.30</td><td dir="ltr">25</td><td dir="ltr">$7.87</td></tr>
+<tr><td>120</td><td dir="ltr">2:10</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.70</td><td dir="ltr">11.18</td><td dir="ltr">$7.99</td></tr>
+<tr><td>121</td><td dir="ltr">2:10</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.69</td><td dir="ltr">23.65</td><td dir="ltr">$16.67</td></tr>
+<tr><td>122</td><td dir="ltr">2:12</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.71</td><td dir="ltr">30</td><td dir="ltr">$21.73</td></tr>
+<tr><td>123</td><td dir="ltr">2:12</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.70</td><td dir="ltr">2</td><td dir="ltr">$1.40</td></tr>
+<tr><td>124</td><td dir="ltr">2:13</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.71</td><td dir="ltr">24</td><td dir="ltr">$17.39</td></tr>
+<tr><td>125</td><td dir="ltr">2:13</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.70</td><td dir="ltr">16.82</td><td dir="ltr">$11.77</td></tr>
+<tr><td>126</td><td dir="ltr">2:15</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.72</td><td dir="ltr">30</td><td dir="ltr">$22.02</td></tr>
+<tr><td>127</td><td dir="ltr">2:16</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.72</td><td dir="ltr">30</td><td dir="ltr">$22.02</td></tr>
+<tr><td>128</td><td dir="ltr">2:18</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.69</td><td dir="ltr">6.35</td><td dir="ltr">$4.38</td></tr>
+<tr><td>129</td><td dir="ltr">2:18</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.34</td><td dir="ltr">9.39394</td><td dir="ltr">$3.19</td></tr>
+<tr><td>130</td><td dir="ltr">2:19</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.34</td><td dir="ltr">30</td><td dir="ltr">$10.20</td></tr>
+<tr><td>131</td><td dir="ltr">2:19</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.34</td><td dir="ltr">20.6</td><td dir="ltr">$7.00</td></tr>
+<tr><td>132</td><td dir="ltr">2:19</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.32</td><td dir="ltr">30</td><td dir="ltr">$9.60</td></tr>
+<tr><td>133</td><td dir="ltr">2:21</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.32</td><td dir="ltr">10</td><td dir="ltr">$3.35</td></tr>
+<tr><td>134</td><td dir="ltr">2:21</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.69</td><td dir="ltr">30</td><td dir="ltr">$21.15</td></tr>
+<tr><td>135</td><td dir="ltr">2:22</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.66</td><td dir="ltr">30</td><td dir="ltr">$20.27</td></tr>
+<tr><td>136</td><td dir="ltr">2:22</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.33</td><td dir="ltr">5</td><td dir="ltr">$1.73</td></tr>
+<tr><td>137</td><td dir="ltr">2:22</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.32</td><td dir="ltr">20</td><td dir="ltr">$6.40</td></tr>
+<tr><td>138</td><td dir="ltr">2:22</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.35</td><td dir="ltr">30</td><td dir="ltr">$10.98</td></tr>
+<tr><td>139</td><td dir="ltr">2:24</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.67</td><td dir="ltr">30</td><td dir="ltr">$20.56</td></tr>
+<tr><td>140</td><td dir="ltr">2:24</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.34</td><td dir="ltr">2.02</td><td dir="ltr">$0.69</td></tr>
+<tr><td>141</td><td dir="ltr">2:24</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.34</td><td dir="ltr">7.39</td><td dir="ltr">$2.51</td></tr>
+<tr><td>142</td><td dir="ltr">2:24</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.34</td><td dir="ltr">15.1515</td><td dir="ltr">$5.15</td></tr>
+<tr><td>143</td><td dir="ltr">2:24</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.34</td><td dir="ltr">5.42424</td><td dir="ltr">$1.84</td></tr>
+<tr><td>144</td><td dir="ltr">2:25</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.32</td><td dir="ltr">1.61765</td><td dir="ltr">$0.52</td></tr>
+<tr><td>145</td><td dir="ltr">2:25</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.32</td><td dir="ltr">4.30882</td><td dir="ltr">$1.38</td></tr>
+<tr><td>146</td><td dir="ltr">2:27</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.65</td><td dir="ltr">30</td><td dir="ltr">$19.50</td></tr>
+<tr><td>147</td><td dir="ltr">2:27</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.67</td><td dir="ltr">30</td><td dir="ltr">$20.56</td></tr>
+<tr><td>148</td><td dir="ltr">2:28</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.36</td><td dir="ltr">30</td><td dir="ltr">$11.28</td></tr>
+<tr><td>149</td><td dir="ltr">2:30</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.37</td><td dir="ltr">30</td><td dir="ltr">$11.59</td></tr>
+<tr><td>150</td><td dir="ltr">2:31</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.37</td><td dir="ltr">30</td><td dir="ltr">$11.10</td></tr>
+<tr><td>151</td><td dir="ltr">2:31</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.38</td><td dir="ltr">30</td><td dir="ltr">$11.89</td></tr>
+<tr><td>152</td><td dir="ltr">2:31</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.38</td><td dir="ltr">30</td><td dir="ltr">$11.89</td></tr>
+<tr><td>153</td><td dir="ltr">2:33</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.38</td><td dir="ltr">30</td><td dir="ltr">$11.89</td></tr>
+<tr><td>154</td><td dir="ltr">2:34</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.38</td><td dir="ltr">1.67742</td><td dir="ltr">$0.64</td></tr>
+<tr><td>155</td><td dir="ltr">2:34</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.38</td><td dir="ltr">19.34</td><td dir="ltr">$7.67</td></tr>
+<tr><td>156</td><td dir="ltr">2:34</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.38</td><td dir="ltr">8.98</td><td dir="ltr">$3.41</td></tr>
+<tr><td>157</td><td dir="ltr">2:34</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.36</td><td dir="ltr">30</td><td dir="ltr">$10.80</td></tr>
+<tr><td>158</td><td dir="ltr">2:36</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.38</td><td dir="ltr">30</td><td dir="ltr">$11.89</td></tr>
+<tr><td>159</td><td dir="ltr">2:36</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.38</td><td dir="ltr">30</td><td dir="ltr">$11.89</td></tr>
+<tr><td>160</td><td dir="ltr">2:39</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.38</td><td dir="ltr">30</td><td dir="ltr">$11.40</td></tr>
+<tr><td>161</td><td dir="ltr">2:43</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.52</td><td dir="ltr">10.2083</td><td dir="ltr">$5.31</td></tr>
+<tr><td>162</td><td dir="ltr">2:45</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.32</td><td dir="ltr">3.64706</td><td dir="ltr">$1.17</td></tr>
+<tr><td>163</td><td dir="ltr">2:45</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.52</td><td dir="ltr">19.79</td><td dir="ltr">$10.29</td></tr>
+<tr><td>164</td><td dir="ltr">2:45</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.53</td><td dir="ltr">10</td><td dir="ltr">$5.30</td></tr>
+<tr><td>165</td><td dir="ltr">2:45</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.53</td><td dir="ltr">15</td><td dir="ltr">$7.95</td></tr>
+<tr><td>166</td><td dir="ltr">2:45</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.53</td><td dir="ltr">5</td><td dir="ltr">$2.65</td></tr>
+<tr><td>167</td><td dir="ltr">2:46</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.53</td><td dir="ltr">10</td><td dir="ltr">$5.30</td></tr>
+<tr><td>168</td><td dir="ltr">2:46</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.53</td><td dir="ltr">20</td><td dir="ltr">$10.95</td></tr>
+<tr><td>169</td><td dir="ltr">2:46</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.31</td><td dir="ltr">30</td><td dir="ltr">$9.30</td></tr>
+<tr><td>170</td><td dir="ltr">2:46</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.56</td><td dir="ltr">30</td><td dir="ltr">$16.80</td></tr>
+<tr><td>171</td><td dir="ltr">2:46</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.32</td><td dir="ltr">5</td><td dir="ltr">$1.60</td></tr>
+<tr><td>172</td><td dir="ltr">2:48</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.37</td><td dir="ltr">29.82</td><td dir="ltr">$11.03</td></tr>
+<tr><td>173</td><td dir="ltr">2:48</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.38</td><td dir="ltr">9.76</td><td dir="ltr">$3.71</td></tr>
+<tr><td>174</td><td dir="ltr">2:48</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.38</td><td dir="ltr">7.61</td><td dir="ltr">$2.89</td></tr>
+<tr><td>175</td><td dir="ltr">2:48</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.38</td><td dir="ltr">12.63</td><td dir="ltr">$5.01</td></tr>
+<tr><td>176</td><td dir="ltr">2:49</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.38</td><td dir="ltr">30</td><td dir="ltr">$11.89</td></tr>
+<tr><td>177</td><td dir="ltr">2:49</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.57</td><td dir="ltr">2.29</td><td dir="ltr">$1.31</td></tr>
+<tr><td>178</td><td dir="ltr">2:49</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.57</td><td dir="ltr">15</td><td dir="ltr">$8.55</td></tr>
+<tr><td>179</td><td dir="ltr">2:49</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.31</td><td dir="ltr">30</td><td dir="ltr">$9.30</td></tr>
+<tr><td>180</td><td dir="ltr">2:51</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.49</td><td dir="ltr">30</td><td dir="ltr">$15.12</td></tr>
+<tr><td>181</td><td dir="ltr">2:51</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.43</td><td dir="ltr">30</td><td dir="ltr">$13.41</td></tr>
+<tr><td>182</td><td dir="ltr">2:51</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.55</td><td dir="ltr">11.6</td><td dir="ltr">$6.38</td></tr>
+<tr><td>183</td><td dir="ltr">2:51</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.55</td><td dir="ltr">12</td><td dir="ltr">$6.60</td></tr>
+<tr><td>184</td><td dir="ltr">2:51</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.55</td><td dir="ltr">6.4</td><td dir="ltr">$3.52</td></tr>
+<tr><td>185</td><td dir="ltr">2:51</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.42</td><td dir="ltr">30</td><td dir="ltr">$13.11</td></tr>
+<tr><td>186</td><td dir="ltr">2:52</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.44</td><td dir="ltr">30</td><td dir="ltr">$13.72</td></tr>
+<tr><td>187</td><td dir="ltr">2:52</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.49</td><td dir="ltr">6.56</td><td dir="ltr">$3.21</td></tr>
+<tr><td>188</td><td dir="ltr">2:52</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.49</td><td dir="ltr">7.69</td><td dir="ltr">$3.90</td></tr>
+<tr><td>189</td><td dir="ltr">2:52</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.49</td><td dir="ltr">15.7451</td><td dir="ltr">$7.72</td></tr>
+<tr><td>190</td><td dir="ltr">2:54</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.49</td><td dir="ltr">30</td><td dir="ltr">$15.22</td></tr>
+<tr><td>191</td><td dir="ltr">2:54</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.49</td><td dir="ltr">9</td><td dir="ltr">$4.57</td></tr>
+<tr><td>192</td><td dir="ltr">2:54</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.49</td><td dir="ltr">1.96079</td><td dir="ltr">$0.96</td></tr>
+<tr><td>193</td><td dir="ltr">2:55</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.52</td><td dir="ltr">20.96</td><td dir="ltr">$10.90</td></tr>
+<tr><td>194</td><td dir="ltr">2:55</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.52</td><td dir="ltr">29.04</td><td dir="ltr">$15.10</td></tr>
+<tr><td>195</td><td dir="ltr">2:55</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.51</td><td dir="ltr">30</td><td dir="ltr">$15.82</td></tr>
+<tr><td>196</td><td dir="ltr">2:55</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.52</td><td dir="ltr">9.04</td><td dir="ltr">$4.70</td></tr>
+<tr><td>197</td><td dir="ltr">2:55</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.45</td><td dir="ltr">3.14</td><td dir="ltr">$1.41</td></tr>
+<tr><td>198</td><td dir="ltr">2:57</td><td>M2</td><td><span class="tag up">Up</span></td><td dir="ltr">0.37</td><td dir="ltr">0.18</td><td dir="ltr">$0.07</td></tr>
+<tr><td>199</td><td dir="ltr">2:57</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.50</td><td dir="ltr">5</td><td dir="ltr">$2.50</td></tr>
+<tr><td>200</td><td dir="ltr">2:57</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.50</td><td dir="ltr">10</td><td dir="ltr">$5.00</td></tr>
+<tr><td>201</td><td dir="ltr">2:57</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.50</td><td dir="ltr">5</td><td dir="ltr">$2.50</td></tr>
+<tr><td>202</td><td dir="ltr">2:57</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.50</td><td dir="ltr">10</td><td dir="ltr">$5.00</td></tr>
+<tr><td>203</td><td dir="ltr">2:57</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.52</td><td dir="ltr">0.958334</td><td dir="ltr">$0.50</td></tr>
+<tr><td>204</td><td dir="ltr">2:58</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.57</td><td dir="ltr">30</td><td dir="ltr">$17.10</td></tr>
+<tr><td>205</td><td dir="ltr">2:58</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.51</td><td dir="ltr">30</td><td dir="ltr">$15.82</td></tr>
+<tr><td>206</td><td dir="ltr">2:58</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.51</td><td dir="ltr">15</td><td dir="ltr">$7.65</td></tr>
+<tr><td>207</td><td dir="ltr">2:58</td><td>M2</td><td><span class="tag down">Down</span></td><td dir="ltr">0.51</td><td dir="ltr">15</td><td dir="ltr">$7.65</td></tr>
+<tr><td>208</td><td dir="ltr">3:00</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.51</td><td dir="ltr">30</td><td dir="ltr">$15.82</td></tr>
+<tr><td>209</td><td dir="ltr">3:01</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.54</td><td dir="ltr">5.21739</td><td dir="ltr">$2.82</td></tr>
+<tr><td>210</td><td dir="ltr">3:01</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.49</td><td dir="ltr">30</td><td dir="ltr">$15.22</td></tr>
+<tr><td>211</td><td dir="ltr">3:01</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.54</td><td dir="ltr">20.0435</td><td dir="ltr">$10.82</td></tr>
+<tr><td>212</td><td dir="ltr">3:01</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.54</td><td dir="ltr">4.73</td><td dir="ltr">$2.55</td></tr>
+<tr><td>213</td><td dir="ltr">3:03</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.50</td><td dir="ltr">30</td><td dir="ltr">$15.53</td></tr>
+<tr><td>214</td><td dir="ltr">3:03</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.47</td><td dir="ltr">6.01</td><td dir="ltr">$2.93</td></tr>
+<tr><td>215</td><td dir="ltr">3:04</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.42</td><td dir="ltr">30</td><td dir="ltr">$13.14</td></tr>
+<tr><td>216</td><td dir="ltr">3:04</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.44</td><td dir="ltr">30</td><td dir="ltr">$13.72</td></tr>
+<tr><td>217</td><td dir="ltr">3:04</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.54</td><td dir="ltr">30</td><td dir="ltr">$16.72</td></tr>
+<tr><td>218</td><td dir="ltr">3:04</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.56</td><td dir="ltr">30</td><td dir="ltr">$17.32</td></tr>
+<tr><td>219</td><td dir="ltr">3:04</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.47</td><td dir="ltr">30</td><td dir="ltr">$14.62</td></tr>
+<tr><td>220</td><td dir="ltr">3:06</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.48</td><td dir="ltr">20.13</td><td dir="ltr">$9.66</td></tr>
+<tr><td>221</td><td dir="ltr">3:06</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.48</td><td dir="ltr">1.15308</td><td dir="ltr">$0.55</td></tr>
+<tr><td>222</td><td dir="ltr">3:07</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.42</td><td dir="ltr">30</td><td dir="ltr">$13.11</td></tr>
+<tr><td>223</td><td dir="ltr">3:07</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.50</td><td dir="ltr">30</td><td dir="ltr">$15.53</td></tr>
+<tr><td>224</td><td dir="ltr">3:07</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.49</td><td dir="ltr">10.98</td><td dir="ltr">$5.38</td></tr>
+<tr><td>225</td><td dir="ltr">3:07</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.48</td><td dir="ltr">6.59</td><td dir="ltr">$3.16</td></tr>
+<tr><td>226</td><td dir="ltr">3:07</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.49</td><td dir="ltr">1.96079</td><td dir="ltr">$0.96</td></tr>
+<tr><td>227</td><td dir="ltr">3:07</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.49</td><td dir="ltr">9.80392</td><td dir="ltr">$4.80</td></tr>
+<tr><td>228</td><td dir="ltr">3:07</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.48</td><td dir="ltr">2.11538</td><td dir="ltr">$1.02</td></tr>
+<tr><td>229</td><td dir="ltr">3:09</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.49</td><td dir="ltr">30</td><td dir="ltr">$15.22</td></tr>
+<tr><td>230</td><td dir="ltr">3:09</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.44</td><td dir="ltr">30</td><td dir="ltr">$13.72</td></tr>
+<tr><td>231</td><td dir="ltr">3:10</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.54</td><td dir="ltr">30</td><td dir="ltr">$16.72</td></tr>
+<tr><td>232</td><td dir="ltr">3:10</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.47</td><td dir="ltr">30</td><td dir="ltr">$14.62</td></tr>
+<tr><td>233</td><td dir="ltr">3:12</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.52</td><td dir="ltr">6</td><td dir="ltr">$3.12</td></tr>
+<tr><td>234</td><td dir="ltr">3:12</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.52</td><td dir="ltr">5</td><td dir="ltr">$2.60</td></tr>
+<tr><td>235</td><td dir="ltr">3:12</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.56</td><td dir="ltr">30</td><td dir="ltr">$16.80</td></tr>
+<tr><td>236</td><td dir="ltr">3:13</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.56</td><td dir="ltr">13.25</td><td dir="ltr">$7.42</td></tr>
+<tr><td>237</td><td dir="ltr">3:13</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.56</td><td dir="ltr">11.75</td><td dir="ltr">$6.58</td></tr>
+<tr><td>238</td><td dir="ltr">3:13</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.56</td><td dir="ltr">5</td><td dir="ltr">$2.80</td></tr>
+<tr><td>239</td><td dir="ltr">3:15</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.45</td><td dir="ltr">30</td><td dir="ltr">$13.97</td></tr>
+<tr><td>240</td><td dir="ltr">3:16</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.46</td><td dir="ltr">30</td><td dir="ltr">$14.32</td></tr>
+<tr><td>241</td><td dir="ltr">3:16</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.55</td><td dir="ltr">29.6444</td><td dir="ltr">$16.30</td></tr>
+<tr><td>242</td><td dir="ltr">3:16</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.42</td><td dir="ltr">30</td><td dir="ltr">$12.60</td></tr>
+<tr><td>243</td><td dir="ltr">3:16</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.45</td><td dir="ltr">30</td><td dir="ltr">$13.50</td></tr>
+<tr><td>244</td><td dir="ltr">3:16</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.52</td><td dir="ltr">30</td><td dir="ltr">$16.12</td></tr>
+<tr><td>245</td><td dir="ltr">3:18</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.48</td><td dir="ltr">4</td><td dir="ltr">$1.92</td></tr>
+<tr><td>246</td><td dir="ltr">3:18</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.49</td><td dir="ltr">30</td><td dir="ltr">$15.22</td></tr>
+<tr><td>247</td><td dir="ltr">3:18</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.48</td><td dir="ltr">1.67</td><td dir="ltr">$0.80</td></tr>
+<tr><td>248</td><td dir="ltr">3:18</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.49</td><td dir="ltr">30</td><td dir="ltr">$15.22</td></tr>
+<tr><td>249</td><td dir="ltr">3:18</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.48</td><td dir="ltr">5</td><td dir="ltr">$2.49</td></tr>
+<tr><td>250</td><td dir="ltr">3:18</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.48</td><td dir="ltr">7.04</td><td dir="ltr">$3.38</td></tr>
+<tr><td>251</td><td dir="ltr">3:18</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.40</td><td dir="ltr">30</td><td dir="ltr">$12.51</td></tr>
+<tr><td>252</td><td dir="ltr">3:18</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.45</td><td dir="ltr">30</td><td dir="ltr">$13.87</td></tr>
+<tr><td>253</td><td dir="ltr">3:19</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.48</td><td dir="ltr">0.93</td><td dir="ltr">$0.45</td></tr>
+<tr><td>254</td><td dir="ltr">3:19</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.69</td><td dir="ltr">30</td><td dir="ltr">$21.15</td></tr>
+<tr><td>255</td><td dir="ltr">3:19</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.48</td><td dir="ltr">10.61</td><td dir="ltr">$5.09</td></tr>
+<tr><td>256</td><td dir="ltr">3:19</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.48</td><td dir="ltr">0.75</td><td dir="ltr">$0.36</td></tr>
+<tr><td>257</td><td dir="ltr">3:21</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.64</td><td dir="ltr">30</td><td dir="ltr">$19.68</td></tr>
+<tr><td>258</td><td dir="ltr">3:21</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.39</td><td dir="ltr">30</td><td dir="ltr">$12.20</td></tr>
+<tr><td>259</td><td dir="ltr">3:21</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.38</td><td dir="ltr">30</td><td dir="ltr">$11.89</td></tr>
+<tr><td>260</td><td dir="ltr">3:22</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.47</td><td dir="ltr">5.56604</td><td dir="ltr">$2.62</td></tr>
+<tr><td>261</td><td dir="ltr">3:22</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.47</td><td dir="ltr">11.1321</td><td dir="ltr">$5.23</td></tr>
+<tr><td>262</td><td dir="ltr">3:22</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.44</td><td dir="ltr">30</td><td dir="ltr">$13.72</td></tr>
+<tr><td>263</td><td dir="ltr">3:22</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.45</td><td dir="ltr">11.2</td><td dir="ltr">$5.04</td></tr>
+<tr><td>264</td><td dir="ltr">3:22</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.45</td><td dir="ltr">18.8</td><td dir="ltr">$8.46</td></tr>
+<tr><td>265</td><td dir="ltr">3:22</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.43</td><td dir="ltr">30</td><td dir="ltr">$13.41</td></tr>
+<tr><td>266</td><td dir="ltr">3:22</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.47</td><td dir="ltr">3.29</td><td dir="ltr">$1.55</td></tr>
+<tr><td>267</td><td dir="ltr">3:22</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.47</td><td dir="ltr">10</td><td dir="ltr">$4.70</td></tr>
+<tr><td>268</td><td dir="ltr">3:24</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.43</td><td dir="ltr">25</td><td dir="ltr">$10.75</td></tr>
+<tr><td>269</td><td dir="ltr">3:24</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.43</td><td dir="ltr">5</td><td dir="ltr">$2.15</td></tr>
+<tr><td>270</td><td dir="ltr">3:24</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.49</td><td dir="ltr">30</td><td dir="ltr">$15.22</td></tr>
+<tr><td>271</td><td dir="ltr">3:25</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.42</td><td dir="ltr">22.92</td><td dir="ltr">$9.63</td></tr>
+<tr><td>272</td><td dir="ltr">3:25</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.42</td><td dir="ltr">30</td><td dir="ltr">$13.11</td></tr>
+<tr><td>273</td><td dir="ltr">3:25</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.47</td><td dir="ltr">30</td><td dir="ltr">$14.62</td></tr>
+<tr><td>274</td><td dir="ltr">3:27</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.57</td><td dir="ltr">6.06</td><td dir="ltr">$3.45</td></tr>
+<tr><td>275</td><td dir="ltr">3:28</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.59</td><td dir="ltr">5</td><td dir="ltr">$2.95</td></tr>
+<tr><td>276</td><td dir="ltr">3:28</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.59</td><td dir="ltr">2.43902</td><td dir="ltr">$1.44</td></tr>
+<tr><td>277</td><td dir="ltr">3:28</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.59</td><td dir="ltr">5</td><td dir="ltr">$3.03</td></tr>
+<tr><td>278</td><td dir="ltr">3:28</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.41</td><td dir="ltr">30</td><td dir="ltr">$12.81</td></tr>
+<tr><td>279</td><td dir="ltr">3:28</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.59</td><td dir="ltr">2.43902</td><td dir="ltr">$1.44</td></tr>
+<tr><td>280</td><td dir="ltr">3:30</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.61</td><td dir="ltr">30</td><td dir="ltr">$18.80</td></tr>
+<tr><td>281</td><td dir="ltr">3:30</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.61</td><td dir="ltr">30</td><td dir="ltr">$18.80</td></tr>
+<tr><td>282</td><td dir="ltr">3:31</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.65</td><td dir="ltr">1.47</td><td dir="ltr">$0.96</td></tr>
+<tr><td>283</td><td dir="ltr">3:31</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.67</td><td dir="ltr">30</td><td dir="ltr">$20.56</td></tr>
+<tr><td>284</td><td dir="ltr">3:31</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.35</td><td dir="ltr">30</td><td dir="ltr">$10.98</td></tr>
+<tr><td>285</td><td dir="ltr">3:33</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.63</td><td dir="ltr">30</td><td dir="ltr">$19.39</td></tr>
+<tr><td>286</td><td dir="ltr">3:34</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.45</td><td dir="ltr">30</td><td dir="ltr">$14.02</td></tr>
+<tr><td>287</td><td dir="ltr">3:34</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.44</td><td dir="ltr">2.72</td><td dir="ltr">$1.24</td></tr>
+<tr><td>288</td><td dir="ltr">3:34</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.56</td><td dir="ltr">4.02273</td><td dir="ltr">$2.25</td></tr>
+<tr><td>289</td><td dir="ltr">3:36</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.41</td><td dir="ltr">30</td><td dir="ltr">$12.76</td></tr>
+<tr><td>290</td><td dir="ltr">3:36</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.43</td><td dir="ltr">5.68</td><td dir="ltr">$2.44</td></tr>
+<tr><td>291</td><td dir="ltr">3:36</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.42</td><td dir="ltr">30</td><td dir="ltr">$13.09</td></tr>
+<tr><td>292</td><td dir="ltr">3:36</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.42</td><td dir="ltr">30</td><td dir="ltr">$13.11</td></tr>
+<tr><td>293</td><td dir="ltr">3:37</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.47</td><td dir="ltr">30</td><td dir="ltr">$14.62</td></tr>
+<tr><td>294</td><td dir="ltr">3:37</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.46</td><td dir="ltr">30</td><td dir="ltr">$14.32</td></tr>
+<tr><td>295</td><td dir="ltr">3:39</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.47</td><td dir="ltr">30</td><td dir="ltr">$14.62</td></tr>
+<tr><td>296</td><td dir="ltr">3:39</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.49</td><td dir="ltr">19.3725</td><td dir="ltr">$9.49</td></tr>
+<tr><td>297</td><td dir="ltr">3:39</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.49</td><td dir="ltr">9</td><td dir="ltr">$4.41</td></tr>
+<tr><td>298</td><td dir="ltr">3:39</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.52</td><td dir="ltr">30</td><td dir="ltr">$16.12</td></tr>
+<tr><td>299</td><td dir="ltr">3:42</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.45</td><td dir="ltr">30</td><td dir="ltr">$14.02</td></tr>
+<tr><td>300</td><td dir="ltr">3:42</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.56</td><td dir="ltr">30</td><td dir="ltr">$17.32</td></tr>
+<tr><td>301</td><td dir="ltr">3:42</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.50</td><td dir="ltr">30</td><td dir="ltr">$15.53</td></tr>
+<tr><td>302</td><td dir="ltr">3:43</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.40</td><td dir="ltr">30</td><td dir="ltr">$12.50</td></tr>
+<tr><td>303</td><td dir="ltr">3:43</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.57</td><td dir="ltr">2.32558</td><td dir="ltr">$1.33</td></tr>
+<tr><td>304</td><td dir="ltr">3:45</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.36</td><td dir="ltr">30</td><td dir="ltr">$11.28</td></tr>
+<tr><td>305</td><td dir="ltr">3:45</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.64</td><td dir="ltr">30</td><td dir="ltr">$19.68</td></tr>
+<tr><td>306</td><td dir="ltr">3:45</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.40</td><td dir="ltr">30</td><td dir="ltr">$12.50</td></tr>
+<tr><td>307</td><td dir="ltr">3:46</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.39</td><td dir="ltr">30</td><td dir="ltr">$12.20</td></tr>
+<tr><td>308</td><td dir="ltr">3:48</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.61</td><td dir="ltr">30</td><td dir="ltr">$18.80</td></tr>
+<tr><td>309</td><td dir="ltr">3:48</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.40</td><td dir="ltr">30</td><td dir="ltr">$12.50</td></tr>
+<tr><td>310</td><td dir="ltr">3:48</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.40</td><td dir="ltr">30</td><td dir="ltr">$12.50</td></tr>
+<tr><td>311</td><td dir="ltr">3:49</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.40</td><td dir="ltr">30</td><td dir="ltr">$12.50</td></tr>
+<tr><td>312</td><td dir="ltr">3:49</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.40</td><td dir="ltr">30</td><td dir="ltr">$12.50</td></tr>
+<tr><td>313</td><td dir="ltr">3:49</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.40</td><td dir="ltr">30</td><td dir="ltr">$12.50</td></tr>
+<tr><td>314</td><td dir="ltr">3:49</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.40</td><td dir="ltr">30</td><td dir="ltr">$12.50</td></tr>
+<tr><td>315</td><td dir="ltr">3:51</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.40</td><td dir="ltr">50</td><td dir="ltr">$20.84</td></tr>
+<tr><td>316</td><td dir="ltr">3:51</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.40</td><td dir="ltr">30</td><td dir="ltr">$12.50</td></tr>
+<tr><td>317</td><td dir="ltr">3:51</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.40</td><td dir="ltr">30</td><td dir="ltr">$12.50</td></tr>
+<tr><td>318</td><td dir="ltr">3:51</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.40</td><td dir="ltr">30</td><td dir="ltr">$12.50</td></tr>
+<tr><td>319</td><td dir="ltr">3:52</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.40</td><td dir="ltr">50</td><td dir="ltr">$20.84</td></tr>
+<tr><td>320</td><td dir="ltr">3:54</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.58</td><td dir="ltr">14.18</td><td dir="ltr">$8.47</td></tr>
+<tr><td>321</td><td dir="ltr">3:57</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.30</td><td dir="ltr">15.33</td><td dir="ltr">$4.82</td></tr>
+<tr><td>322</td><td dir="ltr">3:57</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.29</td><td dir="ltr">25</td><td dir="ltr">$7.61</td></tr>
+<tr><td>323</td><td dir="ltr">3:57</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.67</td><td dir="ltr">30</td><td dir="ltr">$20.56</td></tr>
+<tr><td>324</td><td dir="ltr">3:57</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.64</td><td dir="ltr">30</td><td dir="ltr">$19.20</td></tr>
+<tr><td>325</td><td dir="ltr">3:57</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.71</td><td dir="ltr">30</td><td dir="ltr">$21.30</td></tr>
+<tr><td>326</td><td dir="ltr">3:57</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.30</td><td dir="ltr">14.67</td><td dir="ltr">$4.40</td></tr>
+<tr><td>327</td><td dir="ltr">3:57</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.25</td><td dir="ltr">29.99</td><td dir="ltr">$7.84</td></tr>
+<tr><td>328</td><td dir="ltr">3:58</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.65</td><td dir="ltr">30</td><td dir="ltr">$19.98</td></tr>
+<tr><td>329</td><td dir="ltr">3:58</td><td>M3</td><td><span class="tag down">Down</span></td><td dir="ltr">0.65</td><td dir="ltr">30</td><td dir="ltr">$19.98</td></tr>
+<tr><td>330</td><td dir="ltr">3:58</td><td>M3</td><td><span class="tag up">Up</span></td><td dir="ltr">0.28</td><td dir="ltr">50</td><td dir="ltr">$14.68</td></tr>
+<tr><td>331</td><td dir="ltr">4:00</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.63</td><td dir="ltr">30</td><td dir="ltr">$19.29</td></tr>
+<tr><td>332</td><td dir="ltr">4:00</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.28</td><td dir="ltr">30</td><td dir="ltr">$8.82</td></tr>
+<tr><td>333</td><td dir="ltr">4:00</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.32</td><td dir="ltr">2.94117</td><td dir="ltr">$0.94</td></tr>
+<tr><td>334</td><td dir="ltr">4:01</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.40</td><td dir="ltr">30</td><td dir="ltr">$12.50</td></tr>
+<tr><td>335</td><td dir="ltr">4:01</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.64</td><td dir="ltr">30</td><td dir="ltr">$19.68</td></tr>
+<tr><td>336</td><td dir="ltr">4:01</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.31</td><td dir="ltr">30</td><td dir="ltr">$9.77</td></tr>
+<tr><td>337</td><td dir="ltr">4:03</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.61</td><td dir="ltr">30</td><td dir="ltr">$18.80</td></tr>
+<tr><td>338</td><td dir="ltr">4:04</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.80</td><td dir="ltr">30</td><td dir="ltr">$24.34</td></tr>
+<tr><td>339</td><td dir="ltr">4:07</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.22</td><td dir="ltr">6.66</td><td dir="ltr">$1.47</td></tr>
+<tr><td>340</td><td dir="ltr">4:07</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.22</td><td dir="ltr">2.47</td><td dir="ltr">$0.54</td></tr>
+<tr><td>341</td><td dir="ltr">4:07</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.22</td><td dir="ltr">20.87</td><td dir="ltr">$4.59</td></tr>
+<tr><td>342</td><td dir="ltr">4:07</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.16</td><td dir="ltr">3.87</td><td dir="ltr">$0.66</td></tr>
+<tr><td>343</td><td dir="ltr">4:07</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.17</td><td dir="ltr">30</td><td dir="ltr">$5.40</td></tr>
+<tr><td>344</td><td dir="ltr">4:09</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.21</td><td dir="ltr">19.7722</td><td dir="ltr">$4.15</td></tr>
+<tr><td>345</td><td dir="ltr">4:09</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.17</td><td dir="ltr">13.69</td><td dir="ltr">$2.33</td></tr>
+<tr><td>346</td><td dir="ltr">4:09</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.18</td><td dir="ltr">1.6</td><td dir="ltr">$0.29</td></tr>
+<tr><td>347</td><td dir="ltr">4:09</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.18</td><td dir="ltr">20</td><td dir="ltr">$3.81</td></tr>
+<tr><td>348</td><td dir="ltr">4:09</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.18</td><td dir="ltr">8.4</td><td dir="ltr">$1.51</td></tr>
+<tr><td>349</td><td dir="ltr">4:10</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.21</td><td dir="ltr">30</td><td dir="ltr">$6.65</td></tr>
+<tr><td>350</td><td dir="ltr">4:10</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.24</td><td dir="ltr">30</td><td dir="ltr">$7.58</td></tr>
+<tr><td>351</td><td dir="ltr">4:10</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.27</td><td dir="ltr">30</td><td dir="ltr">$8.51</td></tr>
+<tr><td>352</td><td dir="ltr">4:10</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.20</td><td dir="ltr">10</td><td dir="ltr">$2.11</td></tr>
+<tr><td>353</td><td dir="ltr">4:12</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.21</td><td dir="ltr">15.8</td><td dir="ltr">$3.50</td></tr>
+<tr><td>354</td><td dir="ltr">4:12</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.19</td><td dir="ltr">30</td><td dir="ltr">$6.02</td></tr>
+<tr><td>355</td><td dir="ltr">4:16</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.83</td><td dir="ltr">30</td><td dir="ltr">$24.90</td></tr>
+<tr><td>356</td><td dir="ltr">4:18</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.85</td><td dir="ltr">30</td><td dir="ltr">$25.77</td></tr>
+<tr><td>357</td><td dir="ltr">4:18</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.84</td><td dir="ltr">4.37</td><td dir="ltr">$3.71</td></tr>
+<tr><td>358</td><td dir="ltr">4:19</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.59</td><td dir="ltr">10</td><td dir="ltr">$6.07</td></tr>
+<tr><td>359</td><td dir="ltr">4:19</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.14</td><td dir="ltr">1.16278</td><td dir="ltr">$0.16</td></tr>
+<tr><td>360</td><td dir="ltr">4:21</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.66</td><td dir="ltr">30</td><td dir="ltr">$20.27</td></tr>
+<tr><td>361</td><td dir="ltr">4:22</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.62</td><td dir="ltr">10.5263</td><td dir="ltr">$6.53</td></tr>
+<tr><td>362</td><td dir="ltr">4:22</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.59</td><td dir="ltr">30</td><td dir="ltr">$18.21</td></tr>
+<tr><td>363</td><td dir="ltr">4:24</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.60</td><td dir="ltr">10</td><td dir="ltr">$6.00</td></tr>
+<tr><td>364</td><td dir="ltr">4:24</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.59</td><td dir="ltr">20</td><td dir="ltr">$12.19</td></tr>
+<tr><td>365</td><td dir="ltr">4:25</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.62</td><td dir="ltr">4.85</td><td dir="ltr">$3.09</td></tr>
+<tr><td>366</td><td dir="ltr">4:25</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.40</td><td dir="ltr">50</td><td dir="ltr">$20.84</td></tr>
+<tr><td>367</td><td dir="ltr">4:25</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.62</td><td dir="ltr">30</td><td dir="ltr">$19.09</td></tr>
+<tr><td>368</td><td dir="ltr">4:27</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.71</td><td dir="ltr">12</td><td dir="ltr">$8.69</td></tr>
+<tr><td>369</td><td dir="ltr">4:28</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.72</td><td dir="ltr">30</td><td dir="ltr">$22.02</td></tr>
+<tr><td>370</td><td dir="ltr">4:28</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.71</td><td dir="ltr">30</td><td dir="ltr">$21.73</td></tr>
+<tr><td>371</td><td dir="ltr">4:30</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.62</td><td dir="ltr">30</td><td dir="ltr">$18.60</td></tr>
+<tr><td>372</td><td dir="ltr">4:30</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.28</td><td dir="ltr">30</td><td dir="ltr">$8.82</td></tr>
+<tr><td>373</td><td dir="ltr">4:30</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.74</td><td dir="ltr">30</td><td dir="ltr">$22.60</td></tr>
+<tr><td>374</td><td dir="ltr">4:30</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.71</td><td dir="ltr">10</td><td dir="ltr">$7.24</td></tr>
+<tr><td>375</td><td dir="ltr">4:31</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.31</td><td dir="ltr">1</td><td dir="ltr">$0.31</td></tr>
+<tr><td>376</td><td dir="ltr">4:31</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.31</td><td dir="ltr">6</td><td dir="ltr">$1.86</td></tr>
+<tr><td>377</td><td dir="ltr">4:31</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.73</td><td dir="ltr">12.19</td><td dir="ltr">$9.07</td></tr>
+<tr><td>378</td><td dir="ltr">4:31</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.29</td><td dir="ltr">30</td><td dir="ltr">$9.13</td></tr>
+<tr><td>379</td><td dir="ltr">4:31</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.73</td><td dir="ltr">17.81</td><td dir="ltr">$13.00</td></tr>
+<tr><td>380</td><td dir="ltr">4:33</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.31</td><td dir="ltr">13</td><td dir="ltr">$4.03</td></tr>
+<tr><td>381</td><td dir="ltr">4:33</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.31</td><td dir="ltr">6</td><td dir="ltr">$1.86</td></tr>
+<tr><td>382</td><td dir="ltr">4:33</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.31</td><td dir="ltr">4</td><td dir="ltr">$1.24</td></tr>
+<tr><td>383</td><td dir="ltr">4:33</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.27</td><td dir="ltr">30</td><td dir="ltr">$8.51</td></tr>
+<tr><td>384</td><td dir="ltr">4:33</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.25</td><td dir="ltr">30</td><td dir="ltr">$7.89</td></tr>
+<tr><td>385</td><td dir="ltr">4:33</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.75</td><td dir="ltr">30</td><td dir="ltr">$22.89</td></tr>
+<tr><td>386</td><td dir="ltr">4:33</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.72</td><td dir="ltr">30</td><td dir="ltr">$22.02</td></tr>
+<tr><td>387</td><td dir="ltr">4:36</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.34</td><td dir="ltr">30</td><td dir="ltr">$10.67</td></tr>
+<tr><td>388</td><td dir="ltr">4:36</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.47</td><td dir="ltr">30</td><td dir="ltr">$14.54</td></tr>
+<tr><td>389</td><td dir="ltr">4:37</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.38</td><td dir="ltr">1.6129</td><td dir="ltr">$0.61</td></tr>
+<tr><td>390</td><td dir="ltr">4:39</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.37</td><td dir="ltr">10.31</td><td dir="ltr">$3.81</td></tr>
+<tr><td>391</td><td dir="ltr">4:39</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.44</td><td dir="ltr">5</td><td dir="ltr">$2.29</td></tr>
+<tr><td>392</td><td dir="ltr">4:39</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.37</td><td dir="ltr">19.6825</td><td dir="ltr">$7.28</td></tr>
+<tr><td>393</td><td dir="ltr">4:40</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.47</td><td dir="ltr">30</td><td dir="ltr">$14.10</td></tr>
+<tr><td>394</td><td dir="ltr">4:40</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.55</td><td dir="ltr">5</td><td dir="ltr">$2.75</td></tr>
+<tr><td>395</td><td dir="ltr">4:40</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.44</td><td dir="ltr">25</td><td dir="ltr">$11.00</td></tr>
+<tr><td>396</td><td dir="ltr">4:43</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.39</td><td dir="ltr">4.67</td><td dir="ltr">$1.82</td></tr>
+<tr><td>397</td><td dir="ltr">4:43</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.39</td><td dir="ltr">20.3279</td><td dir="ltr">$7.93</td></tr>
+<tr><td>398</td><td dir="ltr">4:43</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.39</td><td dir="ltr">5</td><td dir="ltr">$2.03</td></tr>
+<tr><td>399</td><td dir="ltr">4:43</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.65</td><td dir="ltr">5</td><td dir="ltr">$3.25</td></tr>
+<tr><td>400</td><td dir="ltr">4:43</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.65</td><td dir="ltr">5</td><td dir="ltr">$3.25</td></tr>
+<tr><td>401</td><td dir="ltr">4:43</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.38</td><td dir="ltr">30</td><td dir="ltr">$11.89</td></tr>
+<tr><td>402</td><td dir="ltr">4:43</td><td>M4</td><td><span class="tag up">Up</span></td><td dir="ltr">0.65</td><td dir="ltr">5</td><td dir="ltr">$3.25</td></tr>
+<tr><td>403</td><td dir="ltr">4:48</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.28</td><td dir="ltr">30</td><td dir="ltr">$8.82</td></tr>
+<tr><td>404</td><td dir="ltr">4:48</td><td>M4</td><td><span class="tag down">Down</span></td><td dir="ltr">0.25</td><td dir="ltr">30</td><td dir="ltr">$7.89</td></tr>
+</table>
+</div>
+<p class="sub">שורות ה‑REDEEM (סליקה, 21:01 UTC): ‏Up × 4,023.80 →‏ $4,023.80 · ‏Down × 3,816.03 →‏ $0.00. סה"כ מניות Up שנקנו: 4,023.8 — תואם בדיוק לפדיון.</p>
+</div>
+<p class="sub">מקור: <code>bot/live_paper.py</code> · <code>bot/config.json</code> · נובמבר 2026. הסבר חזותי זה אינו ייעוץ השקעות — הבוט הוא סימולציית נייר בלבד.</p>
+
+</div>
+</body>
+</html>

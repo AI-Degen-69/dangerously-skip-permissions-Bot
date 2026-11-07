@@ -1,0 +1,229 @@
+{
+  "event_slug": "btc-updown-5m-1794086400",
+  "market": "Bitcoin Up or Down - November 7, 4:20PM-4:25PM ET",
+  "trades": 31,
+  "cost_usd": 211.91,
+  "payout_usd": 0.0,
+  "net_usd": -211.91,
+  "winner": null,
+  "pending": true,
+  "fills": [
+    {
+      "minute": 0,
+      "outcome": "Up",
+      "price": 0.52,
+      "shares": 30.0,
+      "usd": 15.6
+    },
+    {
+      "minute": 0,
+      "outcome": "Down",
+      "price": 0.47,
+      "shares": 30.0,
+      "usd": 14.1
+    },
+    {
+      "minute": 0,
+      "outcome": "Up",
+      "price": 0.45,
+      "shares": 13.86,
+      "usd": 6.24
+    },
+    {
+      "minute": 0,
+      "outcome": "Down",
+      "price": 0.47,
+      "shares": 30.0,
+      "usd": 14.1
+    },
+    {
+      "minute": 0,
+      "outcome": "Up",
+      "price": 0.3,
+      "shares": 13.86,
+      "usd": 4.16
+    },
+    {
+      "minute": 0,
+      "outcome": "Up",
+      "price": 0.31,
+      "shares": 13.86,
+      "usd": 4.3
+    },
+    {
+      "minute": 0,
+      "outcome": "Up",
+      "price": 0.34,
+      "shares": 30.0,
+      "usd": 10.2
+    },
+    {
+      "minute": 1,
+      "outcome": "Up",
+      "price": 0.48,
+      "shares": 13.86,
+      "usd": 6.65
+    },
+    {
+      "minute": 1,
+      "outcome": "Down",
+      "price": 0.48,
+      "shares": 13.86,
+      "usd": 6.65
+    },
+    {
+      "minute": 1,
+      "outcome": "Up",
+      "price": 0.53,
+      "shares": 30.0,
+      "usd": 15.9
+    },
+    {
+      "minute": 1,
+      "outcome": "Down",
+      "price": 0.5,
+      "shares": 13.86,
+      "usd": 6.93
+    },
+    {
+      "minute": 1,
+      "outcome": "Up",
+      "price": 0.45,
+      "shares": 13.86,
+      "usd": 6.24
+    },
+    {
+      "minute": 1,
+      "outcome": "Up",
+      "price": 0.44,
+      "shares": 30.0,
+      "usd": 13.2
+    },
+    {
+      "minute": 1,
+      "outcome": "Up",
+      "price": 0.5,
+      "shares": 13.86,
+      "usd": 6.93
+    },
+    {
+      "minute": 1,
+      "outcome": "Down",
+      "price": 0.45,
+      "shares": 13.86,
+      "usd": 6.24
+    },
+    {
+      "minute": 1,
+      "outcome": "Up",
+      "price": 0.56,
+      "shares": 30.0,
+      "usd": 16.8
+    },
+    {
+      "minute": 1,
+      "outcome": "Down",
+      "price": 0.46,
+      "shares": 13.86,
+      "usd": 6.38
+    },
+    {
+      "minute": 2,
+      "outcome": "Up",
+      "price": 0.38,
+      "shares": 13.86,
+      "usd": 5.27
+    },
+    {
+      "minute": 2,
+      "outcome": "Up",
+      "price": 0.34,
+      "shares": 30.0,
+      "usd": 10.2
+    },
+    {
+      "minute": 2,
+      "outcome": "Up",
+      "price": 0.23,
+      "shares": 13.86,
+      "usd": 3.19
+    },
+    {
+      "minute": 2,
+      "outcome": "Up",
+      "price": 0.21,
+      "shares": 13.86,
+      "usd": 2.91
+    },
+    {
+      "minute": 2,
+      "outcome": "Up",
+      "price": 0.21,
+      "shares": 30.0,
+      "usd": 6.3
+    },
+    {
+      "minute": 2,
+      "outcome": "Up",
+      "price": 0.2,
+      "shares": 13.86,
+      "usd": 2.77
+    },
+    {
+      "minute": 2,
+      "outcome": "Up",
+      "price": 0.18,
+      "shares": 13.86,
+      "usd": 2.49
+    },
+    {
+      "minute": 2,
+      "outcome": "Up",
+      "price": 0.14,
+      "shares": 30.0,
+      "usd": 4.2
+    },
+    {
+      "minute": 3,
+      "outcome": "Up",
+      "price": 0.18,
+      "shares": 13.86,
+      "usd": 2.49
+    },
+    {
+      "minute": 3,
+      "outcome": "Up",
+      "price": 0.27,
+      "shares": 13.86,
+      "usd": 3.74
+    },
+    {
+      "minute": 3,
+      "outcome": "Up",
+      "price": 0.22,
+      "shares": 30.0,
+      "usd": 6.6
+    },
+    {
+      "minute": 3,
+      "outcome": "Up",
+      "price": 0.05,
+      "shares": 13.86,
+      "usd": 0.69
+    },
+    {
+      "minute": 4,
+      "outcome": "Up",
+      "price": 0.01,
+      "shares": 13.86,
+      "usd": 0.14
+    },
+    {
+      "minute": 4,
+      "outcome": "Up",
+      "price": 0.01,
+      "shares": 30.0,
+      "usd": 0.3
+    }
+  ]
+}

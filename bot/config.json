@@ -1,0 +1,25 @@
+{
+  "asset": "BTC",
+  "intervals": ["5m"],
+  "mode": "paper",
+  "bankrollUsd": 1000,
+  "entry": {
+    "clipSharesDefault": 30,
+    "clipEveryNth": 3,
+    "medianShares": 13.86,
+    "maxShares": 50,
+    "medianFillsTarget": 45,
+    "openDelaySec": 13,
+    "hedgeDelaySec": 15,
+    "stopBeforeCloseSec": 15,
+    "minFillPrice": 0.01,
+    "leanSource": "microprice"
+  },
+  "risk": {
+    "maxUsdPerWindow": 4000,
+    "maxFillsPerWindow": 500,
+    "dailyLossCapUsd": 500,
+    "maxConcurrentPositions": 1
+  },
+  "news": { "blackoutMinutes": 0, "events": [] }
+}

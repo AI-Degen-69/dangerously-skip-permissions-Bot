@@ -1,0 +1,330 @@
+"""Live paper trader — mimics dangerously-skip-permissions on real BTC 5m windows.
+
+Reads LIVE `btc-updown-5m` markets (Gamma discovery + CLOB book), simulates
+buy-only straddle-plus-lean fills as if real (paper orders, NO keys, NO
+funding — PublicClient only), and resolves each window off the market's own
+outcome (winner pays $1/share).
+
+State it maintains for the desk UI (served by bot/api.py):
+  bot/state.json    live fills + lean while a window is open
+  bot/events.jsonl  decision journal (open / hedge / fill / resolve / skip)
+  bot/paper_runs/   one JSON per settled window (fills + net)
+  bot/kill          pause entries while present (kill-switch)
+
+Usage:
+  python bot/live_paper.py --once        # trade the current/next live window, then exit
+  python bot/live_paper.py --loop        # trade every window until Ctrl+C
+  python bot/api.py                      # desk API on 127.0.0.1:8788 (start/stop from UI)
+"""
+
+import argparse
+import json
+import sys
+import threading
+import time
+import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, ".")
+
+from polymarket import PublicClient
+
+from bot import constants as C
+from bot.discovery import WINDOW_S, current_slot, get_window
+from bot.risk import RiskState, assert_single_window, check_window, clip_shares, heartbeat
+from bot.signal import LeanSignal
+
+RUNS_DIR = Path("bot/paper_runs")
+STATE_PATH = Path("bot/state.json")
+EVENTS_PATH = Path("bot/events.jsonl")
+CONFIG_PATH = Path("bot/config.json")
+KILL_PATH = Path("bot/kill")
+
+
+def load_cfg() -> dict:
+    try:
+        return json.loads(CONFIG_PATH.read_text())
+    except Exception:
+        return {}
+
+
+def cfg_entry(key: str, default):
+    return load_cfg().get("entry", {}).get(key, default)
+
+
+def log_event(kind: str, reason: str, slug: str | None = None, **kw) -> None:
+    rec = {"ts": datetime.now(timezone.utc).isoformat(), "kind": kind,
+           "mode": "paper", "reason": reason}
+    if slug:
+        rec["slug"] = slug
+        rec["interval"] = "5m"
+    rec.update(kw)
+    EVENTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with EVENTS_PATH.open("a") as f:
+        f.write(json.dumps(rec) + "\n")
+
+
+def microprice_lean(c: PublicClient, up_id: str, down_id: str) -> LeanSignal:
+    """Lean from live book microprice. Neutral when the book is unusable."""
+    if load_cfg().get("entry", {}).get("leanSource", "microprice") == "dumb":
+        return LeanSignal(lean=0.0, confidence=0.0, source="dumb")
+    try:
+        up_mid = float(c.get_midpoint(token_id=up_id))
+        down_mid = float(c.get_midpoint(token_id=down_id))
+    except Exception:
+        return LeanSignal(lean=0.0, confidence=0.0, source="book-unavailable")
+    edge = (up_mid - down_mid) / 2.0  # >0 favors Up
+    lean = max(-1.0, min(1.0, edge * 4.0))
+    spread = abs(up_mid + down_mid - 1.0)
+    confidence = max(0.0, min(1.0, 1.0 - spread * 5.0))
+    return LeanSignal(lean=lean, confidence=confidence, source="book-microprice")
+
+
+def live_buy_price(c: PublicClient, token_id: str) -> float | None:
+    try:
+        return float(c.get_price(token_id=token_id, side="BUY"))
+    except Exception:
+        return None
+
+
+def write_state(slug: str, end_ms: int, started_ms: int, fills: list[dict], lean: LeanSignal) -> None:
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    STATE_PATH.write_text(json.dumps({
+        "slug": slug, "endMs": end_ms, "startedAtMs": started_ms,
+        "updatedAtMs": int(time.time() * 1000), "fills": fills,
+        "lean": lean.lean, "leanSource": lean.source}))
+
+
+def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool = True) -> dict:
+    slug = f"btc-updown-5m-{slot}"
+    assert_single_window(slug)  # refuse if a crashed window still owns state
+    spec = get_window(c, slug)
+    entry = load_cfg().get("entry", {})
+    open_delay = entry.get("openDelaySec", 13)
+    hedge_delay = entry.get("hedgeDelaySec", 15)
+    stop_before = entry.get("stopBeforeCloseSec", 15)
+    min_fill = float(entry.get("minFillPrice", 0.01))
+    clip_default = entry.get("clipSharesDefault", C.CLIP_SHARES_DEFAULT)
+    clip_nth = entry.get("clipEveryNth", 3)
+    median_shares = entry.get("medianShares", C.MEDIAN_SHARES)
+    max_shares = entry.get("maxShares", C.MAX_SHARES)
+    target_total = entry.get("medianFillsTarget", int(C.MEDIAN_TRADES_PER_WINDOW))
+    state = RiskState()
+    fills: list[dict] = []
+    cost = 0.0
+    end_ms = (slot + WINDOW_S) * 1000
+    started_ms = int(time.time() * 1000)
+
+    def log(msg: str) -> None:
+        if verbose:
+            print(f"[{slug}] {msg}", flush=True)
+
+    # --- open: first touch at ~T+13s (median), hedge leg +15s (median) ---
+    now = int(datetime.now(timezone.utc).timestamp())
+    open_at = slot + open_delay
+    if now < open_at:
+        time.sleep(open_at - now)
+    lean = microprice_lean(c, spec.up_token_id, spec.down_token_id)
+    first_up = lean.lean >= 0
+    for outcome, tid in (("Up" if first_up else "Down", spec.up_token_id if first_up else spec.down_token_id),
+                         ("Down" if first_up else "Up", spec.down_token_id if first_up else spec.up_token_id)):
+        px = live_buy_price(c, tid)
+        if px is None:
+            log_event("skip", "no-liquidity", slug, side=outcome, detail={"side": outcome})
+            continue
+        if px < min_fill:
+            log_event("skip", "dust-quote", slug, side=outcome,
+                      detail={"side": outcome, "price": px})
+            continue
+        if outcome != ("Up" if first_up else "Down"):
+            time.sleep(hedge_delay)  # hedge leg
+            lean = microprice_lean(c, spec.up_token_id, spec.down_token_id)
+        if check_window(len(fills), cost, state):
+            break
+        shares = clip_shares(clip_default)
+        fills.append({"minute": 0, "outcome": outcome, "price": px, "shares": shares, "usd": round(px * shares, 2)})
+        cost += px * shares
+        log_event("entry", "straddle-open" if len(fills) == 1 else "hedge-leg", slug,
+                  side=outcome, detail={"price": px, "shares": shares, "lean": round(lean.lean, 2)})
+        log(f"open {outcome} {shares:.0f} @ {px:.3f}")
+        write_state(slug, end_ms, started_ms, fills, lean)
+
+    # --- work M1-M3 + M4 snipe: distribute remaining fills over time left ---
+    end = slot + WINDOW_S - stop_before  # stop before close
+    while True:
+        now = int(datetime.now(timezone.utc).timestamp())
+        if now >= end or len(fills) >= target_total:
+            break
+        if check_window(len(fills), cost, state):
+            break
+        lean = microprice_lean(c, spec.up_token_id, spec.down_token_id)
+        minute = min(max((now - slot) // 60, 0), 4)
+        up_bias = 0.5 + lean.lean * 0.25 * (0.5 + 0.5 * lean.confidence)
+        up_side = ((len(fills) + minute) % 2 == 0 and up_bias >= 0.5) or (up_bias > 0.65 and len(fills) % 3 != 0)
+        if lean.lean < 0:
+            up_side = not up_side
+        outcome = "Up" if up_side else "Down"
+        tid = spec.up_token_id if up_side else spec.down_token_id
+        px = live_buy_price(c, tid)
+        if px is None:
+            heartbeat()
+            time.sleep(5)
+            continue
+        if px < min_fill:
+            log(f"M{minute} {outcome} dust {px:.3f} — skipped")
+            heartbeat()
+            time.sleep(5)
+            continue
+        # M4 snipe: only take extremes late (matches CSV: extremes only in M4)
+        if minute < 4 and (px <= 0.15 or px >= 0.85) and len(fills) % 4 != 0:
+            heartbeat()
+            time.sleep(5)
+            continue
+        shares = clip_shares(clip_default if len(fills) % clip_nth == 0 else median_shares)
+        shares = min(shares, max_shares)
+        fills.append({"minute": minute, "outcome": outcome, "price": px, "shares": shares, "usd": round(px * shares, 2)})
+        cost += px * shares
+        if len(fills) % 10 == 0:
+            log_event("hold", "thesis-intact", slug, side=outcome,
+                      detail={"bid": px, "fills": len(fills)})
+        log(f"M{minute} {outcome} {shares:.1f} @ {px:.3f} (lean {lean.lean:+.2f})")
+        write_state(slug, end_ms, started_ms, fills, lean)
+        left = end - int(datetime.now(timezone.utc).timestamp())
+        remaining = target_total - len(fills)
+        time.sleep(max(2.0, min(20.0, left / max(remaining, 1))))
+
+    # --- close: write a pending run file, settle in background, NEVER block next window ---
+    result = {"event_slug": slug, "market": spec.question or slug, "trades": len(fills),
+              "cost_usd": round(cost, 2), "payout_usd": 0.0, "net_usd": round(-cost, 2),
+              "winner": None, "pending": True, "fills": fills}
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    (RUNS_DIR / f"{slug}.json").write_text(json.dumps(result, indent=2))
+    try:
+        STATE_PATH.unlink()
+    except OSError:
+        pass
+    log(f"window closed, {len(fills)} paper fills, cost ${cost:.2f} — settling in background…")
+    snap = {"slug": slug, "market": spec.question or slug,
+            "fills": fills, "cost": round(cost, 2)}
+    th = threading.Thread(target=settle_slug, args=(slug, snap, origin),
+                          kwargs={"budget_s": 900}, daemon=True)
+    th.start()
+    return result
+
+
+def settle_slug(slug: str, snap: dict, origin: str | None, budget_s: int = 900) -> dict | None:
+    """Resolve one window off the market's own outcome (background-safe)."""
+    c = PublicClient()
+    fills = snap.get("fills", [])
+    cost = float(snap.get("cost", 0.0))
+    winner: str | None = None
+    waited = 0
+    while waited < budget_s:
+        time.sleep(30)
+        waited += 30
+        try:
+            ev = c.get_event(slug=slug).model_dump()
+            mk = (ev.get("markets") or [{}])[0]
+            outs = mk.get("outcomes") or {}
+            for _key, info in outs.items():
+                try:
+                    if float(info.get("price") or 0) >= 1.0:
+                        winner = info.get("label")
+                        break
+                except (TypeError, ValueError):
+                    continue
+            if winner:
+                break
+        except Exception as ex:
+            print(f"[{slug}] resolve poll: {type(ex).__name__}", flush=True)
+    payout = 0.0
+    if winner:
+        wshares = sum(f["shares"] for f in fills if f["outcome"] == winner)
+        payout = round(wshares * 1.0, 2)
+    net = round(payout - cost, 2)
+    result = {"event_slug": slug, "market": snap.get("market", slug), "trades": len(fills),
+              "cost_usd": cost, "payout_usd": payout, "net_usd": net,
+              "winner": winner, "resolvedAt": datetime.now(timezone.utc).isoformat(),
+              "fills": fills}
+    if winner:
+        result.pop("pending", None)
+    else:
+        result["pending"] = True
+    try:
+        RUNS_DIR.mkdir(parents=True, exist_ok=True)
+        (RUNS_DIR / f"{slug}.json").write_text(json.dumps(result, indent=2))
+    except OSError:
+        pass
+    log_event("settle", "paper-resolve", slug,
+              detail={"winner": winner, "fills": len(fills), "cost": cost,
+                      "payout": payout, "net": net})
+    print(f"[{slug}] resolved: winner={winner} payout=${payout:.2f} net=${net:.2f}", flush=True)
+    if origin:
+        try:
+            post_result(origin, result)
+        except Exception as ex:
+            print(f"[{slug}] dashboard import: {type(ex).__name__}", flush=True)
+    return result
+
+
+def post_result(origin: str, result: dict) -> None:
+    payload = json.dumps({"windows": [{k: result[k] for k in ("event_slug", "market", "trades", "cost_usd", "payout_usd", "net_usd")}]}).encode()
+    req = urllib.request.Request(f"{origin.rstrip('/')}/api/bot/import", data=payload,
+                                 headers={"Content-Type": "application/json", "Origin": origin.rstrip('/')})
+    body = urllib.request.urlopen(req, timeout=20).read().decode()
+    print(f"dashboard import: {body[:200]}", flush=True)
+
+
+def wait_while_killed(verbose: bool = True) -> None:
+    while KILL_PATH.exists():
+        if verbose:
+            print("kill-switch present — entries paused", flush=True)
+        time.sleep(30)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Live BTC 5m paper trader (no keys, no funding)")
+    ap.add_argument("--once", action="store_true", help="trade one live window then exit")
+    ap.add_argument("--loop", action="store_true", help="trade every window until Ctrl+C")
+    ap.add_argument("--slot", type=int, default=None, help="explicit window epoch (default: current)")
+    ap.add_argument("--origin", default="http://localhost:5174", help="Worker origin for dashboard import ('' to skip)")
+    args = ap.parse_args()
+    c = PublicClient()
+    if args.slot:
+        trade_window(c, args.slot, args.origin or None)
+        return
+    if args.once:
+        slot = current_slot()
+        now = int(datetime.now(timezone.utc).timestamp())
+        if now > slot + WINDOW_S - 60:
+            slot += WINDOW_S  # too late in this window — take the next one
+            wait = slot + 13 - now
+            print(f"joining next window in {wait}s…", flush=True)
+            time.sleep(max(wait, 0))
+        wait_while_killed()
+        trade_window(c, slot, args.origin or None)
+        return
+    # --loop (default if nothing passed)
+    while True:
+        slot = current_slot()
+        now = int(datetime.now(timezone.utc).timestamp())
+        if now > slot + WINDOW_S - 60:
+            slot += WINDOW_S
+        wait = slot + 13 - now
+        if wait > 0:
+            print(f"next window in {wait}s…", flush=True)
+            time.sleep(wait)
+        try:
+            wait_while_killed()
+            trade_window(c, slot, args.origin or None)
+        except KeyboardInterrupt:
+            raise
+        except Exception as ex:
+            print(f"window failed: {type(ex).__name__}: {ex}", flush=True)
+            log_event("error", "window-failed", f"btc-updown-5m-{slot}", detail={"error": str(ex)[:200]})
+            time.sleep(30)
+
+
+if __name__ == "__main__":
+    main()
