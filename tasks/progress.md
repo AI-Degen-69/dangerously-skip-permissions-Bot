@@ -1,5 +1,13 @@
 # Progress Log
 
+### Station IIIi: Phase 5 delivery (2026-11-07)
+- Pre-flight: `tasks/plan.md` found; no git repo (no branch/commit — recorded, not created); CONSTRAINTS.md absent; no issue linked so quick-fix lane skipped per 1c. Took Phase 5 from `tasks/plan.md` (single source of truth).
+- Delivered (rule 0, docs-only, no code touched): `docs/bot-fidelity-report.md` (deterministic sim median 44 vs 45, both 288/288 vs 280/288, mean cost $432 vs $447; live 10-settled sample median 24.5 recorded as noise; 19/19 tests) + `bot/RUNBOOK.md` (desk quick-start, config, files, kill drill, paper redeem, micro-size gate, stop/reset).
+- Verified live: `run_paper.py` + `reconcile` + `redeem --dry-run` (10 redeemable, no mutation) + kill drill (`touch bot/kill` → halted True, `rm` → False; RiskState kill + $500 daily-loss kill) + `unittest` 19/19 OK. Real redeem (non-dry) intentionally not run.
+- `tasks/plan.md`: Phase 5 all `[x]`, status complete, Current Phase → Station IV.
+- NOTICED-BUT-NOT-TOUCHING: `paper_runs/` has 1 pending + `state.json` owns `...1794086700` (loop mid-window at close-out) — operator to confirm settle before next session. `redeem.py` real run still not executed (would mutate runs).
+- Next: Station IV (`iv-review-build-and-pr`) — code review, final verification, PR.
+
 ## Session: 2026-11-07 (iii-build-plan single-task)
 
 ### Station IIIb: CRM hosts bot (2026-11-07)
