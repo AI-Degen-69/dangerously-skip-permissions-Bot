@@ -5,17 +5,20 @@ import { eventMetrics, KIND_TONE, reasonLabel as label } from '../lib/labels'
 import { Badge, Button, Card, EmptyState, PageHeader, Skeleton, useToast } from '../components/ui'
 import {
   BOT_ORIGIN,
+  useBotControl,
   useBotEvents,
   useBotSnapshot,
   useBotTrades,
   useSetKillSwitch,
   useResumeBot,
+  useStartBot,
   type BotEvent,
   type BotSnapshot,
   type BotTrade,
   type PositionView,
 } from '../lib/bot'
 import { cx } from '../lib/cx'
+import { relativeTime } from '../lib/format'
 
 const money = (value: number | null | undefined) =>
   value === null || value === undefined ? '—' : `${value < 0 ? '−' : ''}$${Math.abs(value).toFixed(2)}`
@@ -45,10 +48,19 @@ export function Live() {
   const events = useBotEvents()
   const trades = useBotTrades()
   const killSwitch = useSetKillSwitch()
+  const control = useBotControl()
+  const start = useStartBot()
+  const toast = useToast()
 
   const data = snapshot.data?.snapshot ?? null
   const online = Boolean(snapshot.data?.online && data)
   const stopped = data?.killSwitch ?? false
+  const running = control.data?.running ?? false
+  const startBot = () =>
+    start.mutate(undefined, {
+      onSuccess: (result) => toast(result.reason === 'already-running' ? 'Bot already running' : 'Paper bot started'),
+      onError: (error: Error) => toast(error.message, 'danger'),
+    })
 
   return (
     <div className="mx-auto max-w-[1200px] p-5 sm:p-8">
@@ -56,27 +68,32 @@ export function Live() {
         title="Live bot"
         subtitle="What it sees right now, why it decides, and every fill it made."
         actions={
-          <div className="flex items-center gap-2">
-            <Badge tone={online ? 'success' : 'neutral'} dot>
-              {online ? 'Streaming' : 'No signal'}
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone={snapshot.isError && !snapshot.data ? 'neutral' : running ? 'success' : 'neutral'} dot>
+              {snapshot.isError && !snapshot.data ? 'No signal' : running ? 'Streaming' : 'Stopped'}
             </Badge>
-            {data && <Badge tone={data.mode === 'live' ? 'danger' : 'warning'}>{data.mode === 'live' ? 'LIVE money' : 'Paper'}</Badge>}
-            {data && (
-              <Button
-                variant={stopped ? 'primary' : 'danger'}
-                size="sm"
-                loading={killSwitch.isPending}
-                onClick={() => killSwitch.mutate(!stopped)}
-              >
-                {stopped ? <Play /> : <ShieldAlert />}
-                {stopped ? 'Resume entries' : 'Pause entries'}
+            <Badge tone={data?.mode === 'live' ? 'danger' : 'warning'}>{data?.mode === 'live' ? 'LIVE money' : 'Paper'}</Badge>
+            {running && stopped && <Badge tone="warning">Entries paused</Badge>}
+            <Button
+              variant={stopped ? 'primary' : 'danger'}
+              size="sm"
+              disabled={!running}
+              loading={killSwitch.isPending}
+              onClick={() => killSwitch.mutate(!stopped)}
+            >
+              {stopped ? <Play /> : <ShieldAlert />}
+              {stopped ? 'Resume entries' : 'Pause entries'}
+            </Button>
+            {!running && (
+              <Button variant="primary" size="sm" loading={start.isPending} onClick={startBot}>
+                <Play /> Start bot
               </Button>
             )}
           </div>
         }
       />
 
-      {snapshot.isLoading ? (
+      {snapshot.isLoading || control.isLoading ? (
         <Skeleton className="mt-6 h-[260px] rounded-card" />
       ) : snapshot.isError && !snapshot.data ? (
         <Card className="mt-6 p-6">
@@ -92,6 +109,29 @@ export function Live() {
             </div>
           </div>
         </Card>
+      ) : !running ? (
+        <Card className="mt-6 p-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <span className="grid size-10 shrink-0 place-items-center rounded-card bg-warning-soft text-warning">
+                <Activity className="size-5" />
+              </span>
+              <div>
+                <h2 className="text-[15px] font-semibold">The loop is stopped</h2>
+                <p className="mt-1 max-w-xl text-[13.5px] text-muted">
+                  No windows are being traded, so there is nothing streaming to show. Start it to resume one 5-minute
+                  straddle window at a time.
+                  {snapshot.data?.ageMs != null && (
+                    <> Last heartbeat {relativeTime(Date.now() - snapshot.data.ageMs)}.</>
+                  )}
+                </p>
+              </div>
+            </div>
+            <Button variant="primary" size="sm" loading={start.isPending} onClick={startBot}>
+              <Play /> Start paper bot
+            </Button>
+          </div>
+        </Card>
       ) : !online ? (
         <Card className="mt-6 p-6">
           <div className="flex items-start gap-3">
@@ -99,9 +139,9 @@ export function Live() {
               <Activity className="size-5" />
             </span>
             <div>
-              <h2 className="text-[15px] font-semibold">Waiting for the bot</h2>
+              <h2 className="text-[15px] font-semibold">Waiting for the first window</h2>
               <p className="mt-1 text-[13.5px] text-muted">
-                Start the bot from the dashboard. This page fills in on its own within a couple of seconds.
+                The loop is running — this page fills in as soon as it opens the next window.
               </p>
             </div>
           </div>

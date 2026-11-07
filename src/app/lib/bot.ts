@@ -136,6 +136,96 @@ export interface BotControl {
   logPath: string
 }
 
+export interface PerfGate {
+  key: string
+  label: string
+  value: string
+  target: string
+  status: 'pass' | 'warn' | 'fail' | 'sample'
+  judged: boolean
+  detail: string
+}
+
+export interface PerfWindow {
+  slug: string
+  market: string | null
+  startMs: number
+  trades: number
+  costUsd: number
+  payoutUsd: number
+  netUsd: number | null
+  winner: Side | null
+  pending: boolean
+  redeemed: boolean
+  bothSides: boolean
+  upFills: number
+  downFills: number
+  zeroPriceFills: number
+  mShape: number[]
+}
+
+export interface PerfNote {
+  tone: 'success' | 'info' | 'warning' | 'danger'
+  title: string
+  body: string
+}
+
+export interface BotPerf {
+  summary: {
+    settled: number
+    pending: number
+    fills: number
+    costUsd: number
+    payoutUsd: number
+    netUsd: number
+    roi: number
+    profitable: number
+    hitRate: number
+    bothSides: number
+    bothSidesRate: number
+    medianFills: number
+    meanFills: number
+    medianCostUsd: number
+    meanCostUsd: number
+    bestUsd: number
+    worstUsd: number
+    zeroPriceFills: number
+    upFills: number
+    downFills: number
+    upWins: number
+    downWins: number
+  }
+  targets: {
+    windows: number
+    medianFills: number
+    meanFills: number
+    medianCostUsd: number
+    meanCostUsd: number
+    bothSides: number
+  }
+  gate: PerfGate[]
+  mShape: {
+    live: number[]
+    target: number[]
+    liveShare: number[]
+    targetShare: number[]
+    distance: number
+  }
+  redeem: { count: number; payoutUsd: number }
+  health: {
+    loopRunning: boolean
+    pid: number | null
+    killSwitch: boolean
+    stateSlug: string | null
+    stateFills: number
+    snapshotAgeSec: number | null
+    windowEndsInSec: number | null
+  }
+  notes: PerfNote[]
+  windows: PerfWindow[]
+  generatedAt: string
+}
+
 export interface BotConfigView {
   asset: string
   intervals: Interval[]
@@ -239,6 +329,14 @@ export const useBotControl = () =>
     queryKey: ['bot', 'control'],
     queryFn: () => getJson<BotControl>('/control'),
     refetchInterval: 3_000,
+    retry: false,
+  })
+
+export const useBotPerf = () =>
+  useQuery({
+    queryKey: ['bot', 'perf'],
+    queryFn: () => getJson<BotPerf>('/perf'),
+    refetchInterval: 5_000,
     retry: false,
   })
 

@@ -24,7 +24,7 @@ type ButtonSize = 'md' | 'sm' | 'icon' | 'icon-sm'
 const buttonBase =
   'inline-flex shrink-0 select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-control font-medium transition-[background-color,color,box-shadow,transform] duration-150 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0'
 const buttonVariants: Record<ButtonVariant, string> = {
-  primary: 'bg-fg text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.12)] hover:bg-[#26262c]',
+  primary: 'bg-fg text-bg shadow-[inset_0_1px_0_rgb(255_255_255/0.12)] hover:bg-fg/85',
   secondary: 'border border-line-strong bg-surface text-fg shadow-[0_1px_1px_rgb(20_20_24/0.04)] hover:bg-surface-2',
   ghost: 'text-muted hover:bg-surface-2 hover:text-fg',
   danger: 'bg-danger text-white hover:bg-[#bf3b26]',
@@ -486,7 +486,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               exit={{ opacity: 0, y: 8, scale: 0.96 }}
               className={cx(
                 'pointer-events-auto rounded-control px-4 py-2.5 text-[13.5px] font-medium shadow-pop',
-                t.tone === 'danger' ? 'bg-danger text-white' : 'bg-fg text-white',
+                t.tone === 'danger' ? 'bg-danger text-white' : 'bg-fg text-bg',
               )}
             >
               {t.message}
