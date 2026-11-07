@@ -64,7 +64,7 @@ export function Dashboard() {
   const windows = data?.windows ?? []
   const settled = windows.filter((window) => !window.pending)
   const curve = cumulative(settled)
-  const gateJudged = settled.length >= 288
+  const gateJudged = settled.length >= (data?.targets.windows ?? 288)
 
   return (
     <div className="mx-auto max-w-[1200px] p-5 sm:p-8">

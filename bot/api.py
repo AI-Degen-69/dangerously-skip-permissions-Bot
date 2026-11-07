@@ -307,6 +307,14 @@ def kpis() -> dict:
 # ------------------------------------------------------- fidelity + performance
 
 
+def _num(value, default: float = 0.0) -> float:
+    """Paper-run JSON is hand-editable, so never let one bad field 500 the desk."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _minute_shape(fills: list[dict]) -> list[int]:
     shape = [0, 0, 0, 0, 0]
     for f in fills:
@@ -322,8 +330,8 @@ def _minute_shape(fills: list[dict]) -> list[int]:
 def _window_row(r: dict) -> dict:
     """One settled/pending window flattened for the dashboard tables."""
     fills = r.get("fills") or []
-    cost = float(r.get("cost_usd") or 0.0)
-    payout = float(r.get("payout_usd") or 0.0)
+    cost = _num(r.get("cost_usd"))
+    payout = _num(r.get("payout_usd"))
     pending = bool(r.get("pending")) or not r.get("winner")
     try:
         start_ms = int(str(r.get("event_slug", "")).split("-")[-1]) * 1000
@@ -344,7 +352,7 @@ def _window_row(r: dict) -> dict:
         "bothSides": len(sides) > 1,
         "upFills": sum(1 for f in fills if f.get("outcome") == "Up"),
         "downFills": sum(1 for f in fills if f.get("outcome") == "Down"),
-        "zeroPriceFills": sum(1 for f in fills if float(f.get("price") or 0) <= 0),
+        "zeroPriceFills": sum(1 for f in fills if _num(f.get("price")) <= 0),
         "mShape": _minute_shape(fills),
     }
 
