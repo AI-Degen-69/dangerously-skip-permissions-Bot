@@ -738,13 +738,16 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def _send(self, code: int, obj: object) -> None:
-        body = json.dumps(obj).encode()
-        self.send_response(code)
-        self._cors()
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            body = json.dumps(obj).encode()
+            self.send_response(code)
+            self._cors()
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (ConnectionError, BrokenPipeError):
+            pass
 
     def do_OPTIONS(self):
         self.send_response(204)
@@ -835,8 +838,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"config": self._config_view(), "configFile": str(CONFIG_PATH)})
             else:
                 self._send(404, {"error": "not found"})
+        except (ConnectionError, BrokenPipeError):
+            pass
         except Exception as ex:
-            self._send(500, {"error": f"{type(ex).__name__}: {ex}"})
+            try:
+                self._send(500, {"error": f"{type(ex).__name__}: {ex}"})
+            except Exception:
+                pass
 
     def do_POST(self):
         body = self._body()
@@ -939,8 +947,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": True, "killSwitch": False})
             else:
                 self._send(404, {"error": "not found"})
+        except (ConnectionError, BrokenPipeError):
+            pass
         except Exception as ex:
-            self._send(500, {"error": f"{type(ex).__name__}: {ex}"})
+            try:
+                self._send(500, {"error": f"{type(ex).__name__}: {ex}"})
+            except Exception:
+                pass
 
     def do_PUT(self):
         if is_view_only():
@@ -999,11 +1012,19 @@ class Handler(BaseHTTPRequestHandler):
                             "minRemainingSeconds": 240, "stallSeconds": 180}}}
 
 
+class QuietThreadingHTTPServer(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        ex = sys.exc_info()[1]
+        if isinstance(ex, (ConnectionError, BrokenPipeError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Paper desk API (loopback only)")
     ap.add_argument("--port", type=int, default=8789)
     args = ap.parse_args()
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    server = QuietThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"paper desk API on http://127.0.0.1:{args.port} (loopback only, no keys)", flush=True)
     server.serve_forever()
 
