@@ -18,7 +18,7 @@ export interface MarketView {
   edge: number | null
   spreadCents: number | null
   secondsRemaining: number
-  verdict: { action: 'enter' | 'skip' | 'blocked' | 'refuse' | 'done'; reason: string; detail: Record<string, unknown> }
+  verdict: { action: 'enter' | 'skip' | 'blocked' | 'refuse' | 'done' | 'snipe'; reason: string; detail: Record<string, unknown> }
   oddsHistory?: { t: number; v: number }[]
   lean?: number | null
   leanSource?: string | null
