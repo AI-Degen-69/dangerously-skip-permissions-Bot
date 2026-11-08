@@ -397,7 +397,8 @@ function Positions({ data }: { data: BotSnapshot }) {
 
 function PositionRow({ position }: { position: PositionView }) {
   const pnl = position.unrealizedPnlUsd
-  const resolving = pnl == null
+  const isResolving = Boolean(position.resolving ?? (position.secondsLeft <= 0))
+  const resolving = isResolving && pnl == null
   return (
     <li className="py-3">
       <div className="flex items-center justify-between gap-2">
@@ -405,7 +406,12 @@ function PositionRow({ position }: { position: PositionView }) {
           <Badge tone={position.side === 'Up' ? 'success' : 'danger'}>{position.side}</Badge>
           <span className="text-[12.5px] text-muted">{windowLabel(position.slug)}</span>
         </div>
-        <span className={cx('text-[13px] font-semibold tabular-nums', resolving ? 'text-faint' : pnl! >= 0 ? 'text-success' : 'text-danger')}>
+        <span
+          className={cx(
+            'text-[13px] font-semibold tabular-nums',
+            resolving || pnl == null ? 'text-faint' : pnl >= 0 ? 'text-success' : 'text-danger',
+          )}
+        >
           {resolving ? 'resolving…' : money(pnl)}
         </span>
       </div>

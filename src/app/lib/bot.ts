@@ -55,6 +55,7 @@ export interface PositionView {
   unrealizedPnlUsd: number | null
   secondsLeft: number
   stalledSec: number | null
+  resolving?: boolean
 }
 
 export interface WsBookSummary {

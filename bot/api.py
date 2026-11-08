@@ -408,8 +408,32 @@ def snapshot() -> dict:
                     from bot.discovery import get_window
                     spec = get_window(client(), st["slug"])
                     tid = spec.up_token_id if side == "Up" else spec.down_token_id
-                    mark_val = float(client().get_price(token_id=tid, side="BUY"))
-                    mark = mark_val if mark_val > 0 else None
+                    c = client()
+                    px = None
+                    try:
+                        p = float(c.get_price(token_id=tid, side="BUY"))
+                        if 0.0 < p <= 1.0:
+                            px = p
+                    except Exception:
+                        pass
+                    if px is None:
+                        try:
+                            p = float(c.get_price(token_id=tid, side="SELL"))
+                            if 0.0 < p <= 1.0:
+                                px = p
+                        except Exception:
+                            pass
+                    if px is None:
+                        try:
+                            mid = float(c.get_midpoint(token_id=tid))
+                            if 0.0 < mid <= 1.0:
+                                px = mid
+                        except Exception:
+                            pass
+                    if px is not None:
+                        mark = px
+                    else:
+                        mark = 0.0
                 except Exception:
                     mark = None
             mv = round(mark * shares, 2) if mark is not None else None
@@ -424,6 +448,7 @@ def snapshot() -> dict:
                 "unrealizedPnlUsd": round(mv - cost, 2) if mv is not None else None,
                 "secondsLeft": max(0, round((end_ms - now_ms) / 1000)),
                 "stalledSec": None,
+                "resolving": is_resolving,
             })
     equity = round(bankroll + realized + sum(p["unrealizedPnlUsd"] or 0 for p in positions), 2)
     risk_cfg = cfg.get("risk", {})
