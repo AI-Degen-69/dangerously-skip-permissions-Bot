@@ -350,11 +350,6 @@ function RiskPanel({ data }: { data: BotSnapshot }) {
         <Limit label="Drawdown" value={`${money(drawdown)} of ${money(drawdownLimit)}`} ratio={drawdownLimit > 0 ? drawdown / drawdownLimit : 0} />
       </ul>
 
-      <div className="mt-4 space-y-1.5 text-[12px] text-muted">
-        <p>Entry needs {(limits.minEdge * 100).toFixed(0)}¢ edge after a {(limits.feeRate * 100).toFixed(0)}% taker fee.</p>
-        <p>Profit target {cents(limits.profitTargetCents)}; one position at a time.</p>
-      </div>
-
       {risk.halted && (
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-tile bg-danger-soft p-2.5 text-[12.5px] text-danger">
           <span>Halted for the day: {label(risk.haltReason)}</span>
@@ -445,10 +440,10 @@ function Trades({ items }: { items: BotTrade[] }) {
                   <td
                     className={cx(
                       'py-2.5 text-right font-medium tabular-nums',
-                      trade.pnlUsd === undefined ? 'text-faint' : trade.pnlUsd >= 0 ? 'text-success' : 'text-danger',
+                      trade.pnlUsd == null ? 'text-faint' : trade.pnlUsd >= 0 ? 'text-success' : 'text-danger',
                     )}
                   >
-                    {trade.pnlUsd === undefined ? '—' : money(trade.pnlUsd)}
+                    {trade.pnlUsd == null ? '—' : money(trade.pnlUsd)}
                   </td>
                   <td className="py-2.5 text-muted">{label(trade.reason)}</td>
                 </tr>
