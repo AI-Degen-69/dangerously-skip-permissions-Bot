@@ -390,6 +390,10 @@ def snapshot() -> dict:
     settled = [r for r in all_runs if not is_pending(r)]
     realized = round(sum((r.get("net_usd") or 0.0) for r in settled), 2)
     st = state()
+    try:
+        markets = live_markets(cfg)
+    except Exception:
+        markets = []
     positions: list[dict] = []
     exposure = 0.0
     now_ms = int(time.time() * 1000)
@@ -399,44 +403,78 @@ def snapshot() -> dict:
             by_side.setdefault(f["outcome"], []).append(f)
         end_ms = int(st.get("endMs") or now_ms)
         is_resolving = now_ms >= end_ms
+        slug = st.get("slug", "")
+
+        curr_market = next((m for m in markets if m.get("slug") == slug), None)
+        market_quotes = (curr_market.get("quotes") or {}) if curr_market else {}
+        ws_data = st.get("ws") or {}
+
         for side, fills in by_side.items():
             shares = sum(f["shares"] for f in fills)
             cost = sum(f["usd"] for f in fills)
             avg = cost / shares if shares else 0
             mark = None
             if not is_resolving:
-                try:
-                    from bot.discovery import get_window
-                    spec = get_window(client(), st["slug"])
-                    tid = spec.up_token_id if side == "Up" else spec.down_token_id
-                    c = client()
-                    px = None
+                px = None
+
+                # 1. Check WebSocket live orderbook in state (0ms latency)
+                ws_book = ws_data.get(f"{side.lower()}_book") or {}
+                if isinstance(ws_book, dict):
+                    ws_bid = ws_book.get("best_bid")
+                    if ws_bid is not None and 0.0 < float(ws_bid) <= 1.0:
+                        px = float(ws_bid)
+                    elif ws_book.get("midpoint") is not None and 0.0 < float(ws_book["midpoint"]) <= 1.0:
+                        px = float(ws_book["midpoint"])
+                    elif ws_book.get("best_ask") is not None and 0.0 < float(ws_book["best_ask"]) <= 1.0:
+                        px = float(ws_book["best_ask"])
+
+                # 2. Check quotes from live_markets
+                if px is None:
+                    side_q = market_quotes.get(side) or {}
+                    q_bid = side_q.get("bid")
+                    q_ask = side_q.get("ask")
+                    if q_bid is not None and 0.0 < float(q_bid) <= 1.0:
+                        px = float(q_bid)
+                    elif q_ask is not None and 0.0 < float(q_ask) <= 1.0:
+                        px = float(q_ask)
+
+                # 3. Fallback: query client CLOB if not found yet
+                if px is None:
                     try:
-                        p = float(c.get_price(token_id=tid, side="BUY"))
-                        if 0.0 < p <= 1.0:
-                            px = p
-                    except Exception:
-                        pass
-                    if px is None:
+                        spec = _WINDOW_SPEC_CACHE.get(slug)
+                        if spec is None:
+                            from bot.discovery import get_window
+                            spec = get_window(client(), slug)
+                            _WINDOW_SPEC_CACHE[slug] = spec
+                        tid = spec.up_token_id if side == "Up" else spec.down_token_id
+                        c = client()
                         try:
                             p = float(c.get_price(token_id=tid, side="SELL"))
                             if 0.0 < p <= 1.0:
                                 px = p
                         except Exception:
                             pass
-                    if px is None:
-                        try:
-                            mid = float(c.get_midpoint(token_id=tid))
-                            if 0.0 < mid <= 1.0:
-                                px = mid
-                        except Exception:
-                            pass
-                    if px is not None:
-                        mark = px
-                    else:
-                        mark = 0.0
-                except Exception:
-                    mark = None
+                        if px is None:
+                            try:
+                                p = float(c.get_price(token_id=tid, side="BUY"))
+                                if 0.0 < p <= 1.0:
+                                    px = p
+                            except Exception:
+                                pass
+                        if px is None:
+                            try:
+                                mid = float(c.get_midpoint(token_id=tid))
+                                if 0.0 < mid <= 1.0:
+                                    px = mid
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+                # While the window is running (not resolving), mark is NEVER None.
+                # If a positive price exists, use it; otherwise price is 0.0.
+                mark = px if px is not None else 0.0
+
             mv = round(mark * shares, 2) if mark is not None else None
             exposure += cost
             positions.append({
@@ -488,10 +526,6 @@ def snapshot() -> dict:
             break
 
     kills = KILL_PATH.exists()
-    try:
-        markets = live_markets(cfg)
-    except Exception:
-        markets = []
     return {
         "version": 1, "mode": "paper", "asset": cfg.get("asset", "BTC"),
         "updatedAt": utc_now_iso(), "equityUsd": equity, "bankrollUsd": bankroll,
