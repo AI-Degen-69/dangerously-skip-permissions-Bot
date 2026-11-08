@@ -530,6 +530,8 @@ def snapshot() -> dict:
             break
 
     kills = KILL_PATH.exists()
+    daily_loss_cap = float(risk_cfg.get("dailyLossCapUsd", 500.0))
+    daily_loss_pct = round((daily_loss_cap / day_start_equity) * 100, 2) if day_start_equity > 0 else 50.0
     return {
         "version": 1, "mode": "paper", "asset": cfg.get("asset", "BTC"),
         "updatedAt": utc_now_iso(), "equityUsd": equity, "bankrollUsd": bankroll,
@@ -541,9 +543,12 @@ def snapshot() -> dict:
                  "dayStartEquityUsd": day_start_equity, "highWaterEquityUsd": high_water,
                  "halted": kills, "haltReason": "kill-switch-file-present" if kills else None,
                  "cooldownUntilMs": 0},
-        "limits": {"maxTradesPerDay": 288, "maxConsecutiveLosses": 99,
-                   "dailyLossLimitPct": 50,
-                   "maxDrawdownPct": 90, "maxConcurrentPositions": 1,
+        "limits": {"maxTradesPerDay": int(risk_cfg.get("maxTradesPerDay", 288)),
+                   "maxConsecutiveLosses": int(risk_cfg.get("maxConsecutiveLosses", 99)),
+                   "dailyLossLimitPct": daily_loss_pct,
+                   "dailyLossCapUsd": daily_loss_cap,
+                   "maxDrawdownPct": float(risk_cfg.get("maxDrawdownPct", 90)),
+                   "maxConcurrentPositions": int(risk_cfg.get("maxConcurrentPositions", 1)),
                    "minEdge": 0, "feeRate": 0, "profitTargetCents": 100},
         "killSwitch": kills, "newsBlocked": False,
         "feed": {"price": None, "updatedAtMs": None, "history": []},
@@ -1365,10 +1370,15 @@ class Handler(BaseHTTPRequestHandler):
                  "noisePct": 0, "nonLiveAnchorExtraMovePct": 0,
                  "kellyCut": 0.25, "maxPositionPct": 0.08, "feeRate": 0,
                  **cfg.get("entry", {})}
+        risk_raw = cfg.get("risk", {})
+        daily_loss_cap = float(risk_raw.get("dailyLossCapUsd", 500.0))
+        bankroll = float(cfg.get("bankrollUsd", BANKROLL_DEFAULT))
+        calc_pct = round((daily_loss_cap / bankroll) * 100, 2) if bankroll > 0 else 50.0
         risk = {"maxConcurrentPositions": 1, "maxTradesPerDay": 288,
-                "maxConsecutiveLosses": 99, "dailyLossLimitPct": 50,
+                "maxConsecutiveLosses": 99, "dailyLossLimitPct": calc_pct,
+                "dailyLossCapUsd": daily_loss_cap,
                 "maxDrawdownPct": 90, "cooldownAfterLossSec": 0,
-                **cfg.get("risk", {})}
+                **risk_raw}
         news = cfg.get("news", {})
         return {"asset": cfg.get("asset", "BTC"), "intervals": ["5m"],
                 "mode": "paper", "bankrollUsd": cfg.get("bankrollUsd", BANKROLL_DEFAULT),

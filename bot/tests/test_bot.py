@@ -78,6 +78,25 @@ class RiskTests(unittest.TestCase):
         # killed state blocks everything after
         self.assertIn("killed", check_window(0, 0.0, st))
 
+    def test_daily_loss_configurable(self):
+        import bot.risk as risk
+        with tempfile.TemporaryDirectory() as td:
+            cfg_file = Path(td) / "config.json"
+            cfg_file.write_text(json.dumps({"risk": {"dailyLossCapUsd": 1500.0}}))
+            with patch.object(risk, "CONFIG_PATH", cfg_file):
+                # Loss of $600 should not trigger a $1500 cap
+                st = RiskState(daily_loss_usd=-600.0)
+                reason = check_window(1, 10.0, st)
+                self.assertIsNone(reason)
+                self.assertFalse(st.killed)
+
+                # Loss of $1501 should trigger the $1500 cap
+                st2 = RiskState(daily_loss_usd=-1501.0)
+                reason2 = check_window(1, 10.0, st2)
+                self.assertIsNotNone(reason2)
+                self.assertTrue(st2.killed)
+                self.assertIn("daily loss cap $1500", reason2)
+
     def test_single_window_invariant(self):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "state.json"
@@ -376,6 +395,22 @@ class TradesViewLiveTests(unittest.TestCase):
         drawdown = max(0, snap["risk"]["highWaterEquityUsd"] - snap["equityUsd"])
         self.assertEqual(day_loss, 0.0)
         self.assertEqual(drawdown, 0.0)
+
+    def test_snapshot_includes_configured_daily_loss_cap(self):
+        import bot.api as api
+        with tempfile.TemporaryDirectory() as td:
+            cfg_file = Path(td) / "config.json"
+            cfg_file.write_text(json.dumps({
+                "bankrollUsd": 1000.0,
+                "risk": {"dailyLossCapUsd": 1500.0}
+            }))
+            with patch.object(api, "CONFIG_PATH", cfg_file), \
+                 patch.object(api, "state", return_value=None), \
+                 patch.object(api, "is_view_only", return_value=False), \
+                 patch.object(api, "live_markets", return_value=[]):
+                snap = api.snapshot()
+                self.assertEqual(snap["limits"]["dailyLossCapUsd"], 1500.0)
+                self.assertEqual(snap["limits"]["dailyLossLimitPct"], 150.0)
 
     def test_snapshot_counts_trades_today_from_unix_timestamps(self):
         import bot.api as api

@@ -110,6 +110,7 @@ export interface BotSnapshot {
     maxTradesPerDay: number
     maxConsecutiveLosses: number
     dailyLossLimitPct: number
+    dailyLossCapUsd?: number
     maxDrawdownPct: number
     maxConcurrentPositions: number
     minEdge: number
@@ -343,6 +344,9 @@ export interface BotConfigView {
     maxTradesPerDay: number
     maxConsecutiveLosses: number
     dailyLossLimitPct: number
+    dailyLossCapUsd?: number
+    maxUsdPerWindow?: number
+    maxFillsPerWindow?: number
     maxDrawdownPct: number
     cooldownAfterLossSec: number
   }

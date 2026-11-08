@@ -19,6 +19,7 @@ Usage:
 
 import argparse
 import json
+import re
 import sys
 import threading
 import time
@@ -214,12 +215,23 @@ def _risk_reason_code(raw_reason: str) -> str:
 
 
 def _risk_detail(raw_reason: str, state: RiskState, cost: float, trades: int) -> dict:
+    risk_cfg = load_cfg().get("risk", {})
+    default_cap = float(risk_cfg.get("dailyLossCapUsd", 500.0))
+    cost_cap = float(risk_cfg.get("maxUsdPerWindow", 4000.0))
+    trade_cap = int(risk_cfg.get("maxFillsPerWindow", 500))
+
     if "daily loss cap" in raw_reason:
-        return {"lossUsd": round(abs(state.daily_loss_usd), 2), "capUsd": 500.0}
+        m = re.search(r"daily loss cap \$?([0-9.]+)", raw_reason)
+        cap = float(m.group(1)) if m else default_cap
+        return {"lossUsd": round(abs(state.daily_loss_usd), 2), "capUsd": cap}
     if "cost cap" in raw_reason:
-        return {"costUsd": round(cost, 2), "capUsd": 4000.0}
+        m = re.search(r"cost cap \$?([0-9.]+)", raw_reason)
+        cap = float(m.group(1)) if m else cost_cap
+        return {"costUsd": round(cost, 2), "capUsd": cap}
     if "trade cap" in raw_reason:
-        return {"fills": trades, "cap": 500}
+        m = re.search(r"trade cap (\d+)", raw_reason)
+        cap = int(m.group(1)) if m else trade_cap
+        return {"fills": trades, "cap": cap}
     return {}
 
 
