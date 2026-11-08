@@ -109,10 +109,11 @@ def microprice_lean(c: PublicClient, up_id: str, down_id: str, streamer: LiveBoo
     except Exception:
         return LeanSignal(lean=0.0, confidence=0.0, source="book-unavailable")
     edge = (up_mid - down_mid) / 2.0  # >0 favors Up
-    lean = max(-1.0, min(1.0, edge * 4.0))
+    raw = edge * 4.0
+    lean = max(-1.0, min(1.0, raw))
     spread = abs(up_mid + down_mid - 1.0)
     confidence = max(0.0, min(1.0, 1.0 - spread * 5.0))
-    return LeanSignal(lean=lean, confidence=confidence, source="book-microprice")
+    return LeanSignal(lean=lean, confidence=confidence, source="book-microprice", raw=round(raw, 3))
 
 
 def live_buy_price(c: PublicClient, token_id: str, streamer: LiveBookStreamer | None = None) -> float | None:
@@ -200,6 +201,28 @@ def write_state(
         _atomic_write_json(STATE_PATH, payload)
 
 
+def _risk_reason_code(raw_reason: str) -> str:
+    if "kill-switch" in raw_reason:
+        return "kill-switch-engaged"
+    if "daily loss cap" in raw_reason:
+        return "daily-loss-cap"
+    if "cost cap" in raw_reason:
+        return "window-cost-cap"
+    if "trade cap" in raw_reason:
+        return "window-trade-cap"
+    return raw_reason
+
+
+def _risk_detail(raw_reason: str, state: RiskState, cost: float, trades: int) -> dict:
+    if "daily loss cap" in raw_reason:
+        return {"lossUsd": round(abs(state.daily_loss_usd), 2), "capUsd": 500.0}
+    if "cost cap" in raw_reason:
+        return {"costUsd": round(cost, 2), "capUsd": 4000.0}
+    if "trade cap" in raw_reason:
+        return {"fills": trades, "cap": 500}
+    return {}
+
+
 def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool = True) -> dict:
     slug = f"btc-updown-5m-{slot}"
     assert_single_window(slug)  # refuse if a crashed window still owns state
@@ -270,18 +293,19 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
                              ("Down" if first_up else "Up", spec.down_token_id if first_up else spec.up_token_id)):
             px = live_buy_price(c, tid, streamer=streamer)
             if px is None:
-                log_event("skip", "no-liquidity", slug, side=outcome, detail={"side": outcome})
+                log_event("refuse", "no-liquidity", slug, side=outcome, detail={"side": outcome})
                 continue
             if px < min_fill:
-                log_event("skip", "dust-quote", slug, side=outcome,
-                          detail={"side": outcome, "price": px})
+                log_event("refuse", "dust-quote", slug, side=outcome,
+                          detail={"side": outcome, "price": px, "minFill": min_fill})
                 continue
             if outcome != ("Up" if first_up else "Down"):
                 time.sleep(hedge_delay)  # hedge leg
                 lean = microprice_lean(c, spec.up_token_id, spec.down_token_id, streamer=streamer)
             state.daily_loss_usd = _current_daily_pnl(day_start)
             if reason := check_window(len(fills), cost, state, KILL_PATH):
-                log_event("kill", reason, slug)
+                log_event("risk", _risk_reason_code(reason), slug,
+                          detail=_risk_detail(reason, state, cost, len(fills)))
                 break
             shares = clip_shares(clip_default)
             reason = "straddle-open" if len(fills) == 0 else "hedge-leg"
@@ -292,8 +316,19 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
                 "detail": {"lean": round(lean.lean, 2), "confidence": round(lean.confidence, 2), "minute": 0},
             })
             cost += px * shares
-            log_event("entry", reason, slug,
-                      side=outcome, detail={"price": px, "shares": shares, "lean": round(lean.lean, 2)})
+            raw_lean = round(getattr(lean, "raw", None) if getattr(lean, "raw", None) is not None else lean.lean, 2)
+            if len(fills) == 1:
+                log_event("entry", "straddle-open", slug,
+                          side=outcome, detail={"price": px, "shares": shares, "lean": round(lean.lean, 2),
+                                                "rawLean": raw_lean,
+                                                "fills": 1, "cost": round(cost, 2)})
+            else:
+                leg1_px = fills[0]["price"] if len(fills) > 1 else 0.0
+                pair_cost = round(leg1_px + px, 2)
+                log_event("entry", "hedge-leg", slug,
+                          side=outcome, detail={"price": px, "shares": shares, "lean": round(lean.lean, 2),
+                                                "leg1Price": leg1_px, "pairCost": pair_cost,
+                                                "fills": len(fills), "cost": round(cost, 2)})
             log(f"open {outcome} {shares:.0f} @ {px:.3f}")
             write_state(slug, end_ms, started_ms, fills, lean,
                         ws_status=streamer.get_status(), recent_ticks=streamer.get_recent_ticks(30))
@@ -303,19 +338,42 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
         last_fill_ts = 0.0
         last_fill_px: float | None = None
         quotas = m_quotas(target_total)
+        last_logged_quota_min: int | None = None
+        last_extreme_skip_ts: float = 0.0
+        last_dust_skip_ts: float = 0.0
 
         while True:
             now = int(time.time())
             if now >= end:
+                up_sh = sum(f["shares"] for f in fills if f["outcome"] == "Up")
+                down_sh = sum(f["shares"] for f in fills if f["outcome"] == "Down")
+                log_event("done", "holding-to-resolution", slug,
+                          detail={"fills": len(fills), "cost": round(cost, 2),
+                                  "upShares": round(up_sh, 1), "downShares": round(down_sh, 1)})
                 break
             state.daily_loss_usd = _current_daily_pnl(day_start)
             if reason := check_window(len(fills), cost, state, KILL_PATH):
-                log_event("kill", reason, slug)
+                log_event("risk", _risk_reason_code(reason), slug,
+                          detail=_risk_detail(reason, state, cost, len(fills)))
                 break
 
             minute = min(max((now - slot) // 60, 0), 4)
-            if len(fills) >= target_total or sum(1 for f in fills if f["minute"] == minute) >= quotas[minute]:
-                time.sleep(max(0, min(end, slot + (minute + 1) * 60) - now))
+            if len(fills) >= target_total:
+                if last_logged_quota_min != 99:
+                    last_logged_quota_min = 99
+                    log_event("hold", "target-fills-reached", slug,
+                              detail={"fills": len(fills), "cost": round(cost, 2)})
+                time.sleep(max(0, end - now))
+                continue
+
+            if sum(1 for f in fills if f["minute"] == minute) >= quotas[minute]:
+                wait_sec = max(0, min(end, slot + (minute + 1) * 60) - now)
+                if last_logged_quota_min != minute and wait_sec > 2:
+                    last_logged_quota_min = minute
+                    min_fills = sum(1 for f in fills if f["minute"] == minute)
+                    log_event("hold", "minute-quota-reached", slug,
+                              detail={"minute": f"M{minute}", "fills": min_fills, "quota": quotas[minute], "waitSec": round(wait_sec)})
+                time.sleep(wait_sec)
                 continue
 
             lean = microprice_lean(c, spec.up_token_id, spec.down_token_id, streamer=streamer)
@@ -327,10 +385,18 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
                 continue
             if px < min_fill:
                 log(f"M{minute} {outcome} dust {px:.3f} — skipped")
+                if time.time() - last_dust_skip_ts > 10.0:
+                    last_dust_skip_ts = time.time()
+                    log_event("refuse", "dust-quote", slug, side=outcome,
+                              detail={"minute": f"M{minute}", "price": px, "minFill": min_fill})
                 streamer.wait_for_tick(timeout=0.25)
                 continue
             # M4 snipe: only take extremes late (matches CSV: extremes only in M4)
             if minute < 4 and (px <= 0.15 or px >= 0.85) and len(fills) % 4 != 0:
+                if time.time() - last_extreme_skip_ts > 10.0:
+                    last_extreme_skip_ts = time.time()
+                    log_event("refuse", "extreme-price-skip", slug, side=outcome,
+                              detail={"minute": f"M{minute}", "price": px})
                 streamer.wait_for_tick(timeout=0.25)
                 continue
 
@@ -372,9 +438,11 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
             last_fill_ts = time.time()
             last_fill_px = px
 
-            if len(fills) % 10 == 0:
-                log_event("hold", "thesis-intact", slug, side=outcome,
-                          detail={"bid": px, "fills": len(fills)})
+            fill_reason = "m4-snipe" if minute == 4 else "clip-fill"
+            fill_kind = "snipe" if minute == 4 else "entry"
+            log_event(fill_kind, fill_reason, slug, side=outcome,
+                      detail={"minute": f"M{minute}", "price": px, "shares": shares,
+                              "lean": round(lean.lean, 2), "fills": len(fills), "cost": round(cost, 2)})
             log(f"M{minute} {outcome} {shares:.1f} @ {px:.3f} (lean {lean.lean:+.2f})")
             write_state(slug, end_ms, started_ms, fills, lean,
                         ws_status=streamer.get_status(), recent_ticks=streamer.get_recent_ticks(30))

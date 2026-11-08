@@ -624,7 +624,8 @@ class LiveBookStreamer:
             return LeanSignal(lean=0.0, confidence=0.0, source="book-unavailable")
 
         edge = (up_mid - down_mid) / 2.0  # >0 favors Up
-        lean = max(-1.0, min(1.0, edge * 4.0))
+        raw = edge * 4.0
+        lean = max(-1.0, min(1.0, raw))
         spread = abs(up_mid + down_mid - 1.0)
         confidence = max(0.0, min(1.0, 1.0 - spread * 5.0))
 
@@ -636,7 +637,7 @@ class LiveBookStreamer:
                 and (now - self.last_tick_ts) <= STALE_THRESHOLD_S
             )
         source = "wss-book-microprice" if is_fresh else "rest-fallback-microprice"
-        return LeanSignal(lean=lean, confidence=confidence, source=source)
+        return LeanSignal(lean=lean, confidence=confidence, source=source, raw=round(raw, 3))
 
 
 def watch_cli(slot: int | None = None, limit: int | None = None) -> None:

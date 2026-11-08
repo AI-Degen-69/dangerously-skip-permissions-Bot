@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react'
 import { Activity, Clock, Play, Radio, ShieldAlert, Target, Zap } from 'lucide-react'
 
 import { PolymarketLiveChart } from '../components/PolymarketEmbed'
@@ -63,6 +64,30 @@ export function Live() {
   const online = Boolean(snapshot.data?.online && data && !isViewOnly)
   const stopped = data?.killSwitch ?? false
   const running = (control.data?.running ?? false) && !isViewOnly
+  const [eventFilter, setEventFilter] = useState<'all' | 'entry' | 'snipe' | 'hold' | 'refuse' | 'done_settle'>('all')
+  const rawEvents = events.data?.items ?? []
+  const filteredEvents = useMemo(() => {
+    if (eventFilter === 'all') return rawEvents
+    if (eventFilter === 'done_settle') {
+      return rawEvents.filter((e) => ['done', 'settle', 'redeem', 'risk', 'error'].includes(e.kind))
+    }
+    if (eventFilter === 'refuse') {
+      return rawEvents.filter((e) => e.kind === 'refuse' || e.kind === 'skip')
+    }
+    return rawEvents.filter((e) => e.kind === eventFilter)
+  }, [rawEvents, eventFilter])
+
+  const counts = useMemo(
+    () => ({
+      all: rawEvents.length,
+      entry: rawEvents.filter((e) => e.kind === 'entry').length,
+      snipe: rawEvents.filter((e) => e.kind === 'snipe').length,
+      hold: rawEvents.filter((e) => e.kind === 'hold').length,
+      refuse: rawEvents.filter((e) => e.kind === 'refuse' || e.kind === 'skip').length,
+      done_settle: rawEvents.filter((e) => ['done', 'settle', 'redeem', 'risk', 'error'].includes(e.kind)).length,
+    }),
+    [rawEvents],
+  )
   const startBot = () =>
     start.mutate(undefined, {
       onSuccess: (result) => toast(result.reason === 'already-running' ? 'Bot already running' : 'Paper bot started'),
@@ -204,17 +229,43 @@ export function Live() {
 
             <div className="mt-3 grid gap-3 lg:grid-cols-3">
               <Card className="p-5 lg:col-span-2">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h2 className="text-[14px] font-semibold">Decision journal</h2>
                     <p className="text-[12.5px] text-muted">Every gate it passed or failed, newest first.</p>
                   </div>
-                  <Badge tone="neutral">{events.data?.items.length ?? 0} events</Badge>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {(
+                      [
+                        { id: 'all', label: 'All', count: counts.all },
+                        { id: 'entry', label: 'Entries', count: counts.entry },
+                        { id: 'snipe', label: 'Snipes', count: counts.snipe },
+                        { id: 'hold', label: 'Holds', count: counts.hold },
+                        { id: 'refuse', label: 'Refusals', count: counts.refuse },
+                        { id: 'done_settle', label: 'Done & Settle', count: counts.done_settle },
+                      ] as const
+                    ).map((tab) => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setEventFilter(tab.id)}
+                        className={cx(
+                          'rounded-md px-2 py-0.5 text-[11.5px] font-medium transition-colors',
+                          eventFilter === tab.id
+                            ? 'bg-surface-2 text-fg shadow-xs ring-1 ring-line'
+                            : 'text-muted hover:bg-surface-2/50 hover:text-fg',
+                        )}
+                      >
+                        {tab.label}
+                        {tab.count > 0 && <span className="ml-1 text-[10px] opacity-70">({tab.count})</span>}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <div className="scrollbar-thin mt-2 max-h-[440px] overflow-y-auto">
-                  {events.data && events.data.items.length > 0 ? (
+                  {filteredEvents.length > 0 ? (
                     <ul className="divide-y divide-line">
-                      {[...events.data.items].reverse().map((event, index) => (
+                      {[...filteredEvents].reverse().map((event, index) => (
                         <EventRow key={`${event.ts}-${index}`} event={event} />
                       ))}
                     </ul>
@@ -225,7 +276,15 @@ export function Live() {
                       description={`The request failed. Start the API with \`python bot/api.py\`; this list refills as soon as the API at ${BOT_ORIGIN} answers.`}
                     />
                   ) : (
-                    <EmptyState icon={<Activity />} title="No decisions logged yet" description="Entries, exits, holds and skips appear here as the bot ticks." />
+                    <EmptyState
+                      icon={<Activity />}
+                      title={eventFilter === 'all' ? 'No decisions logged yet' : `No ${eventFilter} events`}
+                      description={
+                        eventFilter === 'all'
+                          ? 'Entries, clip fills, holds and skips appear here as the bot ticks.'
+                          : 'Try selecting "All" to view all journal decisions.'
+                      }
+                    />
                   )}
                 </div>
               </Card>
@@ -246,20 +305,77 @@ export function Live() {
   )
 }
 
+function EventTitle({ event }: { event: BotEvent }) {
+  const detail = event.detail
+  const shares = detail?.shares != null ? `${Math.round(Number(detail.shares))}` : '30'
+  const side = event.side ?? ''
+  const price = typeof detail?.price === 'number' ? detail.price.toFixed(2) : null
+
+  // 1. First touch: Decided Lean (<calculated lean value>): <shares amount> <SIDE> @ <0.XX>\share
+  if (event.reason === 'straddle-open') {
+    const rawVal = typeof detail?.rawLean === 'number' ? detail.rawLean : detail?.lean
+    const leanNum = typeof rawVal === 'number' ? rawVal : typeof detail?.lean === 'number' ? detail.lean : 0
+    const leanStr = leanNum > 0 ? `+${leanNum.toFixed(2)}` : leanNum.toFixed(2)
+    const pxStr = price ? `@ ${price}\\share` : ''
+    return (
+      <span className="truncate text-[13px] font-medium text-fg">
+        Decided Lean ({leanStr}): {shares} {side} {pxStr}
+      </span>
+    )
+  }
+
+  // 2. Second touch: Locked Hedge: <shares amount> <SIDE> @ <0.XX>\share  |  Pair Cost: <X.XX>
+  // Above 1$ is red, <= 1$ is green
+  if (event.reason === 'hedge-leg') {
+    const pxStr = price ? `@ ${price}\\share` : ''
+    const pairCost = typeof detail?.pairCost === 'number' ? detail.pairCost : null
+    return (
+      <span className="truncate text-[13px] font-medium text-fg">
+        Locked Hedge: {shares} {side} {pxStr}
+        {pairCost !== null && (
+          <>
+            {'  |  Pair Cost: '}
+            <span
+              className={cx(
+                'font-semibold tabular-nums',
+                pairCost > 1.0 ? 'text-danger' : 'text-success',
+              )}
+            >
+              {pairCost.toFixed(2)}
+            </span>
+          </>
+        )}
+      </span>
+    )
+  }
+
+  return <span className="truncate text-[13px]">{label(event.reason, event.detail, event.side)}</span>
+}
+
 function EventRow({ event }: { event: BotEvent }) {
   const metrics = eventMetrics(event.reason, event.detail)
+  const displayKind = event.kind === 'skip' ? 'refuse' : event.kind
 
   return (
     <li className="flex items-start gap-3 py-2.5">
       <span className="mt-0.5 w-[58px] shrink-0 text-[11.5px] tabular-nums text-faint">{clock(event.ts)}</span>
-      <Badge tone={KIND_TONE[event.kind] ?? 'neutral'} className="shrink-0 capitalize">
-        {event.kind}
+      <Badge tone={KIND_TONE[displayKind] ?? 'neutral'} className="shrink-0 capitalize">
+        {displayKind}
       </Badge>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-[13px]">{label(event.reason)}</p>
+        <p className="truncate text-[13px]">
+          <EventTitle event={event} />
+        </p>
         <p className="truncate text-[11.5px] text-faint">
           {event.slug ? windowLabel(event.slug) : 'bot'}
-          {event.side ? ` · ${event.side}` : ''}
+          {event.side ? (
+            <>
+              {' · '}
+              <span className={event.side === 'Up' ? 'font-medium text-success' : 'font-medium text-danger'}>
+                {event.side}
+              </span>
+            </>
+          ) : ''}
         </p>
       </div>
       {metrics.length > 0 && (

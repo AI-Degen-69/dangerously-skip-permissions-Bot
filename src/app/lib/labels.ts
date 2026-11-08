@@ -1,59 +1,78 @@
 export const LABELS: Record<string, string> = {
   // Window Timing & Planned Cutoffs
   'opening-delay': 'Waiting opening delay',
-  'too-late-in-window': 'Planned entry cutoff',
+  'too-late-in-window': 'Planned entry cutoff (last 15s)',
   'awaiting-resolution': 'Window ended — awaiting market resolution',
 
-  // Order Execution & Fills
-  'straddle-open': 'Market opened — first touch',
+  // Entries & Snipes
+  'straddle-open': 'Straddle opened — first touch',
   'hedge-pending': 'First leg filled — hedge pending',
-  'hedge-leg': 'Hedge leg filled (+15s) — both sides held',
+  'hedge-leg': 'Hedge leg filled (+15s)',
+  'clip-fill': 'Clip fill accumulated',
   'working-fills': 'Working fills (M1–M3)',
   'lean-up': 'Microprice lean Up',
   'lean-down': 'Microprice lean Down',
   'straddle-balance': 'Straddle cadence balance',
-  'm4-snipe': 'M4 late snipe & fade',
-  'thesis-intact': 'Accumulating fills on pace',
-  'paper-fill': 'Paper fill executed',
-  'paper-redeem': 'Paper redeem completed',
+  'm4-snipe': 'M4 late snipe filled',
+  'paper-fill': 'Paper fill',
 
-  // Market & Orderbook Gates (Skips)
-  'no-liquidity': 'No quotes available on ask',
-  'spread-too-wide': 'Spread too wide (> 30¢)',
-  'dust-quote': 'Dust quote (< 1¢) — skipped',
-  'early-extreme-skip': 'Extreme price (<15¢ / >85¢) — skipped until M4',
-  'orderbook-pacing': 'Pacing fill — waiting orderbook replenishment',
+  // Holds & Pacing
+  'minute-quota-reached': 'Minute quota filled — pacing entries',
+  'target-fills-reached': 'Target window fills reached',
+  'spacing-guard': 'Spacing guard — orderbook replenishment',
+  'window-observing': 'Observing window opening',
 
-  // Risk & Safeguards
-  'kill-switch-engaged': 'Kill switch engaged — entries paused',
-  'kill-switch-file-present': 'Kill switch engaged — entries paused',
-  'daily-loss-limit': 'Daily loss limit hit ($500) — halted',
-  'window-cost-cap': 'Window cost limit reached ($4,000)',
-  'window-trade-cap': 'Window fill limit reached (500 trades)',
-  'single-window-locked': 'Another window already active',
-  'max-concurrent-positions': 'Another window already active',
-  'window-failed': 'Window processing error',
+  // Done: Window Trading Finished
+  'holding-to-resolution': 'Window trading done — holding to resolution',
 
-  // Resolution & Outcomes
+  // Refusals: Conditions Refused
+  'extreme-price-skip': 'Extreme odds refused — saved for M4',
+  'dust-quote': 'Dust quote refused (<1¢)',
+  'no-liquidity': 'Quotes refused — no liquidity on this side',
+  'spread-too-wide': 'Quote refused — spread too wide (>30¢)',
+
+  // Settlement & Redemption
+  'paper-resolve': 'Window settled to market outcome',
+  'paper-redeem': 'Settled shares redeemed',
   won: 'Window won',
   lost: 'Window lost',
-  'paper-resolve': 'Market resolved',
   'unresolved-fallback': 'Market resolved via fallback oracle',
 
-  // System Runtime Status
+  // Risk Limits & Safety Halts
+  'kill-switch-engaged': 'Kill switch engaged — entries paused',
+  'kill-switch-file-present': 'Kill switch active',
+  'entries-resumed': 'Entries resumed',
+  'window-trade-cap': 'Window trade cap reached (500)',
+  'window-cost-cap': 'Window cost cap reached ($4,000)',
+  'daily-loss-cap': 'Daily loss limit hit — halted ($500)',
+  'daily-loss-limit': 'Daily loss limit hit — halted',
+  'single-window-locked': 'Another window already active',
+  'single-window-violation': 'Single-window conflict — window refused',
+  'max-concurrent-positions': 'Another window already active',
+
+  // System & Lifecycle
   'loop-started': 'Paper loop started',
   'loop-stopped': 'Paper loop stopped',
   'paper-reset': 'Paper state reset',
   'config-updated': 'Configuration updated',
-  'entries-resumed': 'Entries resumed',
+  'window-failed': 'Window execution failed',
+  'ws-connected': 'WebSocket connected',
+  'ws-fallback-active': 'REST fallback active',
+
+  // Legacy compatibility
+  'thesis-intact': 'Straddle clip checkpoint',
+  'clip-checkpoint': 'Straddle clip checkpoint',
 }
 
 export const KIND_TONE: Record<string, 'neutral' | 'accent' | 'success' | 'warning' | 'danger' | 'info'> = {
   entry: 'success',
+  snipe: 'accent',
+  done: 'accent',
+  refuse: 'warning',
+  hold: 'neutral',
+  skip: 'warning',
   exit: 'info',
   settle: 'accent',
-  hold: 'neutral',
-  skip: 'neutral',
   blocked: 'warning',
   anchor: 'info',
   risk: 'danger',
@@ -71,69 +90,111 @@ export interface MetricSpec {
   key: string
   /** Detail key holding the limit it was judged against. */
   threshold?: string
-  op?: '<' | '>'
+  op?: '<' | '>' | '>=' | '<='
   unit?: MetricUnit
   label?: string
 }
 
 /**
- * Which measured value and which limit each verdict is judged on. The engine
- * writes both into the event detail, so the journal can show `0.038% < 0.05%`
- * instead of an unlabelled number.
+ * Which measured value and which limit each verdict is judged on.
  */
 export const REASON_METRICS: Record<string, MetricSpec[]> = {
   'opening-delay': [{ key: 'elapsedSec', threshold: 'needsSec', op: '<', unit: 'sec' }],
-  'too-late-in-window': [{ key: 'remainingSec', threshold: 'needsSec', op: '<', unit: 'sec' }],
-  'spread-too-wide': [{ key: 'spreadCents', threshold: 'maxCents', op: '>', unit: 'cents' }],
-  'dust-quote': [{ key: 'price', label: 'price', unit: 'price' }],
-  'no-liquidity': [{ key: 'side', label: 'side' }],
   'straddle-open': [
-    { key: 'price', label: 'price', unit: 'price' },
-    { key: 'shares', label: 'shares' },
-    { key: 'lean', label: 'lean', unit: 'ratio' },
+    { key: 'cost', label: 'cost', unit: 'usd' },
+    { key: 'fills', label: 'fill #' },
   ],
   'hedge-pending': [
     { key: 'price', label: 'price', unit: 'price' },
     { key: 'shares', label: 'shares' },
   ],
   'hedge-leg': [
-    { key: 'price', label: 'price', unit: 'price' },
-    { key: 'shares', label: 'shares' },
+    { key: 'cost', label: 'cost', unit: 'usd' },
+    { key: 'fills', label: 'fill #' },
   ],
   'working-fills': [{ key: 'fills', label: 'fills', unit: 'count' }],
+  'clip-fill': [
+    { key: 'minute' },
+    { key: 'price', label: 'price', unit: 'price' },
+    { key: 'shares', label: 'shares' },
+    { key: 'lean', label: 'lean', unit: 'ratio' },
+    { key: 'fills', label: 'fill #' },
+  ],
+  'm4-snipe': [
+    { key: 'minute' },
+    { key: 'price', label: 'price', unit: 'price' },
+    { key: 'shares', label: 'shares' },
+    { key: 'fills', label: 'fill #' },
+  ],
+  'minute-quota-reached': [
+    { key: 'minute' },
+    { key: 'fills', label: 'fills', unit: 'count' },
+    { key: 'waitSec', label: 'wait', unit: 'sec' },
+  ],
+  'target-fills-reached': [
+    { key: 'fills', label: 'fills', unit: 'count' },
+    { key: 'cost', label: 'cost', unit: 'usd' },
+  ],
+  'holding-to-resolution': [
+    { key: 'fills', label: 'fills', unit: 'count' },
+    { key: 'cost', label: 'cost', unit: 'usd' },
+    { key: 'upShares', label: 'Up', unit: 'count' },
+    { key: 'downShares', label: 'Down', unit: 'count' },
+  ],
+  'extreme-price-skip': [
+    { key: 'minute' },
+    { key: 'price', label: 'odds', unit: 'price' },
+  ],
+  'dust-quote': [
+    { key: 'minute' },
+    { key: 'price', label: 'quote', unit: 'cents' },
+    { key: 'minFill', label: 'min', unit: 'price' },
+  ],
+  'no-liquidity': [{ key: 'side', label: 'side' }],
+  'spread-too-wide': [{ key: 'spreadCents', threshold: 'maxCents', op: '>', unit: 'cents' }],
+  'too-late-in-window': [{ key: 'remainingSec', threshold: 'needsSec', op: '<', unit: 'sec' }],
+  'paper-resolve': [
+    { key: 'winner', label: 'winner' },
+    { key: 'net', label: 'net', unit: 'usd' },
+    { key: 'payout', label: 'payout', unit: 'usd' },
+    { key: 'fills', label: 'fills', unit: 'count' },
+  ],
+  'paper-redeem': [
+    { key: 'winner', label: 'winner' },
+    { key: 'payout', label: 'payout', unit: 'usd' },
+  ],
+  'daily-loss-cap': [
+    { key: 'lossUsd', label: 'loss', threshold: 'capUsd', op: '>=', unit: 'usd' },
+  ],
+  'window-cost-cap': [
+    { key: 'costUsd', label: 'cost', threshold: 'capUsd', op: '>=', unit: 'usd' },
+  ],
+  'window-trade-cap': [
+    { key: 'fills', label: 'fills', threshold: 'cap', op: '>=', unit: 'count' },
+  ],
+  'loop-started': [{ key: 'pid', label: 'pid' }],
+  'loop-stopped': [{ key: 'pid', label: 'pid' }],
+  'paper-reset': [{ key: 'bankrollUsd', label: 'bankroll', unit: 'usd' }],
+  'window-failed': [{ key: 'error', label: 'err' }],
+  // Legacy / fallbacks
   'thesis-intact': [
     { key: 'bid', label: 'bid', unit: 'price' },
-    { key: 'fills', label: 'fills', unit: 'count' },
-  ],
-  'paper-resolve': [
-    { key: 'net', label: 'net', unit: 'usd' },
-    { key: 'fills', label: 'fills', unit: 'count' },
-  ],
-  // Journal rows that are not entry attempts: anchors and open-position holds.
-  'anchor captured at window open': [
-    { key: 'price', label: 'anchor', unit: 'usd' },
-    { key: 'source', label: 'source' },
-  ],
-  'stalled-but-waiting': [
-    { key: 'bid', label: 'bid', unit: 'price' },
-    { key: 'stalledSec', label: 'stalled', unit: 'sec' },
-  ],
-  'accept-loss-at-resolution': [{ key: 'bid', label: 'bid', unit: 'price' }],
-  'no-bid': [{ key: 'bid', label: 'bid', unit: 'price' }],
-  'confirmed-mispricing': [
     { key: 'price', label: 'price', unit: 'price' },
-    { key: 'modelProb', label: 'p', unit: 'ratio' },
-    { key: 'edge', label: 'edge', unit: 'ratio' },
+    { key: 'fills', label: 'fills', unit: 'count' },
+  ],
+  'clip-checkpoint': [
+    { key: 'price', label: 'price', unit: 'price' },
+    { key: 'fills', label: 'fills', unit: 'count' },
   ],
 }
 
 /** Rows without a paired limit still show what was measured, not empty boxes. */
 const FALLBACK_METRICS: MetricSpec[] = [
-  { key: 'modelProb', label: 'p', unit: 'ratio' },
-  { key: 'edge', label: 'edge', unit: 'ratio' },
-  { key: 'movePct', label: 'move', unit: 'pct' },
+  { key: 'price', label: 'price', unit: 'price' },
+  { key: 'shares', label: 'shares' },
+  { key: 'lean', label: 'lean', unit: 'ratio' },
+  { key: 'net', label: 'net', unit: 'usd' },
   { key: 'spreadCents', label: 'spread', unit: 'cents' },
-  { key: 'anchorSource' },
 ]
 
 function formatMetric(value: unknown, unit?: MetricUnit, label?: string): string | null {
@@ -146,7 +207,7 @@ function formatMetric(value: unknown, unit?: MetricUnit, label?: string): string
       text = `${Number(value.toFixed(4))}%`
       break
     case 'cents':
-      text = `${Number(value.toFixed(2))}¢`
+      text = `${Number(value.toFixed(1))}¢`
       break
     case 'price':
       text = `${Math.round(value * 100)}¢`
@@ -155,13 +216,16 @@ function formatMetric(value: unknown, unit?: MetricUnit, label?: string): string
       text = `${Math.round(value)}s`
       break
     case 'usd':
-      text = Number.isInteger(value) ? `$${value}` : `$${value.toFixed(2)}`
+      text = value >= 0 ? `$${value.toFixed(2)}` : `-$${Math.abs(value).toFixed(2)}`
       break
     case 'count':
       text = `${Math.round(value)}`
       break
+    case 'ratio':
+      text = value > 0 ? `+${value.toFixed(2)}` : value.toFixed(2)
+      break
     default:
-      text = Number.isInteger(value) ? String(value) : value.toFixed(3)
+      text = Number.isInteger(value) ? String(value) : value.toFixed(2)
   }
   return label ? `${label} ${text}` : text
 }
@@ -178,7 +242,7 @@ export function eventMetrics(
     if (!text) continue
     const limit = spec.threshold ? formatMetric(detail[spec.threshold], spec.unit) : null
     out.push({ text, limit: limit && spec.op ? `${spec.op} ${limit}` : undefined })
-    if (out.length === 3) break
+    if (out.length === 4) break
   }
   return out
 }

@@ -180,6 +180,110 @@ class LivePaperLoopTests(unittest.TestCase):
             api._LAST_STATE = (str(st_file), {"slug": "btc-updown-5m-100", "endMs": 1000})
             self.assertIsNone(api.state())
 
+    def test_risk_reason_mapping(self):
+        from bot.live_paper import _risk_detail, _risk_reason_code
+
+        self.assertEqual(_risk_reason_code("killed: kill-switch file present"), "kill-switch-engaged")
+        self.assertEqual(_risk_reason_code("killed: daily loss cap $500.0"), "daily-loss-cap")
+        self.assertEqual(_risk_reason_code("window cost cap $4000"), "window-cost-cap")
+        self.assertEqual(_risk_reason_code("window trade cap 500"), "window-trade-cap")
+
+        st = RiskState(daily_loss_usd=-520.0)
+        det = _risk_detail("killed: daily loss cap $500", st, cost=100.0, trades=10)
+        self.assertEqual(det["lossUsd"], 520.0)
+        self.assertEqual(det["capUsd"], 500.0)
+
+    def test_api_events_normalizes_legacy_reasons(self):
+        import bot.api as api
+
+        ev_file = self.tmp_path / "events.jsonl"
+        ev_file.write_text(
+            '{"ts": "2026-11-08T07:31:01Z", "kind": "hold", "reason": "thesis-intact", "detail": {"bid": 0.58, "fills": 10}}\n'
+            '{"ts": "2026-11-08T07:32:01Z", "kind": "risk", "reason": "kill-switch-file-present"}\n'
+            '{"ts": "2026-11-08T07:33:01Z", "kind": "entry", "reason": "straddle-open", "detail": {"price": 0.7}}\n'
+            '{"ts": "2026-11-08T07:34:01Z", "kind": "hold", "reason": "holding-to-resolution"}\n'
+            '{"ts": "2026-11-08T07:35:01Z", "kind": "skip", "reason": "dust-quote"}\n'
+            '{"ts": "2026-11-08T07:36:01Z", "kind": "entry", "reason": "m4-snipe"}\n'
+        )
+        with patch.object(api, "EVENTS_PATH", ev_file), patch.object(api, "get_selected_run_id", return_value=None):
+            items = api.events()
+            self.assertEqual(len(items), 6)
+            self.assertEqual(items[0]["reason"], "clip-fill")
+            self.assertEqual(items[0]["detail"]["price"], 0.58)
+            self.assertNotIn("bid", items[0]["detail"])
+            self.assertEqual(items[1]["reason"], "kill-switch-engaged")
+            self.assertEqual(items[2]["reason"], "straddle-open")
+            self.assertEqual(items[3]["kind"], "done")
+            self.assertEqual(items[4]["kind"], "refuse")
+            self.assertEqual(items[5]["kind"], "snipe")
+
+    @patch("bot.live_paper.write_state")
+    @patch("bot.live_paper.log_event")
+    @patch("bot.live_paper.STATE_PATH")
+    @patch("bot.live_paper.RUNS_DIR")
+    @patch("bot.live_paper.get_window")
+    @patch("bot.live_paper.assert_single_window")
+    @patch("bot.live_paper.load_cfg")
+    def test_trade_window_logs_tailored_decisions_not_thesis_intact(
+        self, mock_load_cfg, mock_assert_single, mock_get_window, mock_runs_dir, mock_state_path, mock_log_event, mock_write_state
+    ):
+        mock_state_path.__fspath__.return_value = str(self.tmp_path / "state.json")
+        mock_runs_dir.mkdir.return_value = None
+
+        mock_load_cfg.return_value = {
+            "entry": {
+                "openDelaySec": 0,
+                "hedgeDelaySec": 0,
+                "stopBeforeCloseSec": 15,
+                "minFillPrice": 0.05,
+                "clipSharesDefault": 10.0,
+                "medianShares": 10.0,
+                "maxShares": 20.0,
+                "medianFillsTarget": 4,
+                "minSpacingStaticSec": 0.01,
+                "minSpacingMoveSec": 0.01,
+            }
+        }
+
+        mock_spec = MagicMock()
+        mock_spec.up_token_id = "tok_up"
+        mock_spec.down_token_id = "tok_down"
+        mock_spec.question = "Will BTC be up?"
+        mock_get_window.return_value = mock_spec
+
+        mock_client = MagicMock()
+        mock_client.get_price.return_value = "0.50"
+        mock_client.get_midpoint.return_value = "0.50"
+
+        slot = 1_700_000_100
+        clock = [float(slot)]
+
+        def fake_time():
+            clock[0] += 0.5
+            return clock[0]
+
+        def fake_sleep(dt):
+            clock[0] += max(0.0, dt)
+
+        logged_reasons = []
+        mock_log_event.side_effect = lambda kind, reason, *args, **kw: logged_reasons.append((kind, reason))
+
+        with patch("bot.live_paper.settle_slug"), \
+             patch("bot.live_paper.KILL_PATH", self.tmp_path / "kill"), \
+             patch("bot.live_paper.time", SimpleNamespace(time=fake_time, sleep=fake_sleep), create=True):
+            trade_window(mock_client, slot=slot, origin=None, verbose=False)
+
+        # Confirm specific straddle & clip decisions were logged
+        reasons_only = [r for _, r in logged_reasons]
+        self.assertIn("straddle-open", reasons_only)
+        self.assertIn("hedge-leg", reasons_only)
+        self.assertIn("clip-fill", reasons_only)
+        self.assertIn("holding-to-resolution", reasons_only)
+        kinds_by_reason = {r: k for k, r in logged_reasons}
+        self.assertEqual(kinds_by_reason.get("holding-to-resolution"), "done")
+        # Thesis-intact must NEVER be logged anymore
+        self.assertNotIn("thesis-intact", reasons_only)
+
 
 if __name__ == "__main__":
     unittest.main()
