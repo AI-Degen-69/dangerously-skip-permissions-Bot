@@ -107,7 +107,7 @@ export function PolymarketLiveChart({ markets, positions = [] }: { markets: Mark
           <MarketChartPanel
             key={market.slug}
             market={market}
-            position={positions.find((p) => p.slug === market.slug)}
+            positions={positions.filter((p) => p.slug === market.slug)}
             params={config?.config.intervalParams[market.interval] ?? null}
             wide={activeMarkets.length === 1}
           />
@@ -119,19 +119,21 @@ export function PolymarketLiveChart({ markets, positions = [] }: { markets: Mark
 
 function MarketChartPanel({
   market,
-  position,
+  positions = [],
   params,
   wide = false,
 }: {
   market: MarketView
-  position?: PositionView
+  positions?: PositionView[]
   params: BotConfigView['intervalParams'][Interval] | null
   wide?: boolean
 }) {
   const points = useOddsSeries(market)
   const total = Math.max(1, market.endMs - market.startMs)
   const intervalSec = total / 1000
-  const holdingSide = position?.side ?? null
+  const hasUp = positions.some((p) => p.side === 'Up')
+  const hasDown = positions.some((p) => p.side === 'Down')
+  const position = positions[0]
   const progress = Math.min(1, Math.max(0, (total - market.secondsRemaining * 1000) / total))
   const elapsedSec = Math.max(0, intervalSec - market.secondsRemaining)
   // The bar is a calendar of the bot's regimes, independent of whether a trade
@@ -224,7 +226,13 @@ function MarketChartPanel({
           <h3 className="flex items-center gap-2 text-[13px] font-semibold">
             {market.interval} window
             <span className="text-[11.5px] font-normal text-faint">{clock(market.startMs)}</span>
-            {holdingSide && <Badge tone="accent">holding {holdingSide}</Badge>}
+            {hasUp && hasDown ? (
+              <Badge tone="accent">holding UP & DOWN</Badge>
+            ) : hasUp ? (
+              <Badge tone="accent">holding Up (first leg)</Badge>
+            ) : hasDown ? (
+              <Badge tone="accent">holding Down (first leg)</Badge>
+            ) : null}
           </h3>
           <p className="mt-0.5 truncate font-mono text-[10.5px] text-faint">{slug}</p>
         </div>
@@ -282,7 +290,7 @@ function MarketChartPanel({
       <div className="mt-2.5 grid grid-cols-2 gap-2">
         {(['Up', 'Down'] as const).map((outcome) => {
           const leading = market.side === outcome
-          const holding = holdingSide === outcome
+          const holding = positions.some((p) => p.side === outcome)
           return (
             <div
               key={outcome}
