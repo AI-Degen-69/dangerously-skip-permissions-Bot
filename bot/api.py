@@ -588,8 +588,28 @@ def snapshot() -> dict:
             break
 
     kills = KILL_PATH.exists()
-    daily_loss_cap = float(risk_cfg.get("dailyLossCapUsd", 500.0))
+    try:
+        raw_cap = risk_cfg.get("dailyLossCapUsd")
+        daily_loss_cap = float(raw_cap) if raw_cap is not None and float(raw_cap) > 0 else 500.0
+    except (ValueError, TypeError):
+        daily_loss_cap = 500.0
     daily_loss_pct = round((daily_loss_cap / day_start_equity) * 100, 2) if day_start_equity > 0 else 50.0
+
+    def _to_int(val, default: int) -> int:
+        try:
+            return int(val) if val is not None else default
+        except (ValueError, TypeError):
+            return default
+
+    def _to_float(val, default: float) -> float:
+        try:
+            return float(val) if val is not None else default
+        except (ValueError, TypeError):
+            return default
+
+    settled_equity = round(bankroll + sum((r.get("net_usd") or 0.0) for r in settled), 2)
+    daily_loss_usd = round(max(0.0, day_start_equity - settled_equity), 2)
+
     return {
         "version": 1, "mode": "paper", "asset": cfg.get("asset", "BTC"),
         "updatedAt": utc_now_iso(), "equityUsd": equity, "bankrollUsd": bankroll,
@@ -598,15 +618,16 @@ def snapshot() -> dict:
         "risk": {"dayKey": day_key, "tradesToday": len(today),
                  "tradesTodayByInterval": {"5m": len(today), "15m": 0},
                  "consecutiveLosses": consecutive_losses, "realizedPnlUsd": realized,
+                 "dailyLossUsd": daily_loss_usd,
                  "dayStartEquityUsd": day_start_equity, "highWaterEquityUsd": high_water,
                  "halted": kills, "haltReason": "kill-switch-file-present" if kills else None,
                  "cooldownUntilMs": 0},
-        "limits": {"maxTradesPerDay": int(risk_cfg.get("maxTradesPerDay", 288)),
-                   "maxConsecutiveLosses": int(risk_cfg.get("maxConsecutiveLosses", 99)),
+        "limits": {"maxTradesPerDay": _to_int(risk_cfg.get("maxTradesPerDay"), 288),
+                   "maxConsecutiveLosses": _to_int(risk_cfg.get("maxConsecutiveLosses"), 99),
                    "dailyLossLimitPct": daily_loss_pct,
                    "dailyLossCapUsd": daily_loss_cap,
-                   "maxDrawdownPct": float(risk_cfg.get("maxDrawdownPct", 90)),
-                   "maxConcurrentPositions": int(risk_cfg.get("maxConcurrentPositions", 1)),
+                   "maxDrawdownPct": _to_float(risk_cfg.get("maxDrawdownPct"), 90.0),
+                   "maxConcurrentPositions": _to_int(risk_cfg.get("maxConcurrentPositions"), 1),
                    "minEdge": 0, "feeRate": 0, "profitTargetCents": 100},
         "killSwitch": kills, "newsBlocked": False,
         "feed": {"price": None, "updatedAtMs": None, "history": []},
@@ -1524,7 +1545,9 @@ class Handler(BaseHTTPRequestHandler):
             write_path(cfg, path, value)
         if isinstance(patch.get("news.events"), list):
             cfg.setdefault("news", {})["events"] = patch["news.events"]
-        CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
+        tmp_cfg = CONFIG_PATH.with_suffix(".tmp")
+        tmp_cfg.write_text(json.dumps(cfg, indent=2))
+        tmp_cfg.replace(CONFIG_PATH)
         log_event("info", "config-updated", detail={"warnings": warnings})
         self._send(200, {"config": self._config_view(), "warnings": warnings})
 
@@ -1537,7 +1560,11 @@ class Handler(BaseHTTPRequestHandler):
                  "kellyCut": 0.25, "maxPositionPct": 0.08, "feeRate": 0,
                  **cfg.get("entry", {})}
         risk_raw = cfg.get("risk", {})
-        daily_loss_cap = float(risk_raw.get("dailyLossCapUsd", 500.0))
+        try:
+            raw_cap = risk_raw.get("dailyLossCapUsd")
+            daily_loss_cap = float(raw_cap) if raw_cap is not None and float(raw_cap) > 0 else 500.0
+        except (ValueError, TypeError):
+            daily_loss_cap = 500.0
         bankroll = float(cfg.get("bankrollUsd", BANKROLL_DEFAULT))
         calc_pct = round((daily_loss_cap / bankroll) * 100, 2) if bankroll > 0 else 50.0
         risk = {"maxConcurrentPositions": 1, "maxTradesPerDay": 288,

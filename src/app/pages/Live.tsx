@@ -466,7 +466,7 @@ function RiskPanel({ data }: { data: BotSnapshot }) {
   const { risk, limits } = data
   const resume = useResumeBot()
   const toast = useToast()
-  const dayLoss = Math.max(0, risk.dayStartEquityUsd - data.equityUsd)
+  const dayLoss = risk.dailyLossUsd != null ? risk.dailyLossUsd : Math.max(0, risk.dayStartEquityUsd - data.equityUsd)
   const dayLimit = limits.dailyLossCapUsd != null ? limits.dailyLossCapUsd : (risk.dayStartEquityUsd * limits.dailyLossLimitPct) / 100
   const drawdown = Math.max(0, risk.highWaterEquityUsd - data.equityUsd)
   const drawdownLimit = (risk.highWaterEquityUsd * limits.maxDrawdownPct) / 100

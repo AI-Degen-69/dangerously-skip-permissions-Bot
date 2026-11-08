@@ -24,15 +24,16 @@ CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
 
 
 def load_risk_config() -> dict:
+    p = CONFIG_PATH if CONFIG_PATH.exists() else Path("bot/config.json")
+    if not p.exists():
+        return {}
     try:
-        p = CONFIG_PATH
-        if not p.exists():
-            p = Path("bot/config.json")
-        if p.exists():
-            return json.loads(p.read_text()).get("risk", {})
-    except Exception:
-        pass
-    return {}
+        data = json.loads(p.read_text())
+        if not isinstance(data, dict):
+            raise ValueError("config root must be a JSON object")
+        return data.get("risk", {})
+    except Exception as ex:
+        raise RuntimeError(f"failed to read risk configuration: {ex}") from ex
 
 
 DAILY_LOSS_CAP_USD = 500.0  # operator to confirm before any live size
@@ -60,15 +61,32 @@ def check_window(
         return f"killed: {state.kill_reason}"
 
     rc = None
+    if max_trades is None or max_usd is None or daily_loss_cap is None:
+        try:
+            rc = load_risk_config()
+        except Exception as ex:
+            state.killed = True
+            state.kill_reason = f"risk config error: {ex}"
+            return f"killed: {state.kill_reason}"
+
     if max_trades is None:
-        rc = load_risk_config() if rc is None else rc
-        max_trades = int(rc.get("maxFillsPerWindow", MAX_TRADES_PER_WINDOW))
+        try:
+            val = rc.get("maxFillsPerWindow")
+            max_trades = int(val) if val is not None and int(val) > 0 else MAX_TRADES_PER_WINDOW
+        except (ValueError, TypeError):
+            max_trades = MAX_TRADES_PER_WINDOW
     if max_usd is None:
-        rc = load_risk_config() if rc is None else rc
-        max_usd = float(rc.get("maxUsdPerWindow", MAX_USD_PER_WINDOW))
+        try:
+            val = rc.get("maxUsdPerWindow")
+            max_usd = float(val) if val is not None and float(val) > 0 else MAX_USD_PER_WINDOW
+        except (ValueError, TypeError):
+            max_usd = MAX_USD_PER_WINDOW
     if daily_loss_cap is None:
-        rc = load_risk_config() if rc is None else rc
-        daily_loss_cap = float(rc.get("dailyLossCapUsd", DAILY_LOSS_CAP_USD))
+        try:
+            val = rc.get("dailyLossCapUsd")
+            daily_loss_cap = float(val) if val is not None and float(val) > 0 else DAILY_LOSS_CAP_USD
+        except (ValueError, TypeError):
+            daily_loss_cap = DAILY_LOSS_CAP_USD
 
     if trades >= max_trades:
         return f"window trade cap {max_trades}"

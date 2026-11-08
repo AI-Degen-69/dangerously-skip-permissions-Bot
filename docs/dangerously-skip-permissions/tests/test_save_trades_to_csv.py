@@ -50,6 +50,8 @@ class SaveTradesToCsvTests(unittest.TestCase):
             "pagination": {"next_cursor": None},
         }
 
+        events = []
+
         class FlushTrackingStream(io.StringIO):
             def __init__(self):
                 super().__init__()
@@ -57,15 +59,21 @@ class SaveTradesToCsvTests(unittest.TestCase):
 
             def flush(self):
                 self.flush_count += 1
+                events.append(("flush", len(events)))
                 super().flush()
 
         stream = FlushTrackingStream()
         target = datetime.datetime(2026, 11, 7, 18, 0, tzinfo=datetime.timezone.utc)
 
+        def mock_get(*args, **kwargs):
+            events.append(("get", len(events)))
+            get_count = len([e for e in events if e[0] == "get"])
+            return FakeResponse(page_one if get_count == 1 else page_two)
+
         with patch("sys.stdout", stream), patch.object(
             SCRIPT.requests,
             "get",
-            side_effect=[FakeResponse(page_one), FakeResponse(page_two)],
+            side_effect=mock_get,
         ):
             SCRIPT.fetch_activity(
                 now=target,
@@ -82,6 +90,8 @@ class SaveTradesToCsvTests(unittest.TestCase):
             ["Page 1: 1 records; 1 total", "Page 2: 2 records; 3 total"],
         )
         self.assertEqual(stream.flush_count, 2)
+        # Verify that page 1 was flushed before page 2 was requested
+        self.assertEqual([e[0] for e in events], ["get", "flush", "get", "flush"])
 
     def test_fetches_all_activity_pages_with_fixed_24_hour_bounds(self):
         now = datetime.datetime(2026, 11, 7, 18, 0, tzinfo=datetime.timezone.utc)

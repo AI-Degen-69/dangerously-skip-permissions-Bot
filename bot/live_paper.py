@@ -243,11 +243,11 @@ def _risk_detail(raw_reason: str, state: RiskState, cost: float, trades: int) ->
     trade_cap = int(risk_cfg.get("maxFillsPerWindow", 500))
 
     if "daily loss cap" in raw_reason:
-        m = re.search(r"daily loss cap \$?([0-9.]+)", raw_reason)
+        m = re.search(r"daily loss cap \$?([0-9.]+(?:[eE][+-]?\d+)?)", raw_reason)
         cap = float(m.group(1)) if m else default_cap
         return {"lossUsd": round(abs(state.daily_loss_usd), 2), "capUsd": cap}
     if "cost cap" in raw_reason:
-        m = re.search(r"cost cap \$?([0-9.]+)", raw_reason)
+        m = re.search(r"cost cap \$?([0-9.]+(?:[eE][+-]?\d+)?)", raw_reason)
         cap = float(m.group(1)) if m else cost_cap
         return {"costUsd": round(cost, 2), "capUsd": cap}
     if "trade cap" in raw_reason:

@@ -30,6 +30,7 @@ export interface RiskState {
   tradesTodayByInterval: Record<Interval, number>
   consecutiveLosses: number
   realizedPnlUsd: number
+  dailyLossUsd?: number
   dayStartEquityUsd: number
   highWaterEquityUsd: number
   halted: boolean
