@@ -7,3 +7,7 @@ dist
 !.dev.vars.example
 .DS_Store
 *.log
+__pycache__/
+*.pyc
+.playwright-cli/
+.pytest_cache/
