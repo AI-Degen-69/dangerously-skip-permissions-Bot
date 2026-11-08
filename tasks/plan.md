@@ -142,7 +142,7 @@ Output format:
   - Add a "Live WSS Stream" panel in `Live.tsx` showing the tick tape table/feed with timestamps, outcome chips, prices, sizes, and spread/midpoint metrics.
   - *Verification*: Inspect UI via Vite dev server.
 
-- [ ] **Task 6: End-to-End System Verification** `[Verification]` [Size: S]
+- [x] **Task 6: End-to-End System Verification** `[Verification]` [Size: S]
   - Run terminal watcher: `python bot/ws.py --watch` to verify live console ticks.
   - Run paper trading window: `python bot/live_paper.py --once` with WSS enabled.
   - Verify live stream ticks render in dashboard UI simultaneously.
