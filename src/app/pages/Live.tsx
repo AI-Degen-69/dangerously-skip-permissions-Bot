@@ -19,6 +19,7 @@ import {
   type BotEvent,
   type BotSnapshot,
   type BotTrade,
+  type MarketView,
   type PositionView,
 } from '../lib/bot'
 import { cx } from '../lib/cx'
@@ -387,7 +388,7 @@ function Positions({ data }: { data: BotSnapshot }) {
       ) : (
         <ul className="mt-2 divide-y divide-line">
           {data.positions.map((position) => (
-            <PositionRow key={position.id} position={position} />
+            <PositionRow key={position.id} position={position} markets={data.markets} />
           ))}
         </ul>
       )}
@@ -395,10 +396,22 @@ function Positions({ data }: { data: BotSnapshot }) {
   )
 }
 
-function PositionRow({ position }: { position: PositionView }) {
-  const pnl = position.unrealizedPnlUsd
+function PositionRow({ position, markets }: { position: PositionView; markets?: MarketView[] }) {
   const isResolving = Boolean(position.resolving ?? (position.secondsLeft <= 0))
+
+  // Mid-window fallback: if window is still running, ensure mark and pnl are not hidden with a dash
+  const market = markets?.find((m) => m.slug === position.slug)
+  const quotes = market?.quotes?.[position.side]
+  const quoteMark = quotes?.bid ?? quotes?.ask ?? null
+  const fallbackMark = position.mark ?? quoteMark ?? (isResolving ? null : 0)
+  const fallbackPnl =
+    position.unrealizedPnlUsd ??
+    (fallbackMark != null ? Number((fallbackMark * position.shares - position.costUsd).toFixed(2)) : (isResolving ? null : -position.costUsd))
+
+  const mark = isResolving && position.mark == null ? null : fallbackMark
+  const pnl = isResolving && position.unrealizedPnlUsd == null ? null : fallbackPnl
   const resolving = isResolving && pnl == null
+
   return (
     <li className="py-3">
       <div className="flex items-center justify-between gap-2">
@@ -419,7 +432,7 @@ function PositionRow({ position }: { position: PositionView }) {
         <span>
           {position.shares} @ {cents(position.entryPrice)}
         </span>
-        <span>mark {position.mark == null ? '—' : cents(position.mark)}</span>
+        <span>mark {mark == null ? '—' : cents(mark)}</span>
         <span className="text-right">{Math.max(0, Math.round(position.secondsLeft))}s left</span>
       </div>
       <div className="mt-1 flex items-center gap-2 text-[11.5px] text-faint">

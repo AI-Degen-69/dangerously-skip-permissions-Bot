@@ -9,12 +9,23 @@ if ($pyCmd) {
     $PythonExe = 'C:\Users\Tiger\AppData\Local\Programs\Python\Python312\python.exe'
 }
 
+function Test-PortOccupied([int]$port) {
+    try {
+        $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $port)
+        $listener.Start()
+        $listener.Stop()
+        return $false
+    } catch {
+        return $true
+    }
+}
+
 # 1. Find any running processes serving bot/api.py or holding port 8789
 $targetPids = [System.Collections.Generic.HashSet[int]]::new()
 
 # Look by CommandLine
 Get-CimInstance Win32_Process | ForEach-Object {
-    if ($_.CommandLine -and ($_.CommandLine -like '*bot/api.py*' -or $_.CommandLine -like '*bot\api.py*')) {
+    if ($_.CommandLine -and ($_.CommandLine -like '*bot/api.py*' -or $_.CommandLine -like '*bot\api.py*' -or $_.CommandLine -like '*api.py*') -and $_.ProcessId -ne $PID) {
         [void]$targetPids.Add($_.ProcessId)
     }
 }
@@ -46,7 +57,7 @@ if ($targetPids.Count -gt 0) {
             }
         }
 
-        $portOccupied = Get-NetTCPConnection -LocalPort 8789 -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.OwningProcess -gt 0 }
+        $portOccupied = Test-PortOccupied 8789
 
         if (-not $stillAlive -and -not $portOccupied) {
             Write-Host "Verified: previous instance terminated and port 8789 released."
