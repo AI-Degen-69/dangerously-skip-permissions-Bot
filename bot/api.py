@@ -766,24 +766,56 @@ def slot_ms(slug: str) -> int:
         return 0
 
 
+def _enrich_fill(f: dict, idx: int, default_ts: int, slug: str | None) -> dict:
+    reason = f.get("reason")
+    detail = dict(f.get("detail") or {})
+    minute = f.get("minute")
+    if not reason or reason == "paper-fill":
+        if idx == 0 or (minute == 0 and idx == 0):
+            reason = "straddle-open"
+        elif idx == 1:
+            reason = "hedge-leg"
+        elif minute == 4:
+            reason = "m4-snipe"
+        elif minute is not None:
+            reason = "straddle-balance"
+        else:
+            reason = "paper-fill"
+    if minute is not None and "minute" not in detail:
+        detail["minute"] = minute
+    return {
+        "ts": int(f.get("ts") or default_ts),
+        "kind": "entry",
+        "slug": slug,
+        "interval": "5m",
+        "side": f.get("outcome"),
+        "shares": f.get("shares"),
+        "price": f.get("price"),
+        "usd": f.get("usd"),
+        "reason": reason,
+        "detail": detail,
+        "mode": "paper",
+    }
+
+
 def trades_view(limit: int) -> list[dict]:
     out: list[dict] = []
     run_slugs: set[str | None] = set()
     for r in sorted(runs(), key=lambda x: x.get("event_slug", ""))[-12:]:
         rts = slot_ms(r.get("event_slug", ""))
         run_slugs.add(r.get("event_slug"))
-        for f in r.get("fills", [])[:200]:
-            out.append({"ts": int(f.get("ts") or rts), "kind": "entry",
-                        "slug": r.get("event_slug"), "interval": "5m",
-                        "side": f.get("outcome"), "shares": f.get("shares"),
-                        "price": f.get("price"), "usd": f.get("usd"),
-                        "reason": "paper-fill", "mode": "paper"})
+        for idx, f in enumerate(r.get("fills", [])[:200]):
+            out.append(_enrich_fill(f, idx, rts, r.get("event_slug")))
+        winner = r.get("winner")
+        pnl = None if is_pending(r) else r.get("net_usd")
+        settle_reason = "awaiting-resolution" if is_pending(r) else ("won" if (pnl or 0) > 0 else "lost" if (pnl or 0) < 0 else "paper-resolve")
         out.append({"ts": rts, "kind": "settle",
                     "slug": r.get("event_slug"), "interval": "5m",
-                    "pnlUsd": None if is_pending(r) else r.get("net_usd"),
-                    "reason": "awaiting-resolution" if is_pending(r) else "paper-resolve",
+                    "side": winner,
+                    "pnlUsd": pnl,
+                    "reason": settle_reason,
                     "mode": "paper",
-                    "detail": {"winner": r.get("winner"), "fills": r.get("trades")}})
+                    "detail": {"winner": winner, "fills": r.get("trades"), "net": pnl}})
 
     # Open window: its fills live in state.json until the window closes and a
     # run file appears. Without this the table froze on the previous window's
@@ -792,12 +824,9 @@ def trades_view(limit: int) -> list[dict]:
     live_slug = st.get("slug")
     if live_slug and live_slug not in run_slugs:
         base = slot_ms(live_slug)
-        for f in (st.get("fills") or [])[:200]:
-            out.append({"ts": int(f.get("ts") or base + int(f.get("minute") or 0) * 60_000),
-                        "kind": "entry", "slug": live_slug, "interval": "5m",
-                        "side": f.get("outcome"), "shares": f.get("shares"),
-                        "price": f.get("price"), "usd": f.get("usd"),
-                        "reason": "paper-fill", "mode": "paper"})
+        for idx, f in enumerate((st.get("fills") or [])[:200]):
+            default_ts = base + int(f.get("minute") or 0) * 60_000
+            out.append(_enrich_fill(f, idx, default_ts, live_slug))
 
     out.sort(key=lambda t: int(t.get("ts") or 0))
     return out[-limit:]

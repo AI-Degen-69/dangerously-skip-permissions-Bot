@@ -134,7 +134,7 @@ export interface BotEvent {
 }
 
 export interface BotTrade {
-  ts: string
+  ts: string | number
   kind: string
   slug?: string
   interval?: Interval
