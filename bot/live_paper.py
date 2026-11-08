@@ -174,7 +174,7 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
                     st["ws"] = streamer.get_status()
                     st["recentTicks"] = streamer.get_recent_ticks(30)
                     STATE_PATH.write_text(json.dumps(st))
-            except Exception:
+            except (OSError, json.JSONDecodeError):
                 pass
             stop_sync.wait(1.0)
 
