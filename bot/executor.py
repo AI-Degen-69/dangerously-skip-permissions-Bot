@@ -31,14 +31,26 @@ class WindowPlan:
         return sum(f.usd for f in self.fills)
 
 
+def m_quotas(target: int = int(C.MEDIAN_TRADES_PER_WINDOW)) -> list[int]:
+    total = sum(C.M_BUCKETS)
+    return [max(1, round(target * b / total)) for b in C.M_BUCKETS]
+
+
+def pick_side(i: int, minute: int, lean: LeanSignal) -> str:
+    up_p = 0.5 + lean.lean * 0.25 * (0.5 + 0.5 * lean.confidence)
+    base_up = (i + minute) % 2 == 0
+    if up_p > 0.6 and i % 3 != 0:
+        up_side = True  # lean Up overrides base on 2/3 of fills
+    elif up_p < 0.4 and i % 3 != 0:
+        up_side = False  # lean Down overrides base on 2/3 of fills
+    else:
+        up_side = base_up  # straddle base: lean=0 stays even
+    return "Up" if up_side else "Down"
+
+
 def plan_window(event_slug: str, lean: LeanSignal, state: RiskState) -> WindowPlan:
     """Deterministic paper plan matching CSV moments (45 median fills)."""
-    # M-shape weights from frozen M_BUCKETS, scaled to median 45 fills
-    total = sum(C.M_BUCKETS)
-    target = int(C.MEDIAN_TRADES_PER_WINDOW)
-    counts = [max(1, round(target * b / total)) for b in C.M_BUCKETS]
-    # lean tilts Up share: 0.5 + lean*0.25*confidence
-    up_p = 0.5 + lean.lean * 0.25 * (0.5 + 0.5 * lean.confidence)
+    counts = m_quotas(int(C.MEDIAN_TRADES_PER_WINDOW))
     plan = WindowPlan(event_slug=event_slug)
     cost = 0.0
     for minute, n in enumerate(counts):
@@ -46,15 +58,7 @@ def plan_window(event_slug: str, lean: LeanSignal, state: RiskState) -> WindowPl
             blocked = check_window(len(plan.fills), cost, state)
             if blocked:
                 return plan
-            # straddle-plus-lean: alternate with lean bias, extremes only in M4
-            base_up = (i + minute) % 2 == 0
-            if up_p > 0.6 and i % 3 != 0:
-                up_side = True  # lean Up overrides base on 2/3 of fills
-            elif up_p < 0.4 and i % 3 != 0:
-                up_side = False  # lean Down overrides base on 2/3 of fills
-            else:
-                up_side = base_up  # straddle base: lean=0 stays even
-            outcome = "Up" if up_side else "Down"
+            outcome = pick_side(i, minute, lean)
             if minute < 4:
                 price = 0.476  # first-price mean; mid-window grind
             else:

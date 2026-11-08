@@ -301,7 +301,7 @@ class TradesViewLiveTests(unittest.TestCase):
                 "fills": [{"minute": 2, "outcome": "Down", "price": 0.4,
                            "shares": 30, "usd": 12.0}],
             }))
-            with patch.object(api, "RUNS_DIR", runs), patch.object(api, "STATE_PATH", st):
+            with patch.object(api, "RUNS_DIR", runs), patch.object(api, "STATE_PATH", st), patch.object(api, "resolve_run_workspace", return_value=None):
                 items = api.trades_view(50)
 
         live = [t for t in items if t["slug"] == "btc-updown-5m-400"]
