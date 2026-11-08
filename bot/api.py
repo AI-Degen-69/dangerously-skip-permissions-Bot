@@ -27,6 +27,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from bot.runs import (
+    RunWorkspace,
+    get_active_run_id,
+    list_all_runs,
+    make_run_id,
+    resolve_run_workspace,
+    set_active_run_id,
+)
+
 BOT_DIR = ROOT / "bot"
 CONFIG_PATH = BOT_DIR / "config.json"
 RUNS_DIR = BOT_DIR / "paper_runs"
@@ -51,7 +60,38 @@ def load_config() -> dict:
                 "intervals": ["5m"], "entry": {}, "risk": {}, "news": {"blackoutMinutes": 0, "events": []}}
 
 
+SELECTED_RUN_ID: str | None = None
+
+
+def get_selected_run_id() -> str | None:
+    global SELECTED_RUN_ID
+    return SELECTED_RUN_ID
+
+
+def set_selected_run_id(run_id: str | None) -> None:
+    global SELECTED_RUN_ID
+    SELECTED_RUN_ID = run_id
+
+
+def is_view_only() -> bool:
+    """Returns True if user has selected a historical run or explicit view-only mode."""
+    sel = get_selected_run_id()
+    if not sel:
+        return False
+    active = get_active_run_id()
+    return sel != active
+
+
 def runs() -> list[dict]:
+    sel = get_selected_run_id()
+    if sel:
+        ws = resolve_run_workspace(sel)
+        if ws and ws.windows_dir.exists():
+            return ws.list_windows()
+        return []
+    ws = resolve_run_workspace(None)
+    if ws and ws.windows_dir.exists():
+        return ws.list_windows()
     out = []
     if RUNS_DIR.exists():
         for p in sorted(RUNS_DIR.glob("*.json")):
@@ -63,6 +103,8 @@ def runs() -> list[dict]:
 
 
 def state() -> dict | None:
+    if is_view_only():
+        return None
     try:
         return json.loads(STATE_PATH.read_text())
     except Exception:
@@ -70,9 +112,16 @@ def state() -> dict | None:
 
 
 def events(limit: int = 150) -> list[dict]:
-    if not EVENTS_PATH.exists():
+    sel = get_selected_run_id()
+    if sel:
+        ws = resolve_run_workspace(sel)
+        target_path = ws.events_file if (ws and ws.events_file.exists()) else None
+    else:
+        ws = resolve_run_workspace(None)
+        target_path = ws.events_file if (ws and ws.events_file.exists()) else EVENTS_PATH
+    if not target_path or not target_path.exists():
         return []
-    lines = EVENTS_PATH.read_text().splitlines()[-max(limit, 1):]
+    lines = target_path.read_text().splitlines()[-max(limit, 1):]
     out = []
     for line in lines:
         try:
@@ -86,6 +135,14 @@ def log_event(kind: str, reason: str, **kw) -> None:
     rec = {"ts": utc_now_iso(), "kind": kind, "mode": "paper", "reason": reason, **kw}
     with EVENTS_PATH.open("a") as f:
         f.write(json.dumps(rec) + "\n")
+    ws = resolve_run_workspace(None)
+    if ws:
+        try:
+            ws.root.mkdir(parents=True, exist_ok=True)
+            with ws.events_file.open("a") as f:
+                f.write(json.dumps(rec) + "\n")
+        except Exception:
+            pass
 
 
 def _win_alive(pid: int) -> bool:
@@ -751,9 +808,29 @@ class Handler(BaseHTTPRequestHandler):
                 age = None
                 if st and st.get("updatedAtMs"):
                     age = max(0, int(time.time() * 1000) - st["updatedAtMs"])
-                self._send(200, {"running": pid is not None, "pid": pid,
-                                 "snapshotAgeMs": age, "mode": "paper",
-                                 "logPath": str(LOG_PATH)})
+                active_id = get_active_run_id()
+                sel_id = get_selected_run_id() or active_id
+                view_only = is_view_only()
+                self._send(200, {
+                    "running": pid is not None and not view_only,
+                    "pid": pid if not view_only else None,
+                    "snapshotAgeMs": age,
+                    "mode": "paper",
+                    "logPath": str(LOG_PATH),
+                    "activeRunId": active_id,
+                    "selectedRunId": sel_id,
+                    "isViewOnly": view_only,
+                })
+            elif url.path == "/api/bot/runs":
+                all_r = list_all_runs()
+                active_id = get_active_run_id()
+                sel_id = get_selected_run_id() or active_id
+                self._send(200, {
+                    "runs": all_r,
+                    "activeRunId": active_id,
+                    "selectedRunId": sel_id,
+                    "isViewOnly": is_view_only(),
+                })
             elif url.path == "/api/bot/config":
                 self._send(200, {"config": self._config_view(), "configFile": str(CONFIG_PATH)})
             else:
@@ -765,6 +842,12 @@ class Handler(BaseHTTPRequestHandler):
         body = self._body()
         try:
             if self.path == "/api/bot/start":
+                if is_view_only():
+                    self._send(400, {
+                        "error": "Cannot start bot while inspecting a past run in view-only mode. Switch back to live run first.",
+                        "isViewOnly": True,
+                    })
+                    return
                 if loop_running():
                     self._send(200, {"running": True, "pid": loop_running(), "reason": "already-running"})
                     return
@@ -778,6 +861,9 @@ class Handler(BaseHTTPRequestHandler):
                 log_event("info", "loop-started", detail={"pid": proc.pid})
                 self._send(200, {"running": True, "pid": proc.pid})
             elif self.path == "/api/bot/stop":
+                if is_view_only():
+                    self._send(400, {"error": "Cannot stop bot while in view-only mode", "isViewOnly": True})
+                    return
                 pid = loop_running()
                 if pid:
                     try:
@@ -790,15 +876,54 @@ class Handler(BaseHTTPRequestHandler):
                         pass
                     PID_PATH.unlink(missing_ok=True)
                     log_event("risk", "loop-stopped", detail={"pid": pid})
+                active_id = get_active_run_id()
+                if active_id:
+                    ws = RunWorkspace(active_id)
+                    if ws.exists():
+                        ws.finalize(status="completed", summary=perf().get("summary", {}))
                 self._send(200, {"running": False, "pid": None})
+            elif self.path == "/api/bot/select-run":
+                target_run_id = body.get("runId")
+                if target_run_id and isinstance(target_run_id, str) and target_run_id.strip():
+                    raw_id = target_run_id.strip()
+                    try:
+                        ws = RunWorkspace(raw_id)
+                    except ValueError:
+                        self._send(400, {"error": f"Invalid runId: {raw_id}"})
+                        return
+                    if not ws.exists():
+                        self._send(404, {"error": f"Run {raw_id} not found"})
+                        return
+                    if ws.run_id == get_active_run_id():
+                        set_selected_run_id(None)
+                    else:
+                        set_selected_run_id(ws.run_id)
+                else:
+                    # Switch back to live
+                    set_selected_run_id(None)
+                self._send(200, {
+                    "selectedRunId": get_selected_run_id() or get_active_run_id(),
+                    "activeRunId": get_active_run_id(),
+                    "isViewOnly": is_view_only(),
+                })
             elif self.path == "/api/bot/reset":
+                if is_view_only():
+                    self._send(400, {"error": "Cannot reset while in view-only mode", "isViewOnly": True})
+                    return
                 for p in RUNS_DIR.glob("*.json"):
                     p.unlink()
+                active_ws = resolve_run_workspace(None)
+                if active_ws and active_ws.windows_dir.exists():
+                    for p in active_ws.windows_dir.glob("*.json"):
+                        p.unlink(missing_ok=True)
                 for p in (STATE_PATH, EVENTS_PATH):
                     p.unlink(missing_ok=True)
                 log_event("risk", "paper-reset", detail={"bankrollUsd": load_config().get("bankrollUsd")})
                 self._send(200, {"bankrollUsd": load_config().get("bankrollUsd"), "resetAt": utc_now_iso()})
             elif self.path == "/api/bot/kill-switch":
+                if is_view_only():
+                    self._send(400, {"error": "Cannot toggle kill-switch while in view-only mode", "isViewOnly": True})
+                    return
                 if body.get("active"):
                     KILL_PATH.write_text(utc_now_iso())
                     log_event("risk", "kill-switch-file-present")
@@ -806,6 +931,9 @@ class Handler(BaseHTTPRequestHandler):
                     KILL_PATH.unlink(missing_ok=True)
                 self._send(200, {"killSwitch": KILL_PATH.exists()})
             elif self.path == "/api/bot/resume":
+                if is_view_only():
+                    self._send(400, {"error": "Cannot resume while in view-only mode", "isViewOnly": True})
+                    return
                 KILL_PATH.unlink(missing_ok=True)
                 log_event("info", "entries-resumed")
                 self._send(200, {"ok": True, "killSwitch": False})
@@ -815,6 +943,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(500, {"error": f"{type(ex).__name__}: {ex}"})
 
     def do_PUT(self):
+        if is_view_only():
+            self._send(400, {"error": "Cannot edit config while in view-only mode", "isViewOnly": True})
+            return
         if self.path != "/api/bot/config":
             self._send(404, {"error": "not found"})
             return

@@ -56,12 +56,13 @@ export function Live() {
   const wsTicks = useBotWsTicks()
   const toast = useToast()
 
+  const isViewOnly = control.data?.isViewOnly ?? false
   const data = snapshot.data?.snapshot ?? null
   const ws = wsTicks.data?.status ?? data?.ws
   const ticks = wsTicks.data?.ticks ?? data?.recentTicks ?? []
-  const online = Boolean(snapshot.data?.online && data)
+  const online = Boolean(snapshot.data?.online && data && !isViewOnly)
   const stopped = data?.killSwitch ?? false
-  const running = control.data?.running ?? false
+  const running = (control.data?.running ?? false) && !isViewOnly
   const startBot = () =>
     start.mutate(undefined, {
       onSuccess: (result) => toast(result.reason === 'already-running' ? 'Bot already running' : 'Paper bot started'),
@@ -102,17 +103,23 @@ export function Live() {
             )}
             <Badge tone={data?.mode === 'live' ? 'danger' : 'warning'}>{data?.mode === 'live' ? 'LIVE money' : 'Paper'}</Badge>
             {running && stopped && <Badge tone="warning">Entries paused</Badge>}
-            <Button
-              variant={stopped ? 'primary' : 'danger'}
-              size="sm"
-              disabled={!running}
-              loading={killSwitch.isPending}
-              onClick={() => killSwitch.mutate(!stopped)}
-            >
-              {stopped ? <Play /> : <ShieldAlert />}
-              {stopped ? 'Resume entries' : 'Pause entries'}
-            </Button>
-            {!running && (
+            {isViewOnly ? (
+              <Badge tone="warning" dot>
+                View only
+              </Badge>
+            ) : (
+              <Button
+                variant={stopped ? 'primary' : 'danger'}
+                size="sm"
+                disabled={!running}
+                loading={killSwitch.isPending}
+                onClick={() => killSwitch.mutate(!stopped)}
+              >
+                {stopped ? <Play /> : <ShieldAlert />}
+                {stopped ? 'Resume entries' : 'Pause entries'}
+              </Button>
+            )}
+            {!running && !isViewOnly && (
               <Button variant="primary" size="sm" loading={start.isPending} onClick={startBot}>
                 <Play /> Start bot
               </Button>
