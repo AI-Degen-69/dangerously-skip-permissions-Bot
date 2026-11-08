@@ -194,7 +194,6 @@ function MarketChartPanel({
         },
       ].filter((tick): tick is GateTick => tick !== null && tick.atSec > 0 && tick.atSec < intervalSec)
     : []
-
   const minuteStepSec = intervalSec > 600 ? 300 : 60
   const minuteTicks: GateTick[] = []
   for (let sec = minuteStepSec; sec < intervalSec; sec += minuteStepSec) {
@@ -211,7 +210,14 @@ function MarketChartPanel({
     ...minuteTicks.filter((mTick) => !gateTicks.some((gTick) => Math.abs(gTick.atSec - mTick.atSec) < 8)),
     ...gateTicks,
   ].sort((a, b) => a.atSec - b.atSec)
-  const verdictTone = market.verdict.action === 'enter' ? 'success' : market.verdict.action === 'blocked' ? 'warning' : 'neutral'
+  const verdictTone =
+    market.verdict.action === 'enter'
+      ? 'success'
+      : market.verdict.action === 'blocked' || market.verdict.action === 'refuse'
+      ? 'warning'
+      : market.verdict.action === 'done'
+      ? 'accent'
+      : 'neutral'
   const slug = market.slug
   const eventUrl = `https://polymarket.com/event/${slug}?utm_medium=embed&utm_campaign=market&utm_content=spread-hunter`
 

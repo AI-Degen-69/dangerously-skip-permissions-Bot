@@ -144,9 +144,43 @@ def events(limit: int = 150) -> list[dict]:
         return []
     lines = target_path.read_text().splitlines()[-max(limit, 1):]
     out = []
+    open_prices: dict[str, float] = {}
     for line in lines:
         try:
-            out.append(json.loads(line))
+            ev = json.loads(line)
+            slug = ev.get("slug")
+            detail = ev.setdefault("detail", {})
+            # Track leg 1 price for pairCost calculation
+            if ev.get("reason") == "straddle-open" and slug and "price" in detail:
+                try:
+                    open_prices[slug] = float(detail["price"])
+                except (ValueError, TypeError):
+                    pass
+            # Normalize legacy reasons if reading past versions
+            elif ev.get("reason") == "thesis-intact":
+                ev["reason"] = "clip-fill"
+                if "bid" in detail:
+                    detail["price"] = detail.pop("bid")
+            elif ev.get("reason") == "kill-switch-file-present":
+                ev["reason"] = "kill-switch-engaged"
+
+            # Normalize kind mappings
+            if ev.get("reason") in ("dust-quote", "extreme-price-skip", "no-liquidity", "spread-too-wide"):
+                ev["kind"] = "refuse"
+            elif ev.get("reason") == "m4-snipe":
+                ev["kind"] = "snipe"
+            elif ev.get("reason") in ("holding-to-resolution", "too-late-in-window"):
+                ev["kind"] = "done"
+
+            # Compute pairCost for hedge-leg if missing
+            if ev.get("reason") == "hedge-leg" and "pairCost" not in detail and slug in open_prices and "price" in detail:
+                try:
+                    detail["pairCost"] = round(open_prices[slug] + float(detail["price"]), 2)
+                    detail["leg1Price"] = open_prices[slug]
+                except (ValueError, TypeError):
+                    pass
+
+            out.append(ev)
         except Exception:
             continue
     return out
@@ -278,16 +312,16 @@ def live_markets(cfg: dict) -> list[dict]:
         fills_count = len(curr_state["fills"]) if has_fills else 0
 
         if remaining <= stop_before:
-            verdict = {"action": "skip", "reason": "too-late-in-window",
+            verdict = {"action": "done", "reason": "too-late-in-window",
                        "detail": {"remainingSec": remaining, "needsSec": stop_before}}
         elif not has_fills and elapsed_sec < open_delay:
             verdict = {"action": "skip", "reason": "opening-delay",
                        "detail": {"elapsedSec": elapsed, "needsSec": open_delay}}
         elif spread is not None and spread > 0.30:
-            verdict = {"action": "skip", "reason": "spread-too-wide",
+            verdict = {"action": "refuse", "reason": "spread-too-wide",
                        "detail": {"spreadCents": round(spread * 100, 1), "maxCents": 30}}
         elif not asks:
-            verdict = {"action": "skip", "reason": "no-liquidity", "detail": {"side": "both"}}
+            verdict = {"action": "refuse", "reason": "no-liquidity", "detail": {"side": "both"}}
         elif fills_count == 1:
             verdict = {"action": "enter", "reason": "hedge-pending",
                        "detail": {"fills": fills_count}}
@@ -1083,7 +1117,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 if body.get("active"):
                     KILL_PATH.write_text(utc_now_iso())
-                    log_event("risk", "kill-switch-file-present")
+                    log_event("risk", "kill-switch-engaged")
                 else:
                     KILL_PATH.unlink(missing_ok=True)
                 self._send(200, {"killSwitch": KILL_PATH.exists()})

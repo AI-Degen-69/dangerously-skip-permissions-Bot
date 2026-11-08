@@ -13,6 +13,7 @@ class LeanSignal:
     lean: float  # [-1, +1]
     confidence: float  # [0, 1]
     source: str = "dumb"
+    raw: float | None = None
 
 
 class LeanSource(Protocol):
