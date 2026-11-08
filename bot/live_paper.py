@@ -138,14 +138,19 @@ def live_buy_price(c: PublicClient, token_id: str, streamer: LiveBookStreamer | 
 
 
 def _atomic_write_json(path: Path, data: object) -> None:
+    raw = json.dumps(data)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data))
+    tmp.write_text(raw)
     for _ in range(5):
         try:
             tmp.replace(path)
-            break
+            return
         except OSError:
             time.sleep(0.005)
+    try:
+        path.write_text(raw)
+    except OSError as ex:
+        print(f"warning: failed to persist {path}: {ex}", flush=True)
 
 
 def _settled_net_usd(path: Path, day_start: int) -> float:
@@ -154,11 +159,18 @@ def _settled_net_usd(path: Path, day_start: int) -> float:
         return 0.0
     try:
         d = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError, TypeError):
+        if not isinstance(d, dict) or d.get("pending"):
+            return 0.0
+        raw_net = d.get("net_usd")
+        return float(raw_net) if raw_net is not None else 0.0
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
         return 0.0
-    if not isinstance(d, dict) or d.get("pending"):
+
+
+def _current_daily_pnl(day_start: int) -> float:
+    if not RUNS_DIR.exists():
         return 0.0
-    return float(d.get("net_usd", 0.0))
+    return sum(_settled_net_usd(p, day_start) for p in RUNS_DIR.glob("btc-updown-5m-*.json"))
 
 
 def write_state(
@@ -207,11 +219,7 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
     min_spacing_move = float(entry.get("minSpacingMoveSec", 0.5))
     min_spacing_static = float(entry.get("minSpacingStaticSec", 3.0))
     day_start = int(datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
-    daily_pnl = sum(
-        _settled_net_usd(p, day_start)
-        for p in (RUNS_DIR.glob("btc-updown-5m-*.json") if RUNS_DIR.exists() else ())
-    )
-    state = RiskState(daily_loss_usd=daily_pnl)
+    state = RiskState(daily_loss_usd=_current_daily_pnl(day_start))
     fills: list[dict] = []
     cost = 0.0
     end_ms = (slot + WINDOW_S) * 1000
@@ -271,6 +279,7 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
             if outcome != ("Up" if first_up else "Down"):
                 time.sleep(hedge_delay)  # hedge leg
                 lean = microprice_lean(c, spec.up_token_id, spec.down_token_id, streamer=streamer)
+            state.daily_loss_usd = _current_daily_pnl(day_start)
             if reason := check_window(len(fills), cost, state, KILL_PATH):
                 log_event("kill", reason, slug)
                 break
@@ -294,6 +303,7 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
             now = int(time.time())
             if now >= end:
                 break
+            state.daily_loss_usd = _current_daily_pnl(day_start)
             if reason := check_window(len(fills), cost, state, KILL_PATH):
                 log_event("kill", reason, slug)
                 break

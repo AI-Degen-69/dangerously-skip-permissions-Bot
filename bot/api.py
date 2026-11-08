@@ -119,7 +119,13 @@ def state() -> dict | None:
             return st
         except Exception:
             time.sleep(0.005)
-    return _LAST_STATE[1] if _LAST_STATE and _LAST_STATE[0] == str(STATE_PATH) else None
+    if _LAST_STATE and _LAST_STATE[0] == str(STATE_PATH):
+        cached = _LAST_STATE[1]
+        end_ms = cached.get("endMs")
+        if end_ms is None or int(end_ms) > int(time.time() * 1000):
+            return cached
+        _LAST_STATE = None
+    return None
 
 
 def events(limit: int = 150) -> list[dict]:
@@ -283,18 +289,16 @@ def live_markets(cfg: dict) -> list[dict]:
         up_val = up_q.get("ask") if up_q.get("ask") is not None else up_q.get("bid")
         down_val = down_q.get("ask") if down_q.get("ask") is not None else down_q.get("bid")
         if up_val is not None and down_val is not None and (up_val + down_val) > 0:
-            imp_up = round(up_val / (up_val + down_val), 4)
+            imp_up: float | None = round(up_val / (up_val + down_val), 4)
         elif up_val is not None:
             imp_up = round(up_val, 4)
         elif down_val is not None:
             imp_up = round(1.0 - down_val, 4)
         else:
-            imp_up = 0.5
+            imp_up = None
 
         hist = _ODDS_HISTORY.setdefault(slug, [])
-        if not hist:
-            hist.append({"t": start_ms, "v": 0.5})
-        if now_ms - hist[-1]["t"] >= 1500:
+        if imp_up is not None and (not hist or now_ms - hist[-1]["t"] >= 1500):
             hist.append({"t": now_ms, "v": imp_up})
             if len(hist) > 500:
                 hist.pop(0)
@@ -313,9 +317,11 @@ def live_markets(cfg: dict) -> list[dict]:
             for old in list(cache.keys()):
                 if old not in active_slugs:
                     cache.pop(old, None)
+    now_cutoff_ms = int(time.time() * 1000)
     if out:
         _LAST_MARKETS = out
         return out
+    _LAST_MARKETS = [m for m in _LAST_MARKETS if int(m.get("endMs") or 0) > now_cutoff_ms]
     return _LAST_MARKETS
 
 

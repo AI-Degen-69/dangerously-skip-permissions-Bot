@@ -152,15 +152,22 @@ class LivePaperLoopTests(unittest.TestCase):
         pending.write_text('{"net_usd": -100.0, "pending": true}')
         corrupt = self.tmp_path / "btc-updown-5m-1700000700.json"
         corrupt.write_text("{corrupt")
+        null_net = self.tmp_path / "btc-updown-5m-1700001000.json"
+        null_net.write_text('{"net_usd": null}')
+        bad_net = self.tmp_path / "btc-updown-5m-1700001300.json"
+        bad_net.write_text('{"net_usd": "not-a-number"}')
         self.assertEqual(_settled_net_usd(good, 1700000000), -42.5)
         self.assertEqual(_settled_net_usd(pending, 1700000000), 0.0)
         self.assertEqual(_settled_net_usd(corrupt, 1700000000), 0.0)
+        self.assertEqual(_settled_net_usd(null_net, 1700000000), 0.0)
+        self.assertEqual(_settled_net_usd(bad_net, 1700000000), 0.0)
 
     def test_api_state_falls_back_to_last_state_on_transient_read_error(self):
         import bot.api as api
 
         st_file = self.tmp_path / "state.json"
-        st_file.write_text('{"slug": "btc-updown-5m-100", "updatedAtMs": 123}')
+        future_end = int((time.time() + 300) * 1000)
+        st_file.write_text(f'{{"slug": "btc-updown-5m-100", "updatedAtMs": 123, "endMs": {future_end}}}')
         with patch.object(api, "STATE_PATH", st_file), patch.object(api, "is_view_only", return_value=False):
             api._LAST_STATE = None
             first = api.state()
@@ -168,6 +175,9 @@ class LivePaperLoopTests(unittest.TestCase):
             st_file.write_text("{partial-write")
             fallback = api.state()
             self.assertEqual(fallback["slug"], "btc-updown-5m-100")
+            # Expired cached state is not reused
+            api._LAST_STATE = (str(st_file), {"slug": "btc-updown-5m-100", "endMs": 1000})
+            self.assertIsNone(api.state())
 
 
 if __name__ == "__main__":

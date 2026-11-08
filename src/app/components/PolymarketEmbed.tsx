@@ -88,9 +88,13 @@ export function PolymarketLiveChart({ markets, positions = [] }: { markets: Mark
   useEffect(() => {
     if (markets.length > 0) {
       lastMarkets.current = markets
+    } else {
+      const now = Date.now()
+      lastMarkets.current = lastMarkets.current.filter((m) => m.endMs > now)
     }
   }, [markets])
-  const activeMarkets = markets.length > 0 ? markets : lastMarkets.current
+  const now = Date.now()
+  const activeMarkets = markets.length > 0 ? markets : lastMarkets.current.filter((m) => m.endMs > now)
 
   return (
     <div className="mt-3 grid gap-3 lg:grid-cols-2">
