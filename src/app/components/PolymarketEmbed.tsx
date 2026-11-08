@@ -167,8 +167,8 @@ function MarketChartPanel({
         })
         .filter((band) => band.width > 0)
     : []
-  // Ticks sit exactly on the band edges above, labelled with elapsed time.
-  const ticks = params
+  // Ticks sit on the regime boundaries and minute bucket edges, labelled with elapsed time.
+  const gateTicks = params
     ? [
         {
           atSec: params.observationSeconds,
@@ -176,7 +176,7 @@ function MarketChartPanel({
           label: mmss(params.observationSeconds),
           title: `Observation window ends · direction must then hold ${params.minDirectionHoldSeconds}s`,
         },
-        position
+        position && params.stallSeconds > 0
           ? {
               atSec: (position.entryAtMs - market.startMs) / 1000 + params.stallSeconds,
               tone: 'bg-danger',
@@ -192,6 +192,23 @@ function MarketChartPanel({
         },
       ].filter((tick): tick is GateTick => tick !== null && tick.atSec > 0 && tick.atSec < intervalSec)
     : []
+
+  const minuteStepSec = intervalSec > 600 ? 300 : 60
+  const minuteTicks: GateTick[] = []
+  for (let sec = minuteStepSec; sec < intervalSec; sec += minuteStepSec) {
+    const m = Math.round(sec / 60)
+    minuteTicks.push({
+      atSec: sec,
+      tone: 'bg-muted',
+      label: mmss(sec),
+      title: `Minute ${m} bucket · ${mmss(sec)}`,
+    })
+  }
+
+  const ticks = [
+    ...minuteTicks.filter((mTick) => !gateTicks.some((gTick) => Math.abs(gTick.atSec - mTick.atSec) < 8)),
+    ...gateTicks,
+  ].sort((a, b) => a.atSec - b.atSec)
   const verdictTone = market.verdict.action === 'enter' ? 'success' : market.verdict.action === 'blocked' ? 'warning' : 'neutral'
   const slug = market.slug
   const eventUrl = `https://polymarket.com/event/${slug}?utm_medium=embed&utm_campaign=market&utm_content=spread-hunter`
@@ -241,7 +258,7 @@ function MarketChartPanel({
         {ticks.map((tick) => (
           // Clamped so an edge label cannot spill out of the card.
           <span
-            key={tick.title}
+            key={`${tick.label}-${tick.atSec}`}
             title={tick.title}
             aria-label={tick.title}
             className="absolute top-0 -translate-x-1/2"
