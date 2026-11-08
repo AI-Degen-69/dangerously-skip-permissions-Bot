@@ -73,6 +73,7 @@ class LivePaperLoopTests(unittest.TestCase):
 
         t0 = real_time()
         with patch("bot.live_paper.settle_slug"), \
+             patch("bot.live_paper.KILL_PATH", self.tmp_path / "kill"), \
              patch("bot.live_paper.time", SimpleNamespace(time=fake_time, sleep=fake_sleep), create=True):
             res = trade_window(mock_client, slot=slot, origin=None, verbose=False)
         elapsed = real_time() - t0

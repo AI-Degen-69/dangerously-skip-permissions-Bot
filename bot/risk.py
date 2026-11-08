@@ -29,8 +29,8 @@ def clip_shares(want: float) -> float:
     return max(0.0, min(float(want), C.MAX_SHARES))
 
 
-def check_window(trades: int, cost_usd: float, state: RiskState, kill_path: Path | str = "bot/kill") -> str | None:
-    if Path(kill_path).exists():
+def check_window(trades: int, cost_usd: float, state: RiskState, kill_path: Path | str | None = None) -> str | None:
+    if kill_path is not None and Path(kill_path).exists():
         state.killed = True
         state.kill_reason = "kill-switch file present"
     if state.killed:
