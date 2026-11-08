@@ -13,7 +13,7 @@ export const LABELS: Record<string, string> = {
   'lean-up': 'Microprice lean Up',
   'lean-down': 'Microprice lean Down',
   'straddle-balance': 'Straddle cadence balance',
-  'm4-snipe': 'M4 late snipe filled',
+  'm4-snipe': 'M4 late snipe',
   'paper-fill': 'Paper fill',
 
   // Holds & Pacing
