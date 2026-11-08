@@ -39,7 +39,7 @@ The change is a single subsystem in two source/test files. Keep the existing lay
 - Produce `default_output_filename(display_name: str, target_dt: datetime.datetime, window_days: int, date_only: bool) -> str`.
 - The CLI accepts only `--days 1` or `--days 7`, defaulting to `7`.
 
-- [ ] **Step 1: Add failing range and filename tests**
+- [x] **Step 1: Add failing range and filename tests**
 
 Add these methods to `SaveTradesToCsvTests`. The test uses an explicit UTC target with snapping disabled so the asserted duration is independent of window alignment:
 
@@ -149,7 +149,7 @@ Add these methods to `SaveTradesToCsvTests`. The test uses an explicit UTC targe
         save.assert_called_once_with([], output_path=output_path)
 ```
 
-- [ ] **Step 2: Run the focused new tests and confirm they fail**
+- [x] **Step 2: Run the focused new tests and confirm they fail**
 
 Run:
 
@@ -166,7 +166,7 @@ python docs\dangerously-skip-permissions\tests\test_save_trades_to_csv.py SaveTr
 Expected: each command fails because `fetch_activity` and/or its filename
 helper have not been introduced.
 
-- [ ] **Step 3: Generalize the existing fetcher**
+- [x] **Step 3: Generalize the existing fetcher**
 
 Rename `fetch_24h_activity` to `fetch_activity`, add `window_days` at the end of its parameters, and replace the fixed duration and status text with:
 
@@ -186,7 +186,7 @@ print(
 
 Preserve the current cursor handling, validation, record filtering, tail cutting, and record cleanup. Update all test references from `SCRIPT.fetch_24h_activity(...)` to `SCRIPT.fetch_activity(...)`; when a test specifically asserts the old one-day behavior, pass `window_days=1`.
 
-- [ ] **Step 4: Add window-aware filename generation**
+- [x] **Step 4: Add window-aware filename generation**
 
 Replace `default_output_filename` with:
 
@@ -271,7 +271,7 @@ output path still takes precedence. Call
 print(f"No account activity found within the {args.days}-day window.")
 ```
 
-- [ ] **Step 5: Run the focused suite**
+- [x] **Step 5: Run the focused suite**
 
 Run:
 
@@ -281,7 +281,7 @@ python docs\dangerously-skip-permissions\tests\test_save_trades_to_csv.py
 
 Expected: all tests pass, including the existing date parsing, cursor, response-validation, tail-cutting, and CSV-writing coverage.
 
-- [ ] **Step 6: Verify CLI help and whitespace**
+- [x] **Step 6: Verify CLI help and whitespace**
 
 Run:
 
@@ -292,7 +292,7 @@ git diff --check
 
 Expected: help lists `--days {1,7}` with default `7`, and `git diff --check` reports no whitespace errors.
 
-- [ ] **Step 7: Commit the independently tested window change**
+- [x] **Step 7: Commit the independently tested window change**
 
 Stage only the two task files and commit:
 
@@ -312,7 +312,7 @@ git commit -m "feat: export one or seven days of Polymarket activity" -m "Make w
 - `fetch_activity(...)` prints one flushed progress line after processing each valid API response page.
 - Each line reports the one-based page number, API record count on that page, and cumulative API record count received so far.
 
-- [ ] **Step 1: Add a failing multi-page progress test**
+- [x] **Step 1: Add a failing multi-page progress test**
 
 Add `import io` to the test imports and add the following test. It asserts the visible lines and that each page explicitly flushes the stream:
 
@@ -357,7 +357,7 @@ Add `import io` to the test imports and add the following test. It asserts the v
         self.assertEqual(stream.flush_count, 2)
 ```
 
-- [ ] **Step 2: Run the progress test and confirm it fails**
+- [x] **Step 2: Run the progress test and confirm it fails**
 
 Run:
 
@@ -367,7 +367,7 @@ python docs\dangerously-skip-permissions\tests\test_save_trades_to_csv.py SaveTr
 
 Expected: FAIL because the fetcher does not yet print page-level progress.
 
-- [ ] **Step 3: Print and flush progress inside the pagination loop**
+- [x] **Step 3: Print and flush progress inside the pagination loop**
 
 Initialize counters immediately before the loop:
 
@@ -390,7 +390,7 @@ print(
 
 This reports raw API records received (including any filtered by local timestamp checks), does not invent a total page count, and flushes before the next request.
 
-- [ ] **Step 4: Run the progress test and the complete focused suite**
+- [x] **Step 4: Run the progress test and the complete focused suite**
 
 Run:
 
@@ -402,7 +402,7 @@ git diff --check
 
 Expected: the progress test passes with two flushes, the full exporter suite passes, and there are no whitespace errors.
 
-- [ ] **Step 5: Commit the streaming progress change**
+- [x] **Step 5: Commit the streaming progress change**
 
 Stage only the script and its test file and commit:
 
