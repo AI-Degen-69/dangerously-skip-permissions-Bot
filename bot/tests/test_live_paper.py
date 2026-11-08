@@ -42,6 +42,8 @@ class LivePaperLoopTests(unittest.TestCase):
                 "medianShares": 10.0,
                 "maxShares": 20.0,
                 "medianFillsTarget": 4,
+                "minSpacingStaticSec": 0.1,
+                "minSpacingMoveSec": 0.05,
             }
         }
 

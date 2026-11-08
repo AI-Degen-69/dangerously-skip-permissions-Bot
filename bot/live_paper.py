@@ -151,6 +151,8 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
     median_shares = entry.get("medianShares", C.MEDIAN_SHARES)
     max_shares = entry.get("maxShares", C.MAX_SHARES)
     target_total = entry.get("medianFillsTarget", int(C.MEDIAN_TRADES_PER_WINDOW))
+    min_spacing_move = float(entry.get("minSpacingMoveSec", 0.5))
+    min_spacing_static = float(entry.get("minSpacingStaticSec", 3.0))
     state = RiskState()
     fills: list[dict] = []
     cost = 0.0
@@ -223,8 +225,7 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
         # --- work M1-M3 + M4 snipe: dynamic event-driven fills on live ticks ---
         end = slot + WINDOW_S - stop_before  # stop before close
         last_fill_ts = 0.0
-        last_fill_tick_count = -1
-        min_fill_spacing = 0.5  # minimum seconds between fills to prevent runaway burning on static tick
+        last_fill_px: float | None = None
 
         while True:
             now = int(datetime.now(timezone.utc).timestamp())
@@ -232,13 +233,6 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
                 break
             if check_window(len(fills), cost, state):
                 break
-
-            # Dynamic anti-runaway gating: if tick hasn't changed and min spacing hasn't elapsed, wait
-            current_tick_count = streamer.tick_count
-            time_since_fill = time.time() - last_fill_ts
-            if current_tick_count == last_fill_tick_count and time_since_fill < min_fill_spacing:
-                streamer.wait_for_tick(timeout=0.1)
-                continue
 
             lean = microprice_lean(c, spec.up_token_id, spec.down_token_id, streamer=streamer)
             minute = min(max((now - slot) // 60, 0), 4)
@@ -263,13 +257,24 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
                 heartbeat()
                 streamer.wait_for_tick(timeout=0.25)
                 continue
+
+            # Dynamic anti-runaway gating:
+            # If price changed from last fill, allow quick execution (>=min_spacing_move).
+            # If price is identical, require orderbook replenishment spacing (>=min_spacing_static).
+            time_since_fill = time.time() - last_fill_ts
+            is_price_move = (last_fill_px is not None and abs(px - last_fill_px) >= 0.001)
+            required_spacing = min_spacing_move if is_price_move else min_spacing_static
+            if time_since_fill < required_spacing:
+                streamer.wait_for_tick(timeout=0.25)
+                continue
+
             shares = clip_shares(clip_default if len(fills) % clip_nth == 0 else median_shares)
             shares = min(shares, max_shares)
             fills.append({"minute": minute, "ts": int(time.time() * 1000), "outcome": outcome,
                           "price": px, "shares": shares, "usd": round(px * shares, 2)})
             cost += px * shares
             last_fill_ts = time.time()
-            last_fill_tick_count = current_tick_count
+            last_fill_px = px
 
             if len(fills) % 10 == 0:
                 log_event("hold", "thesis-intact", slug, side=outcome,
