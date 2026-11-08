@@ -279,6 +279,8 @@ function MarketChartPanel({
   const verdictTone =
     market.verdict.action === 'enter'
       ? 'success'
+      : market.verdict.action === 'snipe'
+      ? 'accent'
       : market.verdict.action === 'blocked' || market.verdict.action === 'refuse'
       ? 'warning'
       : market.verdict.action === 'done'
@@ -492,7 +494,11 @@ function MarketChartPanel({
           }
           hint={`${Math.round(leanConf * 100)}% conf · OB`}
         />
-        <Field label="Cadence Fills" value={`${fillsCount} / ${targetFills} target`} hint="M1–M3 clips" />
+        <Field
+          label="Cadence Fills"
+          value={`${fillsCount} / ${targetFills} target`}
+          hint={elapsedSec >= 240 ? 'M4 snipe' : 'M1–M3 clips'}
+        />
         <Field
           label="CLOB Spread & Depth"
           value={clobSpread != null ? `${(clobSpread * 100).toFixed(1)}¢` : '—'}

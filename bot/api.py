@@ -167,8 +167,9 @@ def events(limit: int = 150) -> list[dict]:
             # Normalize kind mappings
             if ev.get("reason") in ("dust-quote", "extreme-price-skip", "no-liquidity", "spread-too-wide"):
                 ev["kind"] = "refuse"
-            elif ev.get("reason") == "m4-snipe":
+            elif ev.get("reason") == "m4-snipe" or (ev.get("kind") in ("entry", "snipe") and ev.get("detail", {}).get("minute") in ("M4", 4)):
                 ev["kind"] = "snipe"
+                ev["reason"] = "m4-snipe"
             elif ev.get("reason") in ("holding-to-resolution", "too-late-in-window"):
                 ev["kind"] = "done"
 
@@ -325,6 +326,9 @@ def live_markets(cfg: dict) -> list[dict]:
         elif fills_count == 1:
             verdict = {"action": "enter", "reason": "hedge-pending",
                        "detail": {"fills": fills_count}}
+        elif elapsed_sec >= 240:
+            verdict = {"action": "snipe", "reason": "m4-snipe",
+                       "detail": {"fills": fills_count, "minute": "M4"}}
         elif fills_count >= 2:
             verdict = {"action": "enter", "reason": "working-fills",
                        "detail": {"fills": fills_count}}
@@ -896,7 +900,7 @@ def _enrich_fill(f: dict, idx: int, default_ts: int, slug: str | None) -> dict:
         detail["minute"] = minute
     return {
         "ts": int(f.get("ts") or default_ts),
-        "kind": "entry",
+        "kind": "snipe" if reason == "m4-snipe" else "entry",
         "slug": slug,
         "interval": "5m",
         "side": f.get("outcome"),
