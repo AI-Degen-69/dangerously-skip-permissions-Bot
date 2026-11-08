@@ -143,6 +143,32 @@ class LivePaperLoopTests(unittest.TestCase):
         kill_file.unlink()
         self.assertIn("daily loss cap", check_window(0, 0.0, RiskState(daily_loss_usd=-500.0), kill_path=kill_file))
 
+    def test_settled_net_usd_ignores_malformed_and_pending_files(self):
+        from bot.live_paper import _settled_net_usd
+
+        good = self.tmp_path / "btc-updown-5m-1700000100.json"
+        good.write_text('{"net_usd": -42.5}')
+        pending = self.tmp_path / "btc-updown-5m-1700000400.json"
+        pending.write_text('{"net_usd": -100.0, "pending": true}')
+        corrupt = self.tmp_path / "btc-updown-5m-1700000700.json"
+        corrupt.write_text("{corrupt")
+        self.assertEqual(_settled_net_usd(good, 1700000000), -42.5)
+        self.assertEqual(_settled_net_usd(pending, 1700000000), 0.0)
+        self.assertEqual(_settled_net_usd(corrupt, 1700000000), 0.0)
+
+    def test_api_state_falls_back_to_last_state_on_transient_read_error(self):
+        import bot.api as api
+
+        st_file = self.tmp_path / "state.json"
+        st_file.write_text('{"slug": "btc-updown-5m-100", "updatedAtMs": 123}')
+        with patch.object(api, "STATE_PATH", st_file), patch.object(api, "is_view_only", return_value=False):
+            api._LAST_STATE = None
+            first = api.state()
+            self.assertEqual(first["slug"], "btc-updown-5m-100")
+            st_file.write_text("{partial-write")
+            fallback = api.state()
+            self.assertEqual(fallback["slug"], "btc-updown-5m-100")
+
 
 if __name__ == "__main__":
     unittest.main()
