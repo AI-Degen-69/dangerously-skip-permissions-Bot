@@ -1,5 +1,5 @@
 import { Activity, ArrowUpRight, Radio, TrendingDown, TrendingUp } from 'lucide-react'
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 
 import { useBotConfig, type BotConfigView, type Interval, type MarketView, type PositionView } from '../lib/bot'
 import { cx } from '../lib/cx'
@@ -34,12 +34,22 @@ interface GateTick {
 }
 
 const MAX_SAMPLES = 500
+const MAX_CACHED_MARKETS = 20
 const ODDS_SERIES_CACHE = new Map<string, OddsPoint[]>()
+
+function pruneOddsCache(): void {
+  while (ODDS_SERIES_CACHE.size > MAX_CACHED_MARKETS) {
+    const oldest = ODDS_SERIES_CACHE.keys().next().value
+    if (!oldest) break
+    ODDS_SERIES_CACHE.delete(oldest)
+  }
+}
 
 const useOddsSeries = (market: MarketView): OddsPoint[] => {
   // When the bot engine provides continuous server-side odds history, use it
   if (market.oddsHistory && market.oddsHistory.length > 0) {
     ODDS_SERIES_CACHE.set(market.slug, market.oddsHistory)
+    pruneOddsCache()
     return market.oddsHistory
   }
 
@@ -47,6 +57,7 @@ const useOddsSeries = (market: MarketView): OddsPoint[] => {
   if (!points) {
     points = []
     ODDS_SERIES_CACHE.set(market.slug, points)
+    pruneOddsCache()
   }
   const now = Date.now()
   const v = impliedUp(market)
@@ -74,9 +85,11 @@ const mmss = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec %
 export function PolymarketLiveChart({ markets, positions = [] }: { markets: MarketView[]; positions?: PositionView[] }) {
   const { data: config } = useBotConfig()
   const lastMarkets = useRef<MarketView[]>([])
-  if (markets.length > 0) {
-    lastMarkets.current = markets
-  }
+  useEffect(() => {
+    if (markets.length > 0) {
+      lastMarkets.current = markets
+    }
+  }, [markets])
   const activeMarkets = markets.length > 0 ? markets : lastMarkets.current
 
   return (

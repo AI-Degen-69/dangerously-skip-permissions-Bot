@@ -137,6 +137,30 @@ def live_buy_price(c: PublicClient, token_id: str, streamer: LiveBookStreamer | 
     return px
 
 
+def _atomic_write_json(path: Path, data: object) -> None:
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data))
+    for _ in range(5):
+        try:
+            tmp.replace(path)
+            break
+        except OSError:
+            time.sleep(0.005)
+
+
+def _settled_net_usd(path: Path, day_start: int) -> float:
+    tail = path.stem.rsplit("-", 1)[-1]
+    if not tail.isdigit() or int(tail) < day_start:
+        return 0.0
+    try:
+        d = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, TypeError):
+        return 0.0
+    if not isinstance(d, dict) or d.get("pending"):
+        return 0.0
+    return float(d.get("net_usd", 0.0))
+
+
 def write_state(
     slug: str,
     end_ms: int,
@@ -161,14 +185,7 @@ def write_state(
     if recent_ticks is not None:
         payload["recentTicks"] = recent_ticks
     with _STATE_LOCK:
-        tmp = STATE_PATH.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload))
-        for _ in range(5):
-            try:
-                tmp.replace(STATE_PATH)
-                break
-            except OSError:
-                time.sleep(0.005)
+        _atomic_write_json(STATE_PATH, payload)
 
 
 def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool = True) -> dict:
@@ -191,11 +208,8 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
     min_spacing_static = float(entry.get("minSpacingStaticSec", 3.0))
     day_start = int(datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
     daily_pnl = sum(
-        float(d.get("net_usd", 0.0))
+        _settled_net_usd(p, day_start)
         for p in (RUNS_DIR.glob("btc-updown-5m-*.json") if RUNS_DIR.exists() else ())
-        if p.stem.rsplit("-", 1)[-1].isdigit()
-        and int(p.stem.rsplit("-", 1)[-1]) >= day_start
-        and not (d := json.loads(p.read_text())).get("pending")
     )
     state = RiskState(daily_loss_usd=daily_pnl)
     fills: list[dict] = []
@@ -224,14 +238,7 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
                             st["updatedAtMs"] = int(time.time() * 1000)
                             st["ws"] = streamer.get_status()
                             st["recentTicks"] = streamer.get_recent_ticks(30)
-                            tmp = STATE_PATH.with_suffix(".tmp")
-                            tmp.write_text(json.dumps(st))
-                            for _ in range(5):
-                                try:
-                                    tmp.replace(STATE_PATH)
-                                    break
-                                except OSError:
-                                    time.sleep(0.005)
+                            _atomic_write_json(STATE_PATH, st)
             except (OSError, json.JSONDecodeError, TypeError):
                 pass
             stop_sync.wait(1.0)

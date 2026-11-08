@@ -278,8 +278,10 @@ def live_markets(cfg: dict) -> list[dict]:
             verdict = {"action": "enter", "reason": "straddle-open",
                        "detail": {"leanSide": lean_side or "even"}}
 
-        up_val = quotes.get("Up", {}).get("ask") or quotes.get("Up", {}).get("bid")
-        down_val = quotes.get("Down", {}).get("ask") or quotes.get("Down", {}).get("bid")
+        up_q = quotes.get("Up", {})
+        down_q = quotes.get("Down", {})
+        up_val = up_q.get("ask") if up_q.get("ask") is not None else up_q.get("bid")
+        down_val = down_q.get("ask") if down_q.get("ask") is not None else down_q.get("bid")
         if up_val is not None and down_val is not None and (up_val + down_val) > 0:
             imp_up = round(up_val / (up_val + down_val), 4)
         elif up_val is not None:
@@ -305,11 +307,12 @@ def live_markets(cfg: dict) -> list[dict]:
             "secondsRemaining": remaining, "verdict": verdict,
             "oddsHistory": list(hist),
         })
-    if len(_ODDS_HISTORY) > 10:
+    if len(_ODDS_HISTORY) > 10 or len(_WINDOW_SPEC_CACHE) > 10:
         active_slugs = {f"btc-updown-5m-{s}" for s in visible_slots()}
-        for old in list(_ODDS_HISTORY.keys()):
-            if old not in active_slugs:
-                _ODDS_HISTORY.pop(old, None)
+        for cache in (_ODDS_HISTORY, _WINDOW_SPEC_CACHE):
+            for old in list(cache.keys()):
+                if old not in active_slugs:
+                    cache.pop(old, None)
     if out:
         _LAST_MARKETS = out
         return out
@@ -975,6 +978,10 @@ class Handler(BaseHTTPRequestHandler):
                         p.unlink(missing_ok=True)
                 for p in (STATE_PATH, EVENTS_PATH):
                     p.unlink(missing_ok=True)
+                global _LAST_STATE, _LAST_MARKETS
+                _LAST_STATE = None
+                _LAST_MARKETS = []
+                _ODDS_HISTORY.clear()
                 log_event("risk", "paper-reset", detail={"bankrollUsd": load_config().get("bankrollUsd")})
                 self._send(200, {"bankrollUsd": load_config().get("bankrollUsd"), "resetAt": utc_now_iso()})
             elif self.path == "/api/bot/kill-switch":
