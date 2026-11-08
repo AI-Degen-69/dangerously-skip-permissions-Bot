@@ -254,6 +254,34 @@ export interface BotPerf {
     downFills: number
     upWins: number
     downWins: number
+    winRate?: number
+    lossRate?: number
+    winsCount?: number
+    lossesCount?: number
+    grossProfitUsd?: number
+    grossLossUsd?: number
+    profitFactor?: number
+    avgWinUsd?: number
+    avgLossUsd?: number
+    payoffRatio?: number
+    expectancyUsd?: number
+    expectancyRatio?: number
+    breakEvenWinRate?: number
+    sharpeRatio?: number
+    sortinoRatio?: number
+    maxDrawdownUsd?: number
+    maxDrawdownPct?: number
+    currentDrawdownUsd?: number
+    currentDrawdownPct?: number
+    currentStreak?: number
+    maxWinStreak?: number
+    maxLossStreak?: number
+    upWindows?: number
+    downWindows?: number
+    upNetUsd?: number
+    downNetUsd?: number
+    upWinRate?: number
+    downWinRate?: number
   }
   targets: {
     windows: number

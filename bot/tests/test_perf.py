@@ -104,6 +104,40 @@ class PerfTests(unittest.TestCase):
         perf_invalid = self.build([paper_run(SLUG, FILLS, "Up")], config={"bankrollUsd": "invalid"})
         self.assertEqual(perf_invalid["summary"]["bankrollUsd"], 1000.0)
 
+    def test_performance_kpis_calculation(self):
+        slug1 = "btc-updown-5m-1794082800"
+        slug2 = "btc-updown-5m-1794083100"
+        slug3 = "btc-updown-5m-1794083400"
+        run1 = paper_run(slug1, FILLS, "Up")
+        run2 = paper_run(slug2, FILLS, None)
+        run2["pending"] = False
+        run2["net_usd"] = -20.6
+        run2["payout_usd"] = 0.0
+        run2["winner"] = "Down"
+        run3 = paper_run(slug3, [{"minute": 0, "outcome": "Up", "price": 0.5, "shares": 20.0, "usd": 10.0}], "Up")
+
+        perf = self.build([run1, run2, run3])
+        s = perf["summary"]
+
+        self.assertEqual(s["settled"], 3)
+        self.assertEqual(s["winsCount"], 2)
+        self.assertEqual(s["lossesCount"], 1)
+        self.assertAlmostEqual(s["winRate"], 2 / 3, places=3)
+        self.assertAlmostEqual(s["grossProfitUsd"], 33.4)
+        self.assertAlmostEqual(s["grossLossUsd"], 20.6)
+        self.assertAlmostEqual(s["profitFactor"], round(33.4 / 20.6, 2))
+        self.assertAlmostEqual(s["avgWinUsd"], 16.7)
+        self.assertAlmostEqual(s["avgLossUsd"], 20.6)
+        self.assertAlmostEqual(s["expectancyUsd"], round((23.4 - 20.6 + 10.0) / 3, 2))
+        self.assertTrue(s["sharpeRatio"] > 0)
+        self.assertTrue(s["sortinoRatio"] > 0)
+        self.assertEqual(s["maxWinStreak"], 1)
+        self.assertEqual(s["maxLossStreak"], 1)
+        self.assertEqual(s["currentStreak"], 1)
+        self.assertEqual(s["upWindows"], 2)
+        self.assertEqual(s["downWindows"], 1)
+
+
 
 if __name__ == "__main__":
     unittest.main()
