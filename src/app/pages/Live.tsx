@@ -396,58 +396,319 @@ function Limit({ label: limitLabel, value, ratio }: { label: string; value: stri
   )
 }
 
+function parseTsMs(ts: number | string): number {
+  const raw = typeof ts === 'string' ? Number(ts) || new Date(ts).getTime() : ts
+  return Number.isFinite(raw) ? (raw < 1e11 ? raw * 1000 : raw) : Date.now()
+}
+
+function formatWindow(slug?: string, fallbackTs?: number | string): string {
+  if (slug) {
+    const parts = slug.split('-')
+    const epoch = Number(parts[parts.length - 1])
+    if (Number.isFinite(epoch) && epoch > 0) {
+      const ms = epoch < 1e11 ? epoch * 1000 : epoch
+      return new Date(ms).toLocaleTimeString('en-US', {
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    }
+  }
+  if (fallbackTs != null) {
+    const raw = typeof fallbackTs === 'string' ? Number(fallbackTs) || new Date(fallbackTs).getTime() : fallbackTs
+    if (Number.isFinite(raw) && raw > 0) {
+      const ms = raw < 1e11 ? raw * 1000 : raw
+      return new Date(ms).toLocaleTimeString('en-US', {
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    }
+  }
+  return '—'
+}
+
+function formatPriceCents(value: number | null | undefined): string {
+  if (value === null || value === undefined) return '—'
+  const c = value * 100
+  return c % 1 === 0 ? `${c}¢` : `${c.toFixed(1)}¢`
+}
+
+interface WhyInfo {
+  label: string
+  sub?: string
+  tone: 'neutral' | 'accent' | 'success' | 'warning' | 'danger' | 'info'
+  tip: string
+}
+
+function getTradeWhy(trade: BotTrade): WhyInfo {
+  const reason = trade.reason || (trade.kind === 'settle' ? 'paper-resolve' : 'paper-fill')
+  const detail = trade.detail as Record<string, unknown> | undefined
+  const minute = detail?.minute as number | undefined
+  const lean = detail?.lean as number | undefined
+  const winner = detail?.winner as string | undefined
+
+  switch (reason) {
+    case 'straddle-open':
+      return {
+        label: 'Straddle Open',
+        sub: 'T+13s first touch',
+        tone: 'accent',
+        tip: 'First touch opening leg executed ~13s into the window to establish straddle base.',
+      }
+    case 'hedge-leg':
+      return {
+        label: 'Hedge Leg',
+        sub: '+15s opposite leg',
+        tone: 'info',
+        tip: 'Counter hedge leg filled 15s after open to balance direction exposure.',
+      }
+    case 'lean-up':
+      return {
+        label: 'Lean Up',
+        sub: lean != null ? `lean ${lean > 0 ? `+${lean}` : lean}` : 'OB microprice tilt',
+        tone: 'success',
+        tip: 'Orderbook queue imbalance and depth microprice tilted odds heavily toward Up.',
+      }
+    case 'lean-down':
+      return {
+        label: 'Lean Down',
+        sub: lean != null ? `lean ${lean > 0 ? `+${lean}` : lean}` : 'OB microprice tilt',
+        tone: 'danger',
+        tip: 'Orderbook queue imbalance and depth microprice tilted odds heavily toward Down.',
+      }
+    case 'm4-snipe':
+      return {
+        label: 'M4 Snipe',
+        sub: 'extreme discount',
+        tone: 'warning',
+        tip: 'Late window (M4) snipe targeting extreme tail-end odds (<15¢ / >85¢).',
+      }
+    case 'straddle-balance':
+      return {
+        label: 'Straddle Balance',
+        sub: minute != null ? `M${minute} cadence` : 'even allocation',
+        tone: 'neutral',
+        tip: 'Cadence rebalance fill preserving even straddle distribution across the 5m window.',
+      }
+    case 'awaiting-resolution':
+      return {
+        label: 'Awaiting Settlement',
+        sub: 'window closed',
+        tone: 'warning',
+        tip: '5-minute window concluded; waiting for Polymarket oracle resolution.',
+      }
+    case 'won':
+      return {
+        label: 'Settled · Won',
+        sub: winner ? `winner ${winner}` : undefined,
+        tone: 'success',
+        tip: `Window resolved in bot's favor (${winner ?? 'win'}).`,
+      }
+    case 'lost':
+      return {
+        label: 'Settled · Lost',
+        sub: winner ? `winner ${winner}` : undefined,
+        tone: 'danger',
+        tip: `Window resolved against bot (${winner ?? 'loss'}).`,
+      }
+    case 'paper-resolve':
+      return {
+        label: winner ? `Winner: ${winner}` : 'Settled',
+        sub: 'resolved',
+        tone: winner === 'Up' ? 'success' : winner === 'Down' ? 'danger' : 'accent',
+        tip: `Market outcome resolved to ${winner ?? 'official result'}.`,
+      }
+    default:
+      if (minute === 0) {
+        return {
+          label: 'Straddle Leg',
+          sub: 'M0 open',
+          tone: 'accent',
+          tip: 'Opening straddle execution.',
+        }
+      }
+      if (minute === 4) {
+        return {
+          label: 'M4 Snipe',
+          sub: 'late window',
+          tone: 'warning',
+          tip: 'Late-window tail execution.',
+        }
+      }
+      if (minute != null) {
+        return {
+          label: 'Straddle Cadence',
+          sub: `M${minute}`,
+          tone: 'neutral',
+          tip: `Fill executed during minute M${minute} cadence quota.`,
+        }
+      }
+      return {
+        label: label(trade.reason),
+        sub: undefined,
+        tone: 'neutral',
+        tip: 'Recorded paper order execution.',
+      }
+  }
+}
+
+function TradeWhyCell({ trade }: { trade: BotTrade }) {
+  const why = getTradeWhy(trade)
+  return (
+    <div className="flex items-center gap-1.5" title={why.tip}>
+      <Badge tone={why.tone} className="px-2 py-0.5 text-[10.5px] font-semibold">
+        {why.label}
+      </Badge>
+      {why.sub && <span className="max-w-[130px] truncate text-[11px] tabular-nums text-faint">{why.sub}</span>}
+    </div>
+  )
+}
+
 function Trades({ items }: { items: BotTrade[] }) {
+  const upFills = items.filter((t) => t.side === 'Up' || t.detail?.winner === 'Up').length
+  const downFills = items.filter((t) => t.side === 'Down' || t.detail?.winner === 'Down').length
+  const totalSpent = items.reduce((acc, t) => acc + (t.usd ?? (t.shares && t.price ? t.shares * t.price : 0)), 0)
+
   return (
     <Card className="mt-3 p-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-[14px] font-semibold">Fills</h2>
-          <p className="text-[12.5px] text-muted">Every entry, exit and settlement, newest first.</p>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
+        <div className="flex items-center gap-2.5">
+          <span className="grid size-8 place-items-center rounded-card bg-[#f7931a]/15 text-[#f7931a] shadow-sm">
+            <span className="text-[14px] font-bold leading-none">₿</span>
+          </span>
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-[14px] font-semibold">Fills & Executions</h2>
+              <Badge tone="neutral">{items.length} fills</Badge>
+            </div>
+            <p className="text-[12px] text-muted">Real-time order execution stream across 5-minute straddle windows.</p>
+          </div>
         </div>
-        <Badge tone="neutral">{items.length}</Badge>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {items.length > 0 && (
+            <>
+              <Badge tone="success" dot className="px-2 py-0.5 text-[11px]">
+                {upFills} Up
+              </Badge>
+              <Badge tone="danger" dot className="px-2 py-0.5 text-[11px]">
+                {downFills} Down
+              </Badge>
+              <MetricChip text={`Total: $${totalSpent.toFixed(2)}`} />
+            </>
+          )}
+        </div>
       </div>
 
       {items.length === 0 ? (
         <EmptyState icon={<Target />} title="No fills yet" description="Fills land here as the paper loop works each window." />
       ) : (
-        <div className="scrollbar-thin mt-3 overflow-x-auto">
-          <table className="w-full min-w-[620px] text-left text-[13px]">
-            <thead className="text-[11.5px] uppercase tracking-wide text-faint">
-              <tr className="border-b border-line">
-                <th className="py-2 font-medium">Time</th>
-                <th className="py-2 font-medium">Event</th>
-                <th className="py-2 font-medium">Window</th>
-                <th className="py-2 font-medium">Side</th>
-                <th className="py-2 text-right font-medium">Price</th>
-                <th className="py-2 text-right font-medium">Shares</th>
-                <th className="py-2 text-right font-medium">PnL</th>
-                <th className="py-2 font-medium">Why</th>
+        <div className="scrollbar-thin mt-3 max-h-[480px] overflow-x-auto overflow-y-auto">
+          <table className="w-full min-w-[760px] text-left text-[12.5px]">
+            <thead className="sticky top-0 z-10 border-b border-line bg-surface-1/95 text-[11px] font-semibold uppercase tracking-wider text-faint backdrop-blur">
+              <tr>
+                <th className="py-2.5 px-3 font-medium">Time</th>
+                <th className="py-2.5 px-3 font-medium">Window</th>
+                <th className="py-2.5 px-3 font-medium">Event</th>
+                <th className="py-2.5 px-3 font-medium">Side</th>
+                <th className="py-2.5 px-3 text-right font-medium">Size</th>
+                <th className="py-2.5 px-3 text-right font-medium">Price</th>
+                <th className="py-2.5 px-3 text-right font-medium">Total Cost</th>
+                <th className="py-2.5 px-3 font-medium">
+                  <span className="inline-flex items-center gap-1 cursor-help" title="Strategy decision rationale behind each execution or settlement">
+                    Why (?)
+                  </span>
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
-              {[...items].reverse().map((trade, index) => (
-                <tr key={`${trade.ts}-${index}`}>
-                  <td className="py-2.5 tabular-nums text-muted">{clock(trade.ts)}</td>
-                  <td className="py-2.5">
-                    <Badge tone={KIND_TONE[trade.kind] ?? 'neutral'} className="capitalize">
-                      {trade.kind}
-                    </Badge>
-                  </td>
-                  <td className="py-2.5 text-muted">{trade.slug ? windowLabel(trade.slug) : '—'}</td>
-                  <td className="py-2.5">{trade.side ?? '—'}</td>
-                  <td className="py-2.5 text-right tabular-nums">{cents(trade.price)}</td>
-                  <td className="py-2.5 text-right tabular-nums">{trade.shares ?? '—'}</td>
-                  <td
-                    className={cx(
-                      'py-2.5 text-right font-medium tabular-nums',
-                      trade.pnlUsd == null ? 'text-faint' : trade.pnlUsd >= 0 ? 'text-success' : 'text-danger',
-                    )}
-                  >
-                    {trade.pnlUsd == null ? '—' : money(trade.pnlUsd)}
-                  </td>
-                  <td className="py-2.5 text-muted">{label(trade.reason)}</td>
-                </tr>
-              ))}
+              {[...items].reverse().map((trade, index) => {
+                const tsMs = parseTsMs(trade.ts)
+                const side = trade.side ?? (trade.detail?.winner as string | undefined)
+                const cost = trade.usd ?? (trade.shares != null && trade.price != null ? trade.shares * trade.price : null)
+
+                return (
+                  <tr key={`${trade.ts}-${index}`} className="transition-colors hover:bg-surface-2/60">
+                    {/* 1. Time: Xm ago, <timestamp> in smaller font */}
+                    <td className="py-2.5 px-3">
+                      <div className="flex flex-col">
+                        <span className="text-[12.5px] font-medium text-fg">{relativeTime(tsMs)}</span>
+                        <span className="font-mono text-[11px] text-faint">{clock(tsMs)}</span>
+                      </div>
+                    </td>
+
+                    {/* 2. Window: HH:MM */}
+                    <td className="py-2.5 px-3 font-mono text-[12.5px] font-medium text-fg">
+                      {formatWindow(trade.slug, tsMs)}
+                    </td>
+
+                    {/* 3. Event: Buy / Settle / Exit */}
+                    <td className="py-2.5 px-3">
+                      <span
+                        className={cx(
+                          'inline-flex items-center rounded-[6px] px-2 py-0.5 font-mono text-[10.5px] font-semibold uppercase tracking-wider',
+                          trade.kind === 'entry'
+                            ? 'bg-success-soft text-success'
+                            : trade.kind === 'settle'
+                            ? 'bg-accent-soft text-accent'
+                            : trade.kind === 'exit'
+                            ? 'bg-info-soft text-info'
+                            : 'bg-surface-2 text-fg',
+                        )}
+                      >
+                        {trade.kind === 'entry' ? 'Buy' : trade.kind === 'settle' ? 'Settle' : trade.kind === 'exit' ? 'Sell' : trade.kind}
+                      </span>
+                    </td>
+
+                    {/* 4. Side: same as WS "side" column (Up / Down colored label) */}
+                    <td className="py-2.5 px-3">
+                      {side ? (
+                        <Badge
+                          tone={side === 'Up' ? 'success' : side === 'Down' ? 'danger' : 'neutral'}
+                          className="px-2 py-0.5 text-[11px] font-semibold"
+                        >
+                          {side}
+                        </Badge>
+                      ) : (
+                        <span className="font-mono text-faint">—</span>
+                      )}
+                    </td>
+
+                    {/* 5. Size */}
+                    <td className="py-2.5 px-3 text-right font-mono text-[12.5px] tabular-nums text-fg">
+                      {trade.shares != null ? (
+                        <>
+                          <span>
+                            {trade.shares.toLocaleString(undefined, {
+                              minimumFractionDigits: trade.shares % 1 !== 0 ? 1 : 0,
+                              maximumFractionDigits: 1,
+                            })}
+                          </span>
+                          <span className="ml-1 text-[10.5px] text-faint">sh</span>
+                        </>
+                      ) : (
+                        <span className="text-faint">—</span>
+                      )}
+                    </td>
+
+                    {/* 6. Price */}
+                    <td className="py-2.5 px-3 text-right font-mono text-[12.5px] font-medium tabular-nums text-fg">
+                      {trade.price != null ? formatPriceCents(trade.price) : <span className="text-faint">—</span>}
+                    </td>
+
+                    {/* 7. Total Cost */}
+                    <td className="py-2.5 px-3 text-right font-mono text-[12.5px] font-semibold tabular-nums text-fg">
+                      {cost != null ? money(cost) : <span className="font-normal text-faint">—</span>}
+                    </td>
+
+                    {/* 8. Why(?) */}
+                    <td className="py-2.5 px-3">
+                      <TradeWhyCell trade={trade} />
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

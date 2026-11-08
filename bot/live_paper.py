@@ -284,10 +284,15 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
                 log_event("kill", reason, slug)
                 break
             shares = clip_shares(clip_default)
-            fills.append({"minute": 0, "ts": int(time.time() * 1000), "outcome": outcome,
-                          "price": px, "shares": shares, "usd": round(px * shares, 2)})
+            reason = "straddle-open" if len(fills) == 0 else "hedge-leg"
+            fills.append({
+                "minute": 0, "ts": int(time.time() * 1000), "outcome": outcome,
+                "price": px, "shares": shares, "usd": round(px * shares, 2),
+                "reason": reason,
+                "detail": {"lean": round(lean.lean, 2), "confidence": round(lean.confidence, 2), "minute": 0},
+            })
             cost += px * shares
-            log_event("entry", "straddle-open" if len(fills) == 1 else "hedge-leg", slug,
+            log_event("entry", reason, slug,
                       side=outcome, detail={"price": px, "shares": shares, "lean": round(lean.lean, 2)})
             log(f"open {outcome} {shares:.0f} @ {px:.3f}")
             write_state(slug, end_ms, started_ms, fills, lean,
@@ -341,8 +346,28 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
 
             shares = clip_shares(clip_default if len(fills) % clip_nth == 0 else median_shares)
             shares = min(shares, max_shares)
-            fills.append({"minute": minute, "ts": int(time.time() * 1000), "outcome": outcome,
-                          "price": px, "shares": shares, "usd": round(px * shares, 2)})
+
+            up_p = 0.5 + lean.lean * 0.25 * (0.5 + 0.5 * lean.confidence)
+            if minute == 4 and (px <= 0.15 or px >= 0.85):
+                fill_reason = "m4-snipe"
+            elif up_p > 0.6 and len(fills) % 3 != 0:
+                fill_reason = "lean-up"
+            elif up_p < 0.4 and len(fills) % 3 != 0:
+                fill_reason = "lean-down"
+            else:
+                fill_reason = "straddle-balance"
+
+            fills.append({
+                "minute": minute, "ts": int(time.time() * 1000), "outcome": outcome,
+                "price": px, "shares": shares, "usd": round(px * shares, 2),
+                "reason": fill_reason,
+                "detail": {
+                    "minute": minute,
+                    "lean": round(lean.lean, 2),
+                    "confidence": round(lean.confidence, 2),
+                    "clip": "full" if len(fills) % clip_nth == 0 else "median",
+                },
+            })
             cost += px * shares
             last_fill_ts = time.time()
             last_fill_px = px
