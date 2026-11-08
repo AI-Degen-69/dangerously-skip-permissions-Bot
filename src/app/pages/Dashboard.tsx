@@ -3,6 +3,7 @@ import { Link } from 'react-router'
 import { useState } from 'react'
 
 import { Badge, Button, Card, ConfirmDialog, EmptyState, PageHeader, Skeleton, useToast } from '../components/ui'
+import { InteractivePnlChart } from '../components/InteractivePnlChart'
 import {
   BOT_ORIGIN,
   useBotControl,
@@ -26,14 +27,6 @@ function windowLabel(slug: string | null): string {
   if (!slug) return '—'
   const epoch = Number(slug.split('-').pop())
   return Number.isFinite(epoch) ? windowTime(epoch * 1000) : slug
-}
-
-function cumulative(windows: PerfWindow[]) {
-  let run = 0
-  return windows.map((window) => {
-    run += window.netUsd ?? 0
-    return { ts: window.startMs, value: Math.round(run * 100) / 100 }
-  })
 }
 
 const GATE_TONE: Record<PerfGate['status'], 'success' | 'warning' | 'danger' | 'neutral'> = {
@@ -66,6 +59,7 @@ export function Dashboard() {
   const reset = useResetBot()
   const toast = useToast()
   const [confirmReset, setConfirmReset] = useState(false)
+  const [hoveredSlug, setHoveredSlug] = useState<string | null>(null)
 
   const isViewOnly = control.data?.isViewOnly ?? false
   const running = (control.data?.running ?? false) && !isViewOnly
@@ -78,7 +72,8 @@ export function Dashboard() {
   const notes = data?.notes ?? []
   const windows = data?.windows ?? []
   const settled = windows.filter((window) => !window.pending)
-  const curve = cumulative(settled)
+  const startingCapital = data?.summary?.bankrollUsd ?? 1000
+  const currentCapital = startingCapital + (summary?.netUsd ?? 0)
   const gateJudged = settled.length >= (data?.targets.windows ?? 288)
 
   return (
@@ -300,91 +295,50 @@ export function Dashboard() {
         <Card className="p-5 lg:col-span-2">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
-              <h2 className="text-[14px] font-semibold">Fidelity gate</h2>
-              <p className="text-[12.5px] text-muted">
-                How close the live paper tape is to the frozen 24h sample — 45 median fills, both sides, $316/$447 cost,
-                M0–M4 shape.
-              </p>
-            </div>
-            <Badge tone={gateJudged ? 'success' : 'neutral'}>
-              {gateJudged ? 'judged' : `sample · ${settled.length}/288`}
-            </Badge>
-          </div>
-
-          <div className="mt-3 divide-y divide-line">
-            {(data?.gate ?? []).map((row) => (
-              <div key={row.key} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5">
-                <div className="min-w-0 flex-1">
-                  <p className="text-[13px]">{row.label}</p>
-                  <p className="text-[11.5px] text-faint">{row.detail}</p>
-                </div>
-                <span className="tabular-nums text-[13px] font-medium">{row.value}</span>
-                <span className="w-[92px] text-right text-[12px] text-faint">tape {row.target}</span>
-                <Badge tone={GATE_TONE[row.status]} className="w-[74px] justify-center">
-                  {GATE_LABEL[row.status]}
+              <div className="flex items-center gap-2">
+                <h2 className="text-[14px] font-semibold">Paper P&amp;L &amp; Capital</h2>
+                <Badge tone="neutral" className="font-mono text-[11px]">
+                  Base {usd(startingCapital)}
                 </Badge>
               </div>
-            ))}
-            {!data && <Skeleton className="my-4 h-[180px]" />}
-          </div>
-
-          {data && <ShapeChart mShape={data.mShape} />}
-        </Card>
-
-        <Card className="flex flex-col p-5">
-          <div className="flex items-center justify-between">
-            <h2 className="text-[14px] font-semibold">Things to note</h2>
-            <Badge tone="neutral">{notes.length}</Badge>
-          </div>
-          <p className="text-[12.5px] text-muted">What the tape says about this run, worst first.</p>
-          <ul className="scrollbar-thin mt-3 -mr-2 max-h-[430px] space-y-2.5 overflow-y-auto pr-2">
-            {notes.map((note) => (
-              <li key={note.title} className="rounded-tile border border-line bg-surface-2/40 p-3">
-                <div className="flex items-start gap-2">
-                  <span className={cx('mt-0.5 grid size-5 shrink-0 place-items-center rounded-[6px]', NOTE_TONE[note.tone])}>
-                    {note.tone === 'danger' || note.tone === 'warning' ? (
-                      <AlertTriangle className="size-3" />
-                    ) : note.tone === 'success' ? (
-                      <CheckCircle2 className="size-3" />
-                    ) : (
-                      <Info className="size-3" />
-                    )}
-                  </span>
-                  <div className="min-w-0">
-                    <p className="text-[13px] font-medium leading-snug">{note.title}</p>
-                    <p className="mt-1 text-[12px] leading-relaxed text-muted">{note.body}</p>
-                  </div>
-                </div>
-              </li>
-            ))}
-            {!data && <Skeleton className="h-[220px]" />}
-          </ul>
-        </Card>
-      </div>
-
-      <div className="mt-3 grid gap-3 lg:grid-cols-3">
-        <Card className="p-5 lg:col-span-2">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <h2 className="text-[14px] font-semibold">Paper P&amp;L</h2>
-              <p className="text-[12.5px] text-muted">Cumulative net per settled window; pending windows are excluded.</p>
+              <p className="text-[12.5px] text-muted">
+                Cumulative capital &amp; net per settled window vs {usd(startingCapital)} starting capital; pending windows excluded.
+              </p>
             </div>
             {summary && (
-              <span
-                className={cx(
-                  'tabular-nums text-[22px] font-semibold tracking-[-0.02em]',
-                  summary.netUsd >= 0 ? 'text-success' : 'text-danger',
-                )}
-              >
-                {usd(summary.netUsd)}
-              </span>
+              <div className="text-right">
+                <div className="flex items-baseline justify-end gap-2">
+                  <span className="tabular-nums text-[22px] font-semibold tracking-[-0.02em] text-fg">
+                    {usd(currentCapital)}
+                  </span>
+                  <span
+                    className={cx(
+                      'tabular-nums text-[13.5px] font-semibold',
+                      summary.netUsd >= 0 ? 'text-success' : 'text-danger',
+                    )}
+                  >
+                    {summary.netUsd >= 0 ? '+' : ''}{usd(summary.netUsd)}
+                    {startingCapital > 0
+                      ? ` (${(((currentCapital - startingCapital) / startingCapital) * 100).toFixed(1)}%)`
+                      : ''}
+                  </span>
+                </div>
+                <p className="text-[11.5px] text-faint">
+                  {summary.settled} settled window{summary.settled === 1 ? '' : 's'} · {summary.profitable} profitable
+                </p>
+              </div>
             )}
           </div>
 
           {settled.length > 0 ? (
             <>
               <div className="mt-3">
-                <NetCurve points={curve} />
+                <InteractivePnlChart
+                  windows={settled}
+                  startingCapital={startingCapital}
+                  hoveredSlug={hoveredSlug}
+                  onHoverWindow={(w) => setHoveredSlug(w?.slug ?? null)}
+                />
               </div>
               <div className="mt-4 border-t border-line pt-3">
                 <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-muted">
@@ -393,7 +347,11 @@ export function Dashboard() {
                     best {usd(summary?.bestUsd ?? 0)} · worst {usd(summary?.worstUsd ?? 0)}
                   </span>
                 </div>
-                <WindowBars windows={settled.slice(-24)} />
+                <WindowBars
+                  windows={settled.slice(-24)}
+                  hoveredSlug={hoveredSlug}
+                  onHoverSlug={setHoveredSlug}
+                />
               </div>
             </>
           ) : (
@@ -470,6 +428,72 @@ export function Dashboard() {
           ) : (
             <Skeleton className="mt-4 h-[280px]" />
           )}
+        </Card>
+      </div>
+
+      <div className="mt-3 grid gap-3 lg:grid-cols-3">
+        <Card className="p-5 lg:col-span-2">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h2 className="text-[14px] font-semibold">Fidelity gate</h2>
+              <p className="text-[12.5px] text-muted">
+                How close the live paper tape is to the frozen 24h sample — 45 median fills, both sides, $316/$447 cost,
+                M0–M4 shape.
+              </p>
+            </div>
+            <Badge tone={gateJudged ? 'success' : 'neutral'}>
+              {gateJudged ? 'judged' : `sample · ${settled.length}/288`}
+            </Badge>
+          </div>
+
+          <div className="mt-3 divide-y divide-line">
+            {(data?.gate ?? []).map((row) => (
+              <div key={row.key} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px]">{row.label}</p>
+                  <p className="text-[11.5px] text-faint">{row.detail}</p>
+                </div>
+                <span className="tabular-nums text-[13px] font-medium">{row.value}</span>
+                <span className="w-[92px] text-right text-[12px] text-faint">tape {row.target}</span>
+                <Badge tone={GATE_TONE[row.status]} className="w-[74px] justify-center">
+                  {GATE_LABEL[row.status]}
+                </Badge>
+              </div>
+            ))}
+            {!data && <Skeleton className="my-4 h-[180px]" />}
+          </div>
+
+          {data && <ShapeChart mShape={data.mShape} />}
+        </Card>
+
+        <Card className="flex flex-col p-5">
+          <div className="flex items-center justify-between">
+            <h2 className="text-[14px] font-semibold">Things to note</h2>
+            <Badge tone="neutral">{notes.length}</Badge>
+          </div>
+          <p className="text-[12.5px] text-muted">What the tape says about this run, worst first.</p>
+          <ul className="scrollbar-thin mt-3 -mr-2 max-h-[430px] space-y-2.5 overflow-y-auto pr-2">
+            {notes.map((note) => (
+              <li key={note.title} className="rounded-tile border border-line bg-surface-2/40 p-3">
+                <div className="flex items-start gap-2">
+                  <span className={cx('mt-0.5 grid size-5 shrink-0 place-items-center rounded-[6px]', NOTE_TONE[note.tone])}>
+                    {note.tone === 'danger' || note.tone === 'warning' ? (
+                      <AlertTriangle className="size-3" />
+                    ) : note.tone === 'success' ? (
+                      <CheckCircle2 className="size-3" />
+                    ) : (
+                      <Info className="size-3" />
+                    )}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-[13px] font-medium leading-snug">{note.title}</p>
+                    <p className="mt-1 text-[12px] leading-relaxed text-muted">{note.body}</p>
+                  </div>
+                </div>
+              </li>
+            ))}
+            {!data && <Skeleton className="h-[220px]" />}
+          </ul>
         </Card>
       </div>
 
@@ -676,62 +700,39 @@ function ShapeChart({ mShape }: { mShape: BotPerf['mShape'] }) {
   )
 }
 
-function NetCurve({ points }: { points: { ts: number; value: number }[] }) {
-  if (points.length === 0) return null
-  const width = 600
-  const height = 170
-  const padX = 8
-  const padTop = 14
-  const padBottom = 22
-  const values = points.map((point) => point.value)
-  const min = Math.min(0, ...values)
-  const max = Math.max(0, ...values)
-  const span = max - min || 1
-  const x = (index: number) =>
-    padX + (points.length === 1 ? (width - padX * 2) / 2 : (index * (width - padX * 2)) / (points.length - 1))
-  const y = (value: number) => padTop + (height - padTop - padBottom) * (1 - (value - min) / span)
-  const line = points.map((point, index) => `${index === 0 ? 'M' : 'L'}${x(index)},${y(point.value)}`).join(' ')
-  const zeroY = y(0)
-  const last = values[values.length - 1]
-  const tone = last >= 0 ? 'var(--color-success)' : 'var(--color-danger)'
-
-  return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="h-auto w-full" preserveAspectRatio="none" role="img" aria-label="Cumulative paper net">
-      <line x1={padX} x2={width - padX} y1={zeroY} y2={zeroY} stroke="var(--color-line-strong)" strokeDasharray="3 4" />
-      <text x={width - padX} y={Math.max(11, zeroY - 5)} fontSize="11" textAnchor="end" fill="var(--color-faint)">
-        $0
-      </text>
-      <path d={line} fill="none" stroke={tone} strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-      <circle cx={x(points.length - 1)} cy={y(last)} r="3.5" fill={tone} />
-      <text x={padX} y={height - 4} fontSize="11" fill="var(--color-faint)">
-        {windowTime(points[0].ts)}
-      </text>
-      <text x={width - padX} y={height - 4} fontSize="11" textAnchor="end" fill="var(--color-faint)">
-        {windowTime(points[points.length - 1].ts)}
-      </text>
-    </svg>
-  )
-}
-
-function WindowBars({ windows }: { windows: PerfWindow[] }) {
+function WindowBars({
+  windows,
+  hoveredSlug,
+  onHoverSlug,
+}: {
+  windows: PerfWindow[]
+  hoveredSlug?: string | null
+  onHoverSlug?: (slug: string | null) => void
+}) {
   if (windows.length === 0) return null
   const maxAbs = Math.max(1, ...windows.map((window) => Math.abs(window.netUsd ?? 0)))
   return (
-    <div className="relative mt-2 flex h-24 items-stretch gap-[3px]">
+    <div
+      className="relative mt-2 flex h-24 items-stretch gap-[3px]"
+      onMouseLeave={() => onHoverSlug?.(null)}
+    >
       <div className="pointer-events-none absolute inset-x-0 top-1/2 border-t border-line-strong" />
       {windows.map((window) => {
         const net = window.netUsd ?? 0
         const height = Math.max(3, (Math.abs(net) / maxAbs) * 48)
+        const isHovered = hoveredSlug === window.slug
         return (
           <div
             key={window.slug}
-            className="relative flex-1"
+            className="relative flex-1 cursor-pointer transition-transform hover:scale-y-105"
+            onMouseEnter={() => onHoverSlug?.(window.slug)}
             title={`${windowTime(window.startMs)} · ${net >= 0 ? '+' : '−'}${usd(Math.abs(net))} · ${window.trades} fills · ${window.winner ?? 'pending'}`}
           >
             <div
               className={cx(
-                'absolute inset-x-0 rounded-[2px]',
+                'absolute inset-x-0 rounded-[2px] transition-all duration-150',
                 net >= 0 ? 'bottom-1/2 bg-success/80' : 'top-1/2 bg-danger/80',
+                isHovered && 'brightness-125 ring-2 ring-fg z-10',
               )}
               style={{ height: `${height}%` }}
             />
