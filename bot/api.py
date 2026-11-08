@@ -760,7 +760,19 @@ def perf() -> dict:
     severity = {"danger": 0, "warning": 1, "info": 2, "success": 3}
     notes.sort(key=lambda n: severity.get(n["tone"], 9))
 
-    bankroll = float(load_config().get("bankrollUsd", BANKROLL_DEFAULT))
+    cfg_bankroll = None
+    sel = get_selected_run_id()
+    if sel:
+        ws = resolve_run_workspace(sel)
+        if ws:
+            meta = ws.read_meta()
+            if meta and meta.config_snapshot:
+                cfg_bankroll = meta.config_snapshot.get("bankrollUsd")
+    if cfg_bankroll is None:
+        cfg = load_config()
+        if isinstance(cfg, dict):
+            cfg_bankroll = cfg.get("bankrollUsd")
+    bankroll = _num(cfg_bankroll, default=float(BANKROLL_DEFAULT))
     return {
         "summary": {
             "bankrollUsd": bankroll,

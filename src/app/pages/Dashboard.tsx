@@ -317,8 +317,10 @@ export function Dashboard() {
                       summary.netUsd >= 0 ? 'text-success' : 'text-danger',
                     )}
                   >
-                    {summary.netUsd >= 0 ? '+' : ''}{usd(summary.netUsd)} (
-                    {(((currentCapital - startingCapital) / startingCapital) * 100).toFixed(1)}%)
+                    {summary.netUsd >= 0 ? '+' : ''}{usd(summary.netUsd)}
+                    {startingCapital > 0
+                      ? ` (${(((currentCapital - startingCapital) / startingCapital) * 100).toFixed(1)}%)`
+                      : ''}
                   </span>
                 </div>
                 <p className="text-[11.5px] text-faint">

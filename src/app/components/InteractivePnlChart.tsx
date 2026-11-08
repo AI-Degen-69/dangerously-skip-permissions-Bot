@@ -109,7 +109,7 @@ export function InteractivePnlChart({
 
   // Sync external hoveredSlug if provided
   const activeIndex = useMemo(() => {
-    if (internalHoverIndex !== null) return internalHoverIndex
+    if (internalHoverIndex !== null && internalHoverIndex < points.length) return internalHoverIndex
     if (hoveredSlug) {
       const idx = points.findIndex((p) => p.window?.slug === hoveredSlug)
       if (idx !== -1) return idx
@@ -196,13 +196,45 @@ export function InteractivePnlChart({
     onHoverWindow?.(null)
   }
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (points.length === 0) return
+    if (e.key === 'ArrowRight') {
+      e.preventDefault()
+      const next = activeIndex === null ? 0 : Math.min(points.length - 1, activeIndex + 1)
+      setInternalHoverIndex(next)
+      onHoverWindow?.(points[next]?.window ?? null)
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault()
+      const prev = activeIndex === null ? 0 : Math.max(0, activeIndex - 1)
+      setInternalHoverIndex(prev)
+      onHoverWindow?.(points[prev]?.window ?? null)
+    } else if (e.key === 'Escape') {
+      setInternalHoverIndex(null)
+      onHoverWindow?.(null)
+    }
+  }
+
   // Active point tooltip coordinates
   const activeX = activePoint !== null ? xCoord(activeIndex!) : 0
   const activeY = activePoint !== null ? yCoord(activePoint.capital) : 0
   const activePctX = (activeX / width) * 100
 
   return (
-    <div ref={containerRef} className={cx('relative select-none', className)}>
+    <div
+      ref={containerRef}
+      className={cx('relative select-none outline-none focus-visible:ring-1 focus-visible:ring-primary/50 rounded-lg', className)}
+      tabIndex={0}
+      role="region"
+      aria-label="Interactive performance chart. Use left and right arrow keys to navigate windows."
+      onKeyDown={handleKeyDown}
+    >
+      <span className="sr-only" aria-live="polite">
+        {activePoint
+          ? activePoint.isStart
+            ? `Starting capital: ${usd(startingCapital)}`
+            : `${activePoint.slug}: Capital ${usd(activePoint.capital)}, Total Return ${activePoint.cumNet >= 0 ? '+' : ''}${usd(activePoint.cumNet)}${startingCapital > 0 ? `, ${(((activePoint.capital - startingCapital) / startingCapital) * 100).toFixed(1)}%` : ''}`
+          : ''}
+      </span>
       <svg
         viewBox={`0 0 ${width} ${height}`}
         className="h-auto w-full overflow-visible"
@@ -551,8 +583,10 @@ export function InteractivePnlChart({
                   )}
                 >
                   {activePoint.cumNet >= 0 ? '+' : ''}
-                  {usd(activePoint.cumNet)} (
-                  {(((activePoint.capital - startingCapital) / startingCapital) * 100).toFixed(1)}%)
+                  {usd(activePoint.cumNet)}
+                  {startingCapital > 0
+                    ? ` (${(((activePoint.capital - startingCapital) / startingCapital) * 100).toFixed(1)}%)`
+                    : ''}
                 </span>
               </div>
 
