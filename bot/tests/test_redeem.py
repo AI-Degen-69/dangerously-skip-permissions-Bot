@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from bot import api
-from bot.redeem import execute_redeem, redeemable
+from bot.redeem import execute_redeem, get_target_workspace, redeemable
 from bot.runs import RunWorkspace
 
 
@@ -29,6 +29,18 @@ class RedeemTests(unittest.TestCase):
         ws = RunWorkspace(run_id, runs_root=self.runs_root)
         ws.init_workspace()
         return ws
+
+    def test_get_target_workspace_validation(self):
+        with patch("bot.redeem.WORKSPACES_DIR", self.runs_root):
+            with self.assertRaises(ValueError):
+                get_target_workspace("nonexistent_run")
+
+        ws = self._create_workspace("run_valid")
+        with patch("bot.redeem.WORKSPACES_DIR", self.runs_root), \
+             patch("bot.redeem.get_active_run_id", return_value="run_valid"):
+            resolved = get_target_workspace()
+            self.assertIsNotNone(resolved)
+            self.assertEqual(resolved.run_id, "run_valid")
 
     def test_redeemable_in_run_workspace(self):
         ws = self._create_workspace()
@@ -53,7 +65,8 @@ class RedeemTests(unittest.TestCase):
             "redeemedAt": "2026-11-08T00:00:00Z",
         }))
 
-        with patch("bot.redeem.resolve_run_workspace", return_value=ws):
+        with patch("bot.redeem.WORKSPACES_DIR", self.runs_root), \
+             patch("bot.redeem.get_active_run_id", return_value=ws.run_id):
             due = redeemable(ws.run_id)
 
         self.assertEqual(len(due), 1)
@@ -71,7 +84,8 @@ class RedeemTests(unittest.TestCase):
         }
         win_file.write_text(json.dumps(content))
 
-        with patch("bot.redeem.resolve_run_workspace", return_value=ws):
+        with patch("bot.redeem.WORKSPACES_DIR", self.runs_root), \
+             patch("bot.redeem.get_active_run_id", return_value=ws.run_id):
             res = execute_redeem(run_id=ws.run_id, dry_run=True)
 
         self.assertTrue(res["ok"])
@@ -107,7 +121,8 @@ class RedeemTests(unittest.TestCase):
             "fills": [{"shares": 20.0, "outcome": "Up", "price": 0.5}],
         }))
 
-        with patch("bot.redeem.resolve_run_workspace", return_value=ws), \
+        with patch("bot.redeem.WORKSPACES_DIR", self.runs_root), \
+             patch("bot.redeem.get_active_run_id", return_value=ws.run_id), \
              patch("bot.redeem.RUNS_DIR", self.legacy_runs), \
              patch("bot.redeem.EVENTS_PATH", self.events_path):
             res = execute_redeem(run_id=ws.run_id, dry_run=False)
@@ -121,7 +136,7 @@ class RedeemTests(unittest.TestCase):
         primary_data = json.loads(win_file.read_text())
         self.assertIn("redeemedAt", primary_data)
 
-        # Check legacy file was synced
+        # Check legacy file was synced for active run
         legacy_data = json.loads(legacy_file.read_text())
         self.assertIn("redeemedAt", legacy_data)
 
@@ -136,6 +151,52 @@ class RedeemTests(unittest.TestCase):
         self.assertEqual(len(redeem_events), 1)
         self.assertEqual(redeem_events[0]["detail"]["payout"], 30.0)
 
+    def test_execute_redeem_historical_does_not_sync_legacy(self):
+        ws = self._create_workspace("run_historical")
+        win_file = ws.windows_dir / "btc-updown-5m-100.json"
+        win_file.write_text(json.dumps({
+            "event_slug": "btc-updown-5m-100",
+            "winner": "Up",
+            "cost_usd": 15.0,
+            "payout_usd": 30.0,
+            "fills": [{"shares": 30.0, "outcome": "Up", "price": 0.5}],
+        }))
+
+        # Legacy file belongs to active run, not historical
+        legacy_file = self.legacy_runs / "btc-updown-5m-100.json"
+        legacy_file.write_text(json.dumps({"old": True}))
+
+        with patch("bot.redeem.WORKSPACES_DIR", self.runs_root), \
+             patch("bot.redeem.get_active_run_id", return_value="run_active_different"), \
+             patch("bot.redeem.RUNS_DIR", self.legacy_runs), \
+             patch("bot.redeem.EVENTS_PATH", self.events_path):
+            res = execute_redeem(run_id="run_historical", dry_run=False)
+
+        self.assertTrue(res["ok"])
+        legacy_data = json.loads(legacy_file.read_text())
+        self.assertNotIn("redeemedAt", legacy_data)
+        self.assertTrue(legacy_data.get("old"))
+
+    def test_execute_redeem_skips_invalid_windows(self):
+        ws = self._create_workspace()
+        corrupt_file = ws.windows_dir / "btc-updown-5m-999.json"
+        corrupt_file.write_text(json.dumps({
+            "event_slug": "btc-updown-5m-999",
+            "winner": "Up",
+            "cost_usd": 15.0,
+            "payout_usd": -50.0,  # Negative payout invalid
+            "fills": [],
+        }))
+
+        with patch("bot.redeem.WORKSPACES_DIR", self.runs_root), \
+             patch("bot.redeem.get_active_run_id", return_value=ws.run_id):
+            res = execute_redeem(run_id=ws.run_id, dry_run=False)
+
+        self.assertEqual(res["redeemedCount"], 0)
+        self.assertEqual(len(res["warnings"]), 1)
+        corrupt_data = json.loads(corrupt_file.read_text())
+        self.assertNotIn("redeemedAt", corrupt_data)
+
     def test_execute_redeem_csv_output(self):
         ws = self._create_workspace()
         win_file = ws.windows_dir / "btc-updown-5m-100.json"
@@ -148,7 +209,8 @@ class RedeemTests(unittest.TestCase):
         }))
         csv_file = self.tmp / "test_out.csv"
 
-        with patch("bot.redeem.resolve_run_workspace", return_value=ws), \
+        with patch("bot.redeem.WORKSPACES_DIR", self.runs_root), \
+             patch("bot.redeem.get_active_run_id", return_value=ws.run_id), \
              patch("bot.redeem.RUNS_DIR", self.legacy_runs), \
              patch("bot.redeem.EVENTS_PATH", self.events_path):
             res = execute_redeem(run_id=ws.run_id, dry_run=False, csv_path=str(csv_file))
@@ -162,7 +224,6 @@ class RedeemTests(unittest.TestCase):
         self.assertEqual(float(reader[1][8]), 30.0)
 
     def test_api_redeem_endpoint(self):
-        ws = self._create_workspace()
         mock_result = {
             "ok": True,
             "redeemedCount": 2,
@@ -177,9 +238,10 @@ class RedeemTests(unittest.TestCase):
 
         with patch.object(api, "is_view_only", return_value=False), \
              patch.object(api, "get_selected_run_id", return_value="run_test"), \
-             patch("bot.redeem.execute_redeem", return_value=mock_result):
+             patch("bot.redeem.execute_redeem", return_value=mock_result) as mock_exec:
             handler.do_POST()
 
+        mock_exec.assert_called_once_with(run_id="run_test", dry_run=False)
         handler._send.assert_called_once_with(200, mock_result)
 
     def test_api_redeem_endpoint_view_only_blocked(self):

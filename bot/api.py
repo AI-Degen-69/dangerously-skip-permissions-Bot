@@ -1519,8 +1519,11 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 from bot.redeem import execute_redeem
                 sel_run = get_selected_run_id()
-                res = execute_redeem(run_id=sel_run, dry_run=False)
-                self._send(200, res)
+                try:
+                    res = execute_redeem(run_id=sel_run, dry_run=False)
+                    self._send(200, res)
+                except ValueError as err:
+                    self._send(400, {"error": str(err)})
             else:
                 self._send(404, {"error": "not found"})
         except (ConnectionError, BrokenPipeError):
