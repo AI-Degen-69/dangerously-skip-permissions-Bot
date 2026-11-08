@@ -20,6 +20,7 @@ import shutil
 import statistics
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 from datetime import datetime, timezone
@@ -232,41 +233,59 @@ def loop_running() -> int | None:
     return pid if alive else None
 
 
-def stop_loop_process() -> int | None:
-    pid = loop_running()
-    if pid:
-        try:
-            if os.name == "nt":
-                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
-            else:
-                os.kill(pid, 15)
-        except Exception:
-            pass
-        PID_PATH.unlink(missing_ok=True)
-        log_event("risk", "loop-stopped", detail={"pid": pid})
-    return pid
+_loop_lock = threading.Lock()
+
+
+def stop_loop_process(timeout: float = 3.0) -> int | None:
+    with _loop_lock:
+        pid = loop_running()
+        if pid:
+            try:
+                if os.name == "nt":
+                    subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
+                else:
+                    os.kill(pid, 15)
+            except Exception:
+                pass
+            start_t = time.time()
+            while time.time() - start_t < timeout:
+                if not loop_running():
+                    break
+                time.sleep(0.1)
+            if os.name != "nt" and loop_running():
+                try:
+                    os.kill(pid, 9)
+                except Exception:
+                    pass
+            PID_PATH.unlink(missing_ok=True)
+            log_event("risk", "loop-stopped", detail={"pid": pid})
+        return pid
 
 
 def start_loop_process(run_id: str | None = None) -> int:
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    logf = LOG_PATH.open("ab")
-    cmd = [sys.executable, "bot/live_paper.py", "--loop"]
-    if run_id:
-        cmd.extend(["--run-id", run_id])
-    proc = subprocess.Popen(
-        cmd,
-        cwd=str(ROOT), stdout=logf, stderr=subprocess.STDOUT,
-        start_new_session=True)
-    PID_PATH.write_text(str(proc.pid))
-    if run_id:
-        try:
-            ws = resolve_run_workspace(run_id)
-            if ws:
-                ws.pid_file.write_text(str(proc.pid))
-        except Exception:
-            pass
-    log_event("info", "loop-started", detail={"pid": proc.pid, "runId": run_id})
-    return proc.pid
+    with _loop_lock:
+        existing_pid = loop_running()
+        if existing_pid:
+            return existing_pid
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        logf = LOG_PATH.open("ab")
+        cmd = [sys.executable, "bot/live_paper.py", "--loop"]
+        if run_id:
+            cmd.extend(["--run-id", run_id])
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(ROOT), stdout=logf, stderr=subprocess.STDOUT,
+            start_new_session=True)
+        PID_PATH.write_text(str(proc.pid))
+        if run_id:
+            try:
+                ws = resolve_run_workspace(run_id)
+                if ws:
+                    ws.pid_file.write_text(str(proc.pid))
+            except Exception:
+                pass
+        log_event("info", "loop-started", detail={"pid": proc.pid, "runId": run_id})
+        return proc.pid
 
 
 # ---------------------------------------------------------------- live reads
@@ -1261,27 +1280,60 @@ class Handler(BaseHTTPRequestHandler):
                 req_run_id = body.get("runId")
                 resume_requested = body.get("resume", False)
                 if req_run_id or resume_requested:
-                    target = req_run_id or get_selected_run_id() or get_active_run_id()
-                    resolved_id = find_run_id(str(target)) if target else None
+                    if req_run_id:
+                        resolved_id = find_run_id(str(req_run_id))
+                        if not resolved_id:
+                            self._send(404, {"error": f"Run not found: {req_run_id}"})
+                            return
+                    else:
+                        target = get_selected_run_id() or get_active_run_id()
+                        resolved_id = find_run_id(str(target)) if target else None
+
                     if resolved_id:
+                        prev_active = get_active_run_id()
+                        prev_selected = get_selected_run_id()
                         stop_loop_process()
-                        set_active_run_id(resolved_id)
-                        set_selected_run_id(None)
-                        ws = RunWorkspace(resolved_id)
-                        ws.init_workspace(config=load_config(), mode="paper")
-                        ws.sync_to_paper_runs(RUNS_DIR)
-                        try:
-                            ws.settle_pending_windows(RUNS_DIR)
-                        except Exception:
-                            pass
-                        if ws.events_file.exists() and ws.events_file.stat().st_size > 0:
+
+                        if prev_active and STATE_PATH.exists():
                             try:
-                                shutil.copyfile(ws.events_file, EVENTS_PATH)
+                                prev_ws = RunWorkspace(prev_active)
+                                if prev_ws.exists():
+                                    shutil.copyfile(STATE_PATH, prev_ws.root / "state.json")
                             except Exception:
                                 pass
-                        STATE_PATH.unlink(missing_ok=True)
-                        KILL_PATH.unlink(missing_ok=True)
-                        pid = start_loop_process(run_id=resolved_id)
+
+                        try:
+                            set_active_run_id(resolved_id)
+                            set_selected_run_id(None)
+                            ws = RunWorkspace(resolved_id)
+                            ws.init_workspace(config=load_config(), mode="paper")
+                            ws.sync_to_paper_runs(RUNS_DIR)
+                            try:
+                                ws.settle_pending_windows(RUNS_DIR, max_windows=15)
+                            except Exception:
+                                pass
+                            if ws.events_file.exists() and ws.events_file.stat().st_size > 0:
+                                try:
+                                    shutil.copyfile(ws.events_file, EVENTS_PATH)
+                                except Exception:
+                                    pass
+                            else:
+                                if EVENTS_PATH.exists():
+                                    try:
+                                        EVENTS_PATH.unlink()
+                                    except Exception:
+                                        pass
+                            STATE_PATH.unlink(missing_ok=True)
+                            KILL_PATH.unlink(missing_ok=True)
+                            pid = start_loop_process(run_id=resolved_id)
+                        except Exception as err:
+                            if prev_active:
+                                set_active_run_id(prev_active)
+                            if prev_selected:
+                                set_selected_run_id(prev_selected)
+                            self._send(500, {"error": f"Failed to start run {resolved_id}: {err}"})
+                            return
+
                         self._send(200, {"running": True, "pid": pid, "runId": resolved_id, "activeRunId": resolved_id, "isViewOnly": False})
                         return
 
@@ -1311,24 +1363,50 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(404, {"error": f"Run workspace {resolved_id} does not exist"})
                     return
 
+                prev_active = get_active_run_id()
+                prev_selected = get_selected_run_id()
                 stop_loop_process()
-                set_active_run_id(resolved_id)
-                set_selected_run_id(None)
-                ws.init_workspace(config=load_config(), mode="paper")
-                ws.sync_to_paper_runs(RUNS_DIR)
-                try:
-                    ws.settle_pending_windows(RUNS_DIR)
-                except Exception:
-                    pass
-                if ws.events_file.exists() and ws.events_file.stat().st_size > 0:
+
+                if prev_active and STATE_PATH.exists():
                     try:
-                        shutil.copyfile(ws.events_file, EVENTS_PATH)
+                        prev_ws = RunWorkspace(prev_active)
+                        if prev_ws.exists():
+                            shutil.copyfile(STATE_PATH, prev_ws.root / "state.json")
                     except Exception:
                         pass
-                STATE_PATH.unlink(missing_ok=True)
-                KILL_PATH.unlink(missing_ok=True)
 
-                pid = start_loop_process(run_id=resolved_id)
+                try:
+                    set_active_run_id(resolved_id)
+                    set_selected_run_id(None)
+                    ws.init_workspace(config=load_config(), mode="paper")
+                    ws.sync_to_paper_runs(RUNS_DIR)
+                    try:
+                        ws.settle_pending_windows(RUNS_DIR, max_windows=15)
+                    except Exception:
+                        pass
+                    if ws.events_file.exists() and ws.events_file.stat().st_size > 0:
+                        try:
+                            shutil.copyfile(ws.events_file, EVENTS_PATH)
+                        except Exception:
+                            pass
+                    else:
+                        if EVENTS_PATH.exists():
+                            try:
+                                EVENTS_PATH.unlink()
+                            except Exception:
+                                pass
+                    STATE_PATH.unlink(missing_ok=True)
+                    KILL_PATH.unlink(missing_ok=True)
+
+                    pid = start_loop_process(run_id=resolved_id)
+                except Exception as err:
+                    if prev_active:
+                        set_active_run_id(prev_active)
+                    if prev_selected:
+                        set_selected_run_id(prev_selected)
+                    self._send(500, {"error": f"Failed to resume run {resolved_id}: {err}"})
+                    return
+
                 self._send(200, {
                     "running": True,
                     "pid": pid,

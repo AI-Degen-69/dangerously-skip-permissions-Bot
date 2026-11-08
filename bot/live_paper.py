@@ -75,7 +75,8 @@ def init_run_session(run_id: str | None = None, label: str = "default") -> RunWo
         try:
             st = json.loads(STATE_PATH.read_text())
             end_ms = st.get("endMs")
-            if end_ms and int(end_ms) < int(time.time() * 1000):
+            st_run_id = st.get("runId")
+            if (st_run_id and st_run_id != ws.run_id) or (end_ms and int(end_ms) < int(time.time() * 1000)):
                 STATE_PATH.unlink(missing_ok=True)
         except Exception:
             STATE_PATH.unlink(missing_ok=True)
@@ -205,6 +206,7 @@ def write_state(
 ) -> None:
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     payload = {
+        "runId": CURRENT_WORKSPACE.run_id if CURRENT_WORKSPACE else None,
         "slug": slug,
         "endMs": end_ms,
         "startedAtMs": started_ms,
