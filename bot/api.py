@@ -27,6 +27,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from bot.runs import (
+    RunWorkspace,
+    get_active_run_id,
+    list_all_runs,
+    make_run_id,
+    resolve_run_workspace,
+    set_active_run_id,
+)
+
 BOT_DIR = ROOT / "bot"
 CONFIG_PATH = BOT_DIR / "config.json"
 RUNS_DIR = BOT_DIR / "paper_runs"
@@ -51,7 +60,35 @@ def load_config() -> dict:
                 "intervals": ["5m"], "entry": {}, "risk": {}, "news": {"blackoutMinutes": 0, "events": []}}
 
 
+SELECTED_RUN_ID: str | None = None
+
+
+def get_selected_run_id() -> str | None:
+    global SELECTED_RUN_ID
+    return SELECTED_RUN_ID
+
+
+def set_selected_run_id(run_id: str | None) -> None:
+    global SELECTED_RUN_ID
+    SELECTED_RUN_ID = run_id
+
+
+def is_view_only() -> bool:
+    """Returns True if user has selected a historical run or explicit view-only mode."""
+    sel = get_selected_run_id()
+    if not sel:
+        return False
+    active = get_active_run_id()
+    return sel != active
+
+
 def runs() -> list[dict]:
+    sel = get_selected_run_id()
+    ws = resolve_run_workspace(sel)
+    if ws and ws.windows_dir.exists():
+        ws_runs = ws.list_windows()
+        if ws_runs:
+            return ws_runs
     out = []
     if RUNS_DIR.exists():
         for p in sorted(RUNS_DIR.glob("*.json")):
@@ -63,6 +100,8 @@ def runs() -> list[dict]:
 
 
 def state() -> dict | None:
+    if is_view_only():
+        return None
     try:
         return json.loads(STATE_PATH.read_text())
     except Exception:
@@ -70,9 +109,12 @@ def state() -> dict | None:
 
 
 def events(limit: int = 150) -> list[dict]:
-    if not EVENTS_PATH.exists():
+    sel = get_selected_run_id()
+    ws = resolve_run_workspace(sel)
+    target_path = ws.events_file if (ws and ws.events_file.exists()) else EVENTS_PATH
+    if not target_path.exists():
         return []
-    lines = EVENTS_PATH.read_text().splitlines()[-max(limit, 1):]
+    lines = target_path.read_text().splitlines()[-max(limit, 1):]
     out = []
     for line in lines:
         try:
@@ -751,9 +793,29 @@ class Handler(BaseHTTPRequestHandler):
                 age = None
                 if st and st.get("updatedAtMs"):
                     age = max(0, int(time.time() * 1000) - st["updatedAtMs"])
-                self._send(200, {"running": pid is not None, "pid": pid,
-                                 "snapshotAgeMs": age, "mode": "paper",
-                                 "logPath": str(LOG_PATH)})
+                active_id = get_active_run_id()
+                sel_id = get_selected_run_id() or active_id
+                view_only = is_view_only()
+                self._send(200, {
+                    "running": pid is not None and not view_only,
+                    "pid": pid if not view_only else None,
+                    "snapshotAgeMs": age,
+                    "mode": "paper",
+                    "logPath": str(LOG_PATH),
+                    "activeRunId": active_id,
+                    "selectedRunId": sel_id,
+                    "isViewOnly": view_only,
+                })
+            elif url.path == "/api/bot/runs":
+                all_r = list_all_runs()
+                active_id = get_active_run_id()
+                sel_id = get_selected_run_id() or active_id
+                self._send(200, {
+                    "runs": all_r,
+                    "activeRunId": active_id,
+                    "selectedRunId": sel_id,
+                    "isViewOnly": is_view_only(),
+                })
             elif url.path == "/api/bot/config":
                 self._send(200, {"config": self._config_view(), "configFile": str(CONFIG_PATH)})
             else:
@@ -765,6 +827,12 @@ class Handler(BaseHTTPRequestHandler):
         body = self._body()
         try:
             if self.path == "/api/bot/start":
+                if is_view_only():
+                    self._send(400, {
+                        "error": "Cannot start bot while inspecting a past run in view-only mode. Switch back to live run first.",
+                        "isViewOnly": True,
+                    })
+                    return
                 if loop_running():
                     self._send(200, {"running": True, "pid": loop_running(), "reason": "already-running"})
                     return
@@ -790,7 +858,28 @@ class Handler(BaseHTTPRequestHandler):
                         pass
                     PID_PATH.unlink(missing_ok=True)
                     log_event("risk", "loop-stopped", detail={"pid": pid})
+                active_id = get_active_run_id()
+                if active_id:
+                    ws = RunWorkspace(active_id)
+                    if ws.exists():
+                        ws.finalize(status="completed", summary=perf().get("summary", {}))
                 self._send(200, {"running": False, "pid": None})
+            elif self.path == "/api/bot/select-run":
+                target_run_id = body.get("runId")
+                if target_run_id:
+                    ws = RunWorkspace(target_run_id)
+                    if not ws.exists():
+                        self._send(404, {"error": f"Run {target_run_id} not found"})
+                        return
+                    set_selected_run_id(target_run_id)
+                else:
+                    # Switch back to live
+                    set_selected_run_id(None)
+                self._send(200, {
+                    "selectedRunId": get_selected_run_id() or get_active_run_id(),
+                    "activeRunId": get_active_run_id(),
+                    "isViewOnly": is_view_only(),
+                })
             elif self.path == "/api/bot/reset":
                 for p in RUNS_DIR.glob("*.json"):
                     p.unlink()

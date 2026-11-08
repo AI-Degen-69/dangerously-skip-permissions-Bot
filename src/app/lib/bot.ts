@@ -167,12 +167,27 @@ export interface BotKpis {
   recentClosed: BotTrade[]
 }
 
+export interface RunItem {
+  runId: string
+  startedAt: string
+  endedAt: string | null
+  status: 'running' | 'completed' | 'interrupted' | 'failed' | 'view_only'
+  mode: string
+  label: string
+  isActive?: boolean
+  windowsCount?: number
+  summary?: Record<string, unknown>
+}
+
 export interface BotControl {
   running: boolean
   pid: number | null
   snapshotAgeMs: number | null
   mode: 'paper' | 'live'
   logPath: string
+  activeRunId?: string | null
+  selectedRunId?: string | null
+  isViewOnly?: boolean
 }
 
 export interface PerfGate {
@@ -404,6 +419,19 @@ function useBotMutation<TInput, TResult>(run: (input: TInput) => Promise<TResult
     onSuccess: () => client.invalidateQueries({ queryKey: ['bot'] }),
   })
 }
+
+export const useBotRuns = () =>
+  useQuery({
+    queryKey: ['bot', 'runs'],
+    queryFn: () => getJson<{ runs: RunItem[]; activeRunId: string | null; selectedRunId: string | null; isViewOnly: boolean }>('/runs'),
+    refetchInterval: 5_000,
+    retry: false,
+  })
+
+export const useSelectRun = () =>
+  useBotMutation((runId: string | null) =>
+    send<{ selectedRunId: string | null; activeRunId: string | null; isViewOnly: boolean }>('/select-run', 'POST', { runId }),
+  )
 
 export const useSaveBotConfig = () =>
   useBotMutation((patch: Record<string, unknown>) =>

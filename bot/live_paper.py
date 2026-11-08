@@ -33,6 +33,7 @@ from polymarket import PublicClient
 from bot import constants as C
 from bot.discovery import WINDOW_S, current_slot, get_window
 from bot.risk import RiskState, assert_single_window, check_window, clip_shares, heartbeat
+from bot.runs import RunWorkspace, get_active_run_id, make_run_id, set_active_run_id
 from bot.signal import LeanSignal
 from bot.ws import LiveBookStreamer
 
@@ -41,6 +42,23 @@ STATE_PATH = Path("bot/state.json")
 EVENTS_PATH = Path("bot/events.jsonl")
 CONFIG_PATH = Path("bot/config.json")
 KILL_PATH = Path("bot/kill")
+CURRENT_WORKSPACE: RunWorkspace | None = None
+
+
+def get_current_workspace() -> RunWorkspace | None:
+    global CURRENT_WORKSPACE
+    return CURRENT_WORKSPACE
+
+
+def init_run_session(run_id: str | None = None, label: str = "default") -> RunWorkspace:
+    """Initialize a run-scoped directory and update active run pointer."""
+    global CURRENT_WORKSPACE
+    rid = run_id or make_run_id(mode="paper", label=label)
+    ws = RunWorkspace(rid)
+    ws.init_workspace(config=load_cfg(), mode="paper", label=label)
+    set_active_run_id(rid)
+    CURRENT_WORKSPACE = ws
+    return ws
 
 
 def load_cfg() -> dict:
@@ -64,6 +82,14 @@ def log_event(kind: str, reason: str, slug: str | None = None, **kw) -> None:
     EVENTS_PATH.parent.mkdir(parents=True, exist_ok=True)
     with EVENTS_PATH.open("a") as f:
         f.write(json.dumps(rec) + "\n")
+    ws = get_current_workspace()
+    if ws:
+        try:
+            ws.root.mkdir(parents=True, exist_ok=True)
+            with ws.events_file.open("a") as f:
+                f.write(json.dumps(rec) + "\n")
+        except Exception:
+            pass
 
 
 def microprice_lean(c: PublicClient, up_id: str, down_id: str, streamer: LiveBookStreamer | None = None) -> LeanSignal:
@@ -295,6 +321,13 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
               "winner": None, "pending": True, "fills": fills}
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     (RUNS_DIR / f"{slug}.json").write_text(json.dumps(result, indent=2))
+    ws = get_current_workspace()
+    if ws:
+        try:
+            ws.windows_dir.mkdir(parents=True, exist_ok=True)
+            (ws.windows_dir / f"{slug}.json").write_text(json.dumps(result, indent=2))
+        except Exception:
+            pass
     try:
         STATE_PATH.unlink()
     except OSError:
@@ -349,6 +382,10 @@ def settle_slug(slug: str, snap: dict, origin: str | None, budget_s: int = 900) 
     try:
         RUNS_DIR.mkdir(parents=True, exist_ok=True)
         (RUNS_DIR / f"{slug}.json").write_text(json.dumps(result, indent=2))
+        ws = get_current_workspace()
+        if ws:
+            ws.windows_dir.mkdir(parents=True, exist_ok=True)
+            (ws.windows_dir / f"{slug}.json").write_text(json.dumps(result, indent=2))
     except OSError:
         pass
     log_event("settle", "paper-resolve", slug,
@@ -384,10 +421,19 @@ def main() -> None:
     ap.add_argument("--loop", action="store_true", help="trade every window until Ctrl+C")
     ap.add_argument("--slot", type=int, default=None, help="explicit window epoch (default: current)")
     ap.add_argument("--origin", default="http://localhost:5174", help="Worker origin for dashboard import ('' to skip)")
+    ap.add_argument("--run-id", default=None, help="Explicit run_id session directory")
+    ap.add_argument("--label", default="default", help="Label for this run session")
     args = ap.parse_args()
     c = PublicClient()
+
+    ws = init_run_session(run_id=args.run_id, label=args.label)
+    print(f"session initialized: {ws.run_id}", flush=True)
+
     if args.slot:
-        trade_window(c, args.slot, args.origin or None)
+        try:
+            trade_window(c, args.slot, args.origin or None)
+        finally:
+            ws.finalize(status="completed")
         return
     if args.once:
         slot = current_slot()
@@ -398,27 +444,37 @@ def main() -> None:
             print(f"joining next window in {wait}s…", flush=True)
             time.sleep(max(wait, 0))
         wait_while_killed()
-        trade_window(c, slot, args.origin or None)
+        try:
+            trade_window(c, slot, args.origin or None)
+        finally:
+            ws.finalize(status="completed")
         return
     # --loop (default if nothing passed)
-    while True:
-        slot = current_slot()
-        now = int(datetime.now(timezone.utc).timestamp())
-        if now > slot + WINDOW_S - 60:
-            slot += WINDOW_S
-        wait = slot + 13 - now
-        if wait > 0:
-            print(f"next window in {wait}s…", flush=True)
-            time.sleep(wait)
-        try:
-            wait_while_killed()
-            trade_window(c, slot, args.origin or None)
-        except KeyboardInterrupt:
-            raise
-        except Exception as ex:
-            print(f"window failed: {type(ex).__name__}: {ex}", flush=True)
-            log_event("error", "window-failed", f"btc-updown-5m-{slot}", detail={"error": str(ex)[:200]})
-            time.sleep(30)
+    try:
+        while True:
+            slot = current_slot()
+            now = int(datetime.now(timezone.utc).timestamp())
+            if now > slot + WINDOW_S - 60:
+                slot += WINDOW_S
+            wait = slot + 13 - now
+            if wait > 0:
+                print(f"next window in {wait}s…", flush=True)
+                time.sleep(wait)
+            try:
+                wait_while_killed()
+                trade_window(c, slot, args.origin or None)
+            except KeyboardInterrupt:
+                raise
+            except Exception as ex:
+                print(f"window failed: {type(ex).__name__}: {ex}", flush=True)
+                log_event("error", "window-failed", f"btc-updown-5m-{slot}", detail={"error": str(ex)[:200]})
+                time.sleep(30)
+    except KeyboardInterrupt:
+        ws.finalize(status="interrupted")
+        raise
+    except Exception:
+        ws.finalize(status="failed")
+        raise
 
 
 if __name__ == "__main__":

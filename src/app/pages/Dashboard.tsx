@@ -1,9 +1,18 @@
-import { Activity, AlertTriangle, CheckCircle2, Info, Pause, Play, RotateCcw, Target } from 'lucide-react'
+import { Activity, AlertTriangle, CheckCircle2, History, Info, Pause, Play, RotateCcw, Target } from 'lucide-react'
 import { Link } from 'react-router'
 import { useState } from 'react'
 
 import { Badge, Button, Card, ConfirmDialog, EmptyState, PageHeader, Skeleton, useToast } from '../components/ui'
-import { BOT_ORIGIN, useBotControl, useBotPerf, useResetBot, useStartBot, useStopBot } from '../lib/bot'
+import {
+  BOT_ORIGIN,
+  useBotControl,
+  useBotPerf,
+  useBotRuns,
+  useResetBot,
+  useSelectRun,
+  useStartBot,
+  useStopBot,
+} from '../lib/bot'
 import type { BotPerf, PerfGate, PerfNote, PerfWindow } from '../lib/bot'
 import { cx } from '../lib/cx'
 import { money2, relativeTime } from '../lib/format'
@@ -50,13 +59,20 @@ const NOTE_TONE: Record<PerfNote['tone'], string> = {
 export function Dashboard() {
   const perf = useBotPerf()
   const control = useBotControl()
+  const runsQuery = useBotRuns()
+  const selectRun = useSelectRun()
   const start = useStartBot()
   const stop = useStopBot()
   const reset = useResetBot()
   const toast = useToast()
   const [confirmReset, setConfirmReset] = useState(false)
 
-  const running = control.data?.running ?? false
+  const isViewOnly = control.data?.isViewOnly ?? false
+  const running = (control.data?.running ?? false) && !isViewOnly
+  const selectedRunId = control.data?.selectedRunId ?? runsQuery.data?.selectedRunId ?? null
+  const activeRunId = control.data?.activeRunId ?? runsQuery.data?.activeRunId ?? null
+  const availableRuns = runsQuery.data?.runs ?? []
+
   const data = perf.data
   const summary = data?.summary
   const health = data?.health
@@ -72,33 +88,113 @@ export function Dashboard() {
         title="Paper desk"
         subtitle="BTC 5-minute straddle-plus-lean, held to redeem. Every number is the loop's own paper tape."
         actions={
-          <div className="flex items-center gap-2">
-            <Badge tone={running ? 'success' : 'neutral'} dot>
-              {running ? 'Running' : 'Stopped'}
-            </Badge>
-            <Badge tone="warning">Paper only</Badge>
-            <Button
-              variant={running ? 'secondary' : 'primary'}
-              size="sm"
-              loading={start.isPending || stop.isPending}
-              onClick={() =>
-                running
-                  ? stop.mutate(undefined, { onSuccess: () => toast('Bot stopped') })
-                  : start.mutate(undefined, {
-                      onSuccess: (result) =>
-                        toast(result.reason === 'already-running' ? 'Bot already running' : 'Paper bot started'),
+          <div className="flex flex-wrap items-center gap-2">
+            {availableRuns.length > 0 && (
+              <div className="flex items-center gap-1.5 rounded-pill border border-subtle bg-subtle px-2.5 py-1 text-[12px]">
+                <History className="size-3.5 text-muted" />
+                <span className="text-muted font-medium">Session:</span>
+                <select
+                  value={selectedRunId ?? ''}
+                  onChange={(e) => {
+                    const val = e.target.value || null
+                    selectRun.mutate(val, {
+                      onSuccess: (res) => {
+                        toast(res.isViewOnly ? `Loaded past run (View-Only)` : 'Switched to live session')
+                      },
                     })
-              }
-            >
-              {running ? <Pause /> : <Play />}
-              {running ? 'Stop bot' : 'Start bot'}
-            </Button>
-            <Button variant="ghost" size="icon-sm" aria-label="Reset bot" onClick={() => setConfirmReset(true)}>
-              <RotateCcw />
-            </Button>
+                  }}
+                  className="bg-transparent font-mono text-[11.5px] font-semibold text-fg outline-none cursor-pointer"
+                >
+                  <option value="">Live session</option>
+                  {availableRuns.map((r) => (
+                    <option key={r.runId} value={r.runId}>
+                      {r.runId} ({r.windowsCount ?? 0}w{r.status ? ` - ${r.status}` : ''})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {isViewOnly ? (
+              <Badge tone="warning" dot>
+                View only (past run)
+              </Badge>
+            ) : (
+              <Badge tone={running ? 'success' : 'neutral'} dot>
+                {running ? 'Running' : 'Stopped'}
+              </Badge>
+            )}
+            <Badge tone="warning">Paper only</Badge>
+
+            {!isViewOnly ? (
+              <>
+                <Button
+                  variant={running ? 'secondary' : 'primary'}
+                  size="sm"
+                  loading={start.isPending || stop.isPending}
+                  onClick={() =>
+                    running
+                      ? stop.mutate(undefined, { onSuccess: () => toast('Bot stopped') })
+                      : start.mutate(undefined, {
+                          onSuccess: (result) =>
+                            toast(result.reason === 'already-running' ? 'Bot already running' : 'Paper bot started'),
+                        })
+                  }
+                >
+                  {running ? <Pause /> : <Play />}
+                  {running ? 'Stop bot' : 'Start bot'}
+                </Button>
+                <Button variant="ghost" size="icon-sm" aria-label="Reset bot" onClick={() => setConfirmReset(true)}>
+                  <RotateCcw />
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() =>
+                  selectRun.mutate(null, {
+                    onSuccess: () => toast('Returned to live session'),
+                  })
+                }
+              >
+                Return to Live
+              </Button>
+            )}
           </div>
         }
       />
+
+      {isViewOnly && (
+        <Card className="mt-4 border-warning/40 bg-warning-soft/30 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <span className="grid size-9 shrink-0 place-items-center rounded-tile bg-warning-soft text-warning">
+                <History className="size-4.5" />
+              </span>
+              <div>
+                <p className="text-[13.5px] font-semibold text-warning-strong">
+                  Viewing Historical Run: <code className="font-mono">{selectedRunId}</code>
+                </p>
+                <p className="text-[12.5px] text-muted">
+                  Bot controls are disabled in view-only mode to prevent overwriting historical records.
+                </p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() =>
+                selectRun.mutate(null, {
+                  onSuccess: () => toast('Returned to live session'),
+                })
+              }
+            >
+              Back to Live Run
+            </Button>
+          </div>
+        </Card>
+      )}
 
       {perf.isError && (
         <Card className="mt-4 p-5">
