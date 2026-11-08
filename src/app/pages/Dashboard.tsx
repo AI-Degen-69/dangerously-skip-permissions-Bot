@@ -23,6 +23,7 @@ import {
   useBotControl,
   useBotPerf,
   useBotRuns,
+  useRedeemBot,
   useResetBot,
   useResumeRun,
   useSelectRun,
@@ -74,6 +75,7 @@ export function Dashboard() {
   const resumeRun = useResumeRun()
   const stop = useStopBot()
   const reset = useResetBot()
+  const redeem = useRedeemBot()
   const toast = useToast()
   const [confirmReset, setConfirmReset] = useState(false)
   const [hoveredSlug, setHoveredSlug] = useState<string | null>(null)
@@ -639,14 +641,40 @@ export function Dashboard() {
           {summary && (
             <div className="mt-4 pt-2">
               {(data?.redeem.count ?? 0) > 0 ? (
-                <div className="rounded-tile border border-warning/30 bg-warning-soft/30 p-2.5 text-[11.5px]">
-                  <div className="flex items-center justify-between font-medium text-warning-strong">
-                    <span>{data?.redeem.count} unredeemed windows</span>
-                    <span>{usd(data?.redeem.payoutUsd ?? 0)}</span>
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-tile border border-warning/30 bg-warning-soft/30 p-3 text-[11.5px]">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 font-medium text-warning-strong">
+                      <span>
+                        {data?.redeem.count} unredeemed {data?.redeem.count === 1 ? 'window' : 'windows'}
+                      </span>
+                      <span>•</span>
+                      <span>{usd(data?.redeem.payoutUsd ?? 0)}</span>
+                    </div>
+                    <p className="mt-0.5 text-[11px] leading-tight text-muted">
+                      Claim payouts into your run session records or run <code className="font-mono text-[10.5px]">python bot/redeem.py</code>.
+                    </p>
                   </div>
-                  <p className="mt-0.5 text-[11px] leading-tight text-muted">
-                    Run <code className="font-mono text-[10.5px]">python bot/redeem.py</code> to claim payouts.
-                  </p>
+                  {!isViewOnly && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      loading={redeem.isPending}
+                      onClick={() =>
+                        redeem.mutate(undefined, {
+                          onSuccess: (res) =>
+                            toast(
+                              res.redeemedCount > 0
+                                ? `Redeemed ${res.redeemedCount} winning ${res.redeemedCount === 1 ? 'window' : 'windows'} (${usd(res.payoutUsd)})`
+                                : 'All windows marked clean',
+                            ),
+                          onError: (err) =>
+                            toast(err instanceof Error ? err.message : 'Failed to redeem'),
+                        })
+                      }
+                    >
+                      Redeem all
+                    </Button>
+                  )}
                 </div>
               ) : (
                 <div className="flex items-center justify-between rounded-tile border border-line bg-surface-2/30 px-3 py-2 text-[11.5px] text-muted">
@@ -796,7 +824,7 @@ export function Dashboard() {
                       )}
                     </td>
                     <td className="py-2.5 text-muted">
-                      {window.pending ? '—' : window.redeemed ? 'claimed' : 'due'}
+                      {window.pending ? '—' : (window.payoutUsd ?? 0) <= 0 ? '—' : window.redeemed ? 'claimed' : 'due'}
                     </td>
                   </tr>
                 ))}
