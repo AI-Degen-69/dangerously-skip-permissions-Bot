@@ -46,7 +46,7 @@ if ($targetPids.Count -gt 0) {
             }
         }
 
-        $portOccupied = Get-NetTCPConnection -LocalPort 8789 -State Listen -ErrorAction SilentlyContinue
+        $portOccupied = Get-NetTCPConnection -LocalPort 8789 -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.OwningProcess -gt 0 }
 
         if (-not $stillAlive -and -not $portOccupied) {
             Write-Host "Verified: previous instance terminated and port 8789 released."
