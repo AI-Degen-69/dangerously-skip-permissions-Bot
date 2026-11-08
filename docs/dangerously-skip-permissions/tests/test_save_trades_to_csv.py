@@ -24,9 +24,11 @@ SCRIPT_SPEC.loader.exec_module(SCRIPT)
 
 
 class FakeResponse:
-    def __init__(self, payload=None, error=None):
+    def __init__(self, payload=None, error=None, status_code=200, text=""):
         self.payload = payload
         self.error = error
+        self.status_code = status_code
+        self.text = text
 
     def raise_for_status(self):
         if self.error is not None:
@@ -137,6 +139,157 @@ class SaveTradesToCsvTests(unittest.TestCase):
                 SCRIPT.fetch_24h_activity(
                     now=datetime.datetime(2026, 11, 7, tzinfo=datetime.timezone.utc)
                 )
+
+    def test_clean_user_input(self):
+        self.assertEqual(SCRIPT.clean_user_input("tokor"), "tokor")
+        self.assertEqual(SCRIPT.clean_user_input("@tokor"), "tokor")
+        self.assertEqual(SCRIPT.clean_user_input("https://polymarket.com/@tokor"), "tokor")
+        self.assertEqual(SCRIPT.clean_user_input("https://polymarket.com/tokor"), "tokor")
+        self.assertEqual(
+            SCRIPT.clean_user_input("0xa19cbababc312f9df185e49d7004c249ed1ade6b"),
+            "0xa19cbababc312f9df185e49d7004c249ed1ade6b",
+        )
+
+    def test_resolve_user_address_from_evm_address(self):
+        addr = "0xa19cbababc312f9df185e49d7004c249ed1ade6b"
+        profile_json = {"name": "Tokor", "proxyWallet": addr}
+        with patch.object(
+            SCRIPT.requests,
+            "get",
+            return_value=FakeResponse(profile_json, status_code=200),
+        ):
+            resolved, name = SCRIPT.resolve_user_address(addr)
+
+        self.assertEqual(resolved, addr.lower())
+        self.assertEqual(name, "Tokor")
+
+    def test_resolve_user_address_from_username(self):
+        html_payload = r'{"state":{"data":{"proxyWallet":"0xa19cbababc312f9df185e49d7004c249ed1ade6b","name":"Tokor"}}}'
+        profile_json = {"name": "Tokor", "proxyWallet": "0xa19cbababc312f9df185e49d7004c249ed1ade6b"}
+        with patch.object(
+            SCRIPT.requests,
+            "get",
+            side_effect=[
+                FakeResponse(status_code=200, text=html_payload),
+                FakeResponse(profile_json, status_code=200),
+            ],
+        ):
+            resolved, name = SCRIPT.resolve_user_address("tokor")
+
+        self.assertEqual(resolved, "0xa19cbababc312f9df185e49d7004c249ed1ade6b")
+        self.assertEqual(name, "Tokor")
+
+    def test_get_window_meta(self):
+        slot, dur = SCRIPT.get_window_meta("btc-updown-5m-1794068700")
+        self.assertEqual(slot, 1794068700)
+        self.assertEqual(dur, 300)
+
+        slot15, dur15 = SCRIPT.get_window_meta("eth-updown-15m-1794068700")
+        self.assertEqual(slot15, 1794068700)
+        self.assertEqual(dur15, 900)
+
+        self.assertIsNone(SCRIPT.get_window_meta("will-solana-reach-120"))
+
+    def test_cut_tail_markets(self):
+        # 3 windows:
+        # 1. Oldest: slot 1000, dur 300 (ends 1300), but start_ts is 1100 -> partially pulled!
+        # 2. Middle: slot 1300, dur 300 (ends 1600) -> completely enclosed!
+        # 3. Newest: slot 1600, dur 300 (ends 1900), but end_ts is 1700 -> not completed!
+        records = [
+            {
+                "Event_Slug": "btc-updown-5m-1000",
+                "Timestamp_UTC": "2026-11-07T00:19:00+00:00",
+                "timestamp": 1140,
+                "Type": "TRADE",
+            },
+            {
+                "Event_Slug": "btc-updown-5m-1300",
+                "Timestamp_UTC": "2026-11-07T00:22:00+00:00",
+                "timestamp": 1320,
+                "Type": "TRADE",
+            },
+            {
+                "Event_Slug": "btc-updown-5m-1600",
+                "Timestamp_UTC": "2026-11-07T00:27:00+00:00",
+                "timestamp": 1620,
+                "Type": "TRADE",
+            },
+        ]
+        start_ts = 1100
+        end_ts = 1700
+        cleaned, removed = SCRIPT.cut_tail_markets(
+            records, start_ts=start_ts, end_ts=end_ts, now_ts=1700
+        )
+        self.assertEqual(len(removed), 2)
+        self.assertEqual(len(cleaned), 1)
+        self.assertEqual(cleaned[0]["Event_Slug"], "btc-updown-5m-1300")
+
+    def test_fetch_24h_activity_snapping_to_window(self):
+        # Unaligned now (e.g. 18:02:45 UTC) should snap down to 18:00:00 (multiple of 300)
+        unaligned_now = datetime.datetime(2026, 11, 7, 18, 2, 45, tzinfo=datetime.timezone.utc)
+        expected_end = int(datetime.datetime(2026, 11, 7, 18, 0, 0, tzinfo=datetime.timezone.utc).timestamp())
+        page = {
+            "data": [],
+            "pagination": {"next_cursor": None},
+        }
+        with patch.object(
+            SCRIPT.requests,
+            "get",
+            return_value=FakeResponse(page),
+        ) as get:
+            SCRIPT.fetch_24h_activity(now=unaligned_now, snap_to_window=True)
+
+        params = get.call_args_list[0].kwargs["params"]
+        self.assertEqual(params["end"], expected_end)
+        self.assertEqual(params["end"] - params["start"], 86_400)
+
+    def test_parse_date_input_date_only(self):
+        now = datetime.datetime(2026, 11, 8, 12, 0, tzinfo=datetime.timezone.utc)
+
+        # 06/11 (DD/MM) -> starts from 07/11, 00:00 to get whole 24 hours of 06/11
+        dt1 = SCRIPT.parse_date_input("06/11", now=now)
+        self.assertEqual(dt1, datetime.datetime(2026, 11, 7, 0, 0, tzinfo=datetime.timezone.utc))
+
+        # 06/11/2026 -> 07/11/2026 00:00
+        dt2 = SCRIPT.parse_date_input("06/11/2026", now=now)
+        self.assertEqual(dt2, datetime.datetime(2026, 11, 7, 0, 0, tzinfo=datetime.timezone.utc))
+
+        # 2026-11-06 -> 2026-11-07 00:00
+        dt3 = SCRIPT.parse_date_input("2026-11-06", now=now)
+        self.assertEqual(dt3, datetime.datetime(2026, 11, 7, 0, 0, tzinfo=datetime.timezone.utc))
+
+        # Default / now
+        dt_now = SCRIPT.parse_date_input("now", now=now)
+        self.assertEqual(dt_now, now)
+        dt_none = SCRIPT.parse_date_input(None, now=now)
+        self.assertEqual(dt_none, now)
+
+    def test_parse_date_input_with_time(self):
+        now = datetime.datetime(2026, 11, 8, 12, 0, tzinfo=datetime.timezone.utc)
+        dt = SCRIPT.parse_date_input("06/11/2026 15:30", now=now)
+        self.assertEqual(dt, datetime.datetime(2026, 11, 6, 15, 30, tzinfo=datetime.timezone.utc))
+
+    def test_parse_date_input_invalid_format(self):
+        with self.assertRaises(ValueError):
+            SCRIPT.parse_date_input("invalid-date-string")
+
+    def test_fetch_24h_activity_with_date_string(self):
+        page = {
+            "data": [],
+            "pagination": {"next_cursor": None},
+        }
+        with patch.object(
+            SCRIPT.requests,
+            "get",
+            return_value=FakeResponse(page),
+        ) as get:
+            SCRIPT.fetch_24h_activity(now="06/11")
+
+        params = get.call_args_list[0].kwargs["params"]
+        # 06/11 -> end_ts should be 2026-11-07 00:00:00 UTC
+        expected_end = int(datetime.datetime(2026, 11, 7, 0, 0, tzinfo=datetime.timezone.utc).timestamp())
+        self.assertEqual(params["end"], expected_end)
+        self.assertEqual(params["end"] - params["start"], 86_400)
 
 
 if __name__ == "__main__":
