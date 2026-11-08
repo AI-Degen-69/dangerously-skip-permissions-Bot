@@ -34,6 +34,7 @@ from bot import constants as C
 from bot.discovery import WINDOW_S, current_slot, get_window
 from bot.risk import RiskState, assert_single_window, check_window, clip_shares, heartbeat
 from bot.signal import LeanSignal
+from bot.ws import LiveBookStreamer
 
 RUNS_DIR = Path("bot/paper_runs")
 STATE_PATH = Path("bot/state.json")
@@ -65,10 +66,15 @@ def log_event(kind: str, reason: str, slug: str | None = None, **kw) -> None:
         f.write(json.dumps(rec) + "\n")
 
 
-def microprice_lean(c: PublicClient, up_id: str, down_id: str) -> LeanSignal:
+def microprice_lean(c: PublicClient, up_id: str, down_id: str, streamer: LiveBookStreamer | None = None) -> LeanSignal:
     """Lean from live book microprice. Neutral when the book is unusable."""
     if load_cfg().get("entry", {}).get("leanSource", "microprice") == "dumb":
         return LeanSignal(lean=0.0, confidence=0.0, source="dumb")
+    if streamer is not None:
+        try:
+            return streamer.get_lean(up_id, down_id)
+        except Exception:
+            pass
     try:
         up_mid = float(c.get_midpoint(token_id=up_id))
         down_mid = float(c.get_midpoint(token_id=down_id))
@@ -81,15 +87,19 @@ def microprice_lean(c: PublicClient, up_id: str, down_id: str) -> LeanSignal:
     return LeanSignal(lean=lean, confidence=confidence, source="book-microprice")
 
 
-def live_buy_price(c: PublicClient, token_id: str) -> float | None:
+def live_buy_price(c: PublicClient, token_id: str, streamer: LiveBookStreamer | None = None) -> float | None:
     """Best executable BUY price, or None when the book has no usable ask.
 
-    The CLOB answers 0 for a side with no asks (a decided market, or a thin
-    late book). An earlier version recorded those as $0.00 fills — 91 of the
-    92 landed in M4 and inflated that bucket. A quote at 0 means "no
-    liquidity", never a free buy, so reject it at the source rather than
-    trusting config to filter it out later.
+    Queries the in-memory WebSocket streamer first. Falls back to REST when
+    the streamer is unavailable or has no ask.
     """
+    if streamer is not None:
+        try:
+            px = streamer.get_buy_price(token_id)
+            if px is not None and 0.0 < px <= 1.0:
+                return px
+        except Exception:
+            pass
     try:
         px = float(c.get_price(token_id=token_id, side="BUY"))
     except Exception:
@@ -99,12 +109,30 @@ def live_buy_price(c: PublicClient, token_id: str) -> float | None:
     return px
 
 
-def write_state(slug: str, end_ms: int, started_ms: int, fills: list[dict], lean: LeanSignal) -> None:
+def write_state(
+    slug: str,
+    end_ms: int,
+    started_ms: int,
+    fills: list[dict],
+    lean: LeanSignal,
+    ws_status: dict | None = None,
+    recent_ticks: list[dict] | None = None,
+) -> None:
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    STATE_PATH.write_text(json.dumps({
-        "slug": slug, "endMs": end_ms, "startedAtMs": started_ms,
-        "updatedAtMs": int(time.time() * 1000), "fills": fills,
-        "lean": lean.lean, "leanSource": lean.source}))
+    payload = {
+        "slug": slug,
+        "endMs": end_ms,
+        "startedAtMs": started_ms,
+        "updatedAtMs": int(time.time() * 1000),
+        "fills": fills,
+        "lean": lean.lean,
+        "leanSource": lean.source,
+    }
+    if ws_status is not None:
+        payload["ws"] = ws_status
+    if recent_ticks is not None:
+        payload["recentTicks"] = recent_ticks
+    STATE_PATH.write_text(json.dumps(payload))
 
 
 def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool = True) -> dict:
@@ -129,85 +157,116 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
     end_ms = (slot + WINDOW_S) * 1000
     started_ms = int(time.time() * 1000)
 
+    streamer = LiveBookStreamer(
+        up_token_id=spec.up_token_id,
+        down_token_id=spec.down_token_id,
+        rest_fallback_client=c,
+    )
+    streamer.start()
+    stop_sync = threading.Event()
+
+    def _sync_loop():
+        while not stop_sync.is_set():
+            try:
+                if STATE_PATH.exists():
+                    st = json.loads(STATE_PATH.read_text())
+                    st["updatedAtMs"] = int(time.time() * 1000)
+                    st["ws"] = streamer.get_status()
+                    st["recentTicks"] = streamer.get_recent_ticks(30)
+                    STATE_PATH.write_text(json.dumps(st))
+            except (OSError, json.JSONDecodeError):
+                pass
+            stop_sync.wait(1.0)
+
+    sync_thread = threading.Thread(target=_sync_loop, daemon=True, name="WSS-StateSync")
+    sync_thread.start()
+
     def log(msg: str) -> None:
         if verbose:
             print(f"[{slug}] {msg}", flush=True)
 
-    # --- open: first touch at ~T+13s (median), hedge leg +15s (median) ---
-    now = int(datetime.now(timezone.utc).timestamp())
-    open_at = slot + open_delay
-    if now < open_at:
-        time.sleep(open_at - now)
-    lean = microprice_lean(c, spec.up_token_id, spec.down_token_id)
-    first_up = lean.lean >= 0
-    for outcome, tid in (("Up" if first_up else "Down", spec.up_token_id if first_up else spec.down_token_id),
-                         ("Down" if first_up else "Up", spec.down_token_id if first_up else spec.up_token_id)):
-        px = live_buy_price(c, tid)
-        if px is None:
-            log_event("skip", "no-liquidity", slug, side=outcome, detail={"side": outcome})
-            continue
-        if px < min_fill:
-            log_event("skip", "dust-quote", slug, side=outcome,
-                      detail={"side": outcome, "price": px})
-            continue
-        if outcome != ("Up" if first_up else "Down"):
-            time.sleep(hedge_delay)  # hedge leg
-            lean = microprice_lean(c, spec.up_token_id, spec.down_token_id)
-        if check_window(len(fills), cost, state):
-            break
-        shares = clip_shares(clip_default)
-        fills.append({"minute": 0, "ts": int(time.time() * 1000), "outcome": outcome,
-                      "price": px, "shares": shares, "usd": round(px * shares, 2)})
-        cost += px * shares
-        log_event("entry", "straddle-open" if len(fills) == 1 else "hedge-leg", slug,
-                  side=outcome, detail={"price": px, "shares": shares, "lean": round(lean.lean, 2)})
-        log(f"open {outcome} {shares:.0f} @ {px:.3f}")
-        write_state(slug, end_ms, started_ms, fills, lean)
-
-    # --- work M1-M3 + M4 snipe: distribute remaining fills over time left ---
-    end = slot + WINDOW_S - stop_before  # stop before close
-    while True:
+    try:
+        # --- open: first touch at ~T+13s (median), hedge leg +15s (median) ---
         now = int(datetime.now(timezone.utc).timestamp())
-        if now >= end or len(fills) >= target_total:
-            break
-        if check_window(len(fills), cost, state):
-            break
-        lean = microprice_lean(c, spec.up_token_id, spec.down_token_id)
-        minute = min(max((now - slot) // 60, 0), 4)
-        up_bias = 0.5 + lean.lean * 0.25 * (0.5 + 0.5 * lean.confidence)
-        up_side = ((len(fills) + minute) % 2 == 0 and up_bias >= 0.5) or (up_bias > 0.65 and len(fills) % 3 != 0)
-        if lean.lean < 0:
-            up_side = not up_side
-        outcome = "Up" if up_side else "Down"
-        tid = spec.up_token_id if up_side else spec.down_token_id
-        px = live_buy_price(c, tid)
-        if px is None:
-            heartbeat()
-            time.sleep(5)
-            continue
-        if px < min_fill:
-            log(f"M{minute} {outcome} dust {px:.3f} — skipped")
-            heartbeat()
-            time.sleep(5)
-            continue
-        # M4 snipe: only take extremes late (matches CSV: extremes only in M4)
-        if minute < 4 and (px <= 0.15 or px >= 0.85) and len(fills) % 4 != 0:
-            heartbeat()
-            time.sleep(5)
-            continue
-        shares = clip_shares(clip_default if len(fills) % clip_nth == 0 else median_shares)
-        shares = min(shares, max_shares)
-        fills.append({"minute": minute, "ts": int(time.time() * 1000), "outcome": outcome,
-                      "price": px, "shares": shares, "usd": round(px * shares, 2)})
-        cost += px * shares
-        if len(fills) % 10 == 0:
-            log_event("hold", "thesis-intact", slug, side=outcome,
-                      detail={"bid": px, "fills": len(fills)})
-        log(f"M{minute} {outcome} {shares:.1f} @ {px:.3f} (lean {lean.lean:+.2f})")
-        write_state(slug, end_ms, started_ms, fills, lean)
-        left = end - int(datetime.now(timezone.utc).timestamp())
-        remaining = target_total - len(fills)
-        time.sleep(max(2.0, min(20.0, left / max(remaining, 1))))
+        open_at = slot + open_delay
+        if now < open_at:
+            time.sleep(open_at - now)
+        lean = microprice_lean(c, spec.up_token_id, spec.down_token_id, streamer=streamer)
+        first_up = lean.lean >= 0
+        for outcome, tid in (("Up" if first_up else "Down", spec.up_token_id if first_up else spec.down_token_id),
+                             ("Down" if first_up else "Up", spec.down_token_id if first_up else spec.up_token_id)):
+            px = live_buy_price(c, tid, streamer=streamer)
+            if px is None:
+                log_event("skip", "no-liquidity", slug, side=outcome, detail={"side": outcome})
+                continue
+            if px < min_fill:
+                log_event("skip", "dust-quote", slug, side=outcome,
+                          detail={"side": outcome, "price": px})
+                continue
+            if outcome != ("Up" if first_up else "Down"):
+                time.sleep(hedge_delay)  # hedge leg
+                lean = microprice_lean(c, spec.up_token_id, spec.down_token_id, streamer=streamer)
+            if check_window(len(fills), cost, state):
+                break
+            shares = clip_shares(clip_default)
+            fills.append({"minute": 0, "ts": int(time.time() * 1000), "outcome": outcome,
+                          "price": px, "shares": shares, "usd": round(px * shares, 2)})
+            cost += px * shares
+            log_event("entry", "straddle-open" if len(fills) == 1 else "hedge-leg", slug,
+                      side=outcome, detail={"price": px, "shares": shares, "lean": round(lean.lean, 2)})
+            log(f"open {outcome} {shares:.0f} @ {px:.3f}")
+            write_state(slug, end_ms, started_ms, fills, lean,
+                        ws_status=streamer.get_status(), recent_ticks=streamer.get_recent_ticks(30))
+
+        # --- work M1-M3 + M4 snipe: distribute remaining fills over time left ---
+        end = slot + WINDOW_S - stop_before  # stop before close
+        while True:
+            now = int(datetime.now(timezone.utc).timestamp())
+            if now >= end or len(fills) >= target_total:
+                break
+            if check_window(len(fills), cost, state):
+                break
+            lean = microprice_lean(c, spec.up_token_id, spec.down_token_id, streamer=streamer)
+            minute = min(max((now - slot) // 60, 0), 4)
+            up_bias = 0.5 + lean.lean * 0.25 * (0.5 + 0.5 * lean.confidence)
+            up_side = ((len(fills) + minute) % 2 == 0 and up_bias >= 0.5) or (up_bias > 0.65 and len(fills) % 3 != 0)
+            if lean.lean < 0:
+                up_side = not up_side
+            outcome = "Up" if up_side else "Down"
+            tid = spec.up_token_id if up_side else spec.down_token_id
+            px = live_buy_price(c, tid, streamer=streamer)
+            if px is None:
+                heartbeat()
+                time.sleep(5)
+                continue
+            if px < min_fill:
+                log(f"M{minute} {outcome} dust {px:.3f} — skipped")
+                heartbeat()
+                time.sleep(5)
+                continue
+            # M4 snipe: only take extremes late (matches CSV: extremes only in M4)
+            if minute < 4 and (px <= 0.15 or px >= 0.85) and len(fills) % 4 != 0:
+                heartbeat()
+                time.sleep(5)
+                continue
+            shares = clip_shares(clip_default if len(fills) % clip_nth == 0 else median_shares)
+            shares = min(shares, max_shares)
+            fills.append({"minute": minute, "ts": int(time.time() * 1000), "outcome": outcome,
+                          "price": px, "shares": shares, "usd": round(px * shares, 2)})
+            cost += px * shares
+            if len(fills) % 10 == 0:
+                log_event("hold", "thesis-intact", slug, side=outcome,
+                          detail={"bid": px, "fills": len(fills)})
+            log(f"M{minute} {outcome} {shares:.1f} @ {px:.3f} (lean {lean.lean:+.2f})")
+            write_state(slug, end_ms, started_ms, fills, lean,
+                        ws_status=streamer.get_status(), recent_ticks=streamer.get_recent_ticks(30))
+            left = end - int(datetime.now(timezone.utc).timestamp())
+            remaining = target_total - len(fills)
+            time.sleep(max(2.0, min(20.0, left / max(remaining, 1))))
+    finally:
+        stop_sync.set()
+        sync_thread.join(timeout=1.0)
+        streamer.stop()
 
     # --- close: write a pending run file, settle in background, NEVER block next window ---
     result = {"event_slug": slug, "market": spec.question or slug, "trades": len(fills),
