@@ -365,6 +365,8 @@ def live_markets(cfg: dict) -> list[dict]:
             "spreadCents": round(spread * 100, 1) if spread is not None else None,
             "secondsRemaining": remaining, "verdict": verdict,
             "oddsHistory": list(hist),
+            "lean": curr_state.get("lean") if (curr_state and curr_state.get("slug") == slug) else None,
+            "leanSource": curr_state.get("leanSource") if (curr_state and curr_state.get("slug") == slug) else None,
         })
     if len(_ODDS_HISTORY) > 10 or len(_WINDOW_SPEC_CACHE) > 10:
         active_slugs = {f"btc-updown-5m-{s}" for s in visible_slots()}
@@ -481,6 +483,8 @@ def snapshot() -> dict:
                    "minEdge": 0, "feeRate": 0, "profitTargetCents": 100},
         "killSwitch": kills, "newsBlocked": False,
         "feed": {"price": None, "updatedAtMs": None, "history": []},
+        "lean": (st or {}).get("lean"),
+        "leanSource": (st or {}).get("leanSource"),
         "markets": markets, "positions": positions,
         "ws": (st or {}).get("ws") or {
             "state": "disconnected" if not loop_running() else "connecting",
