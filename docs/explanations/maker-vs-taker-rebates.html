@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Polymarket CLOB: Maker vs Taker Rebates & Economics Explained</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #111827;
+      --card-border: #1f2937;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --primary: #3b82f6;
+      --maker-color: #10b981;
+      --maker-bg: rgba(16, 185, 129, 0.1);
+      --taker-color: #f59e0b;
+      --taker-bg: rgba(245, 158, 11, 0.1);
+      --accent: #8b5cf6;
+      --danger: #ef4444;
+      --code-bg: #030712;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.6;
+      padding: 2rem 1rem;
+    }
+
+    .container {
+      max-width: 1080px;
+      margin: 0 auto;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 3rem;
+      padding-bottom: 2rem;
+      border-bottom: 1px solid var(--card-border);
+    }
+
+    h1 {
+      font-size: 2.4rem;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      margin-bottom: 0.75rem;
+      background: linear-gradient(to right, #60a5fa, #a78bfa, #f472b6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .subtitle {
+      font-size: 1.15rem;
+      color: var(--text-muted);
+      max-width: 750px;
+      margin: 0 auto;
+    }
+
+    .card-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      margin-bottom: 2.5rem;
+    }
+
+    @media (max-width: 768px) {
+      .card-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 1.75rem;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card.maker {
+      border-top: 4px solid var(--maker-color);
+    }
+
+    .card.taker {
+      border-top: 4px solid var(--taker-color);
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 1rem;
+    }
+
+    .badge-maker {
+      background: var(--maker-bg);
+      color: var(--maker-color);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .badge-taker {
+      background: var(--taker-bg);
+      color: var(--taker-color);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+
+    h2 {
+      font-size: 1.6rem;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    h3 {
+      font-size: 1.2rem;
+      margin-top: 1.25rem;
+      margin-bottom: 0.5rem;
+      color: #e5e7eb;
+    }
+
+    p {
+      color: #d1d5db;
+      margin-bottom: 1rem;
+    }
+
+    ul {
+      list-style-type: none;
+      padding-left: 0;
+      margin-bottom: 1rem;
+    }
+
+    li {
+      position: relative;
+      padding-left: 1.5rem;
+      margin-bottom: 0.5rem;
+      color: #d1d5db;
+    }
+
+    li::before {
+      content: "•";
+      position: absolute;
+      left: 0.5rem;
+      color: var(--primary);
+      font-weight: bold;
+    }
+
+    .diagram-section {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 2rem;
+      margin-bottom: 2.5rem;
+    }
+
+    .diagram-container {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+      margin-top: 1.5rem;
+    }
+
+    .orderbook-visual {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--code-bg);
+      border: 1px solid #1f2937;
+      border-radius: 8px;
+      padding: 1.5rem;
+      position: relative;
+    }
+
+    .book-column {
+      flex: 1;
+      text-align: center;
+    }
+
+    .book-level {
+      padding: 0.5rem;
+      margin: 0.25rem 0;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 0.9rem;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .ask-level {
+      background: rgba(239, 68, 68, 0.15);
+      color: #fca5a5;
+      border-left: 3px solid #ef4444;
+    }
+
+    .bid-level {
+      background: rgba(16, 185, 129, 0.15);
+      color: #6ee7b7;
+      border-left: 3px solid #10b981;
+    }
+
+    .spread-divider {
+      padding: 0.75rem;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      border-top: 1px dashed var(--card-border);
+      border-bottom: 1px dashed var(--card-border);
+      margin: 0.5rem 0;
+    }
+
+    .action-arrow {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 0 1rem;
+      text-align: center;
+    }
+
+    .arrow-svg {
+      width: 100%;
+      height: 48px;
+    }
+
+    .table-container {
+      overflow-x: auto;
+      margin-top: 1.5rem;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.95rem;
+    }
+
+    th, td {
+      padding: 0.85rem 1rem;
+      border-bottom: 1px solid var(--card-border);
+    }
+
+    th {
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text-muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 0.8rem;
+      letter-spacing: 0.05em;
+    }
+
+    tr:hover {
+      background: rgba(255, 255, 255, 0.015);
+    }
+
+    .highlight-maker {
+      color: var(--maker-color);
+      font-weight: 600;
+    }
+
+    .highlight-taker {
+      color: var(--taker-color);
+      font-weight: 600;
+    }
+
+    .raw-data-box {
+      background: var(--code-bg);
+      border: 1px solid #1f2937;
+      border-radius: 8px;
+      padding: 1.25rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.85rem;
+      color: #a5b4fc;
+      overflow-x: auto;
+      margin-top: 1rem;
+      line-height: 1.5;
+    }
+
+    .callout {
+      border-left: 4px solid var(--primary);
+      background: rgba(59, 130, 246, 0.08);
+      padding: 1.25rem;
+      border-radius: 0 8px 8px 0;
+      margin: 1.5rem 0;
+    }
+
+    .callout-title {
+      font-weight: 700;
+      color: #93c5fd;
+      margin-bottom: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Maker Rebates vs. Taker Rebates</h1>
+      <p class="subtitle">A visual breakdown of how liquidity rewards, order routing incentives, and fee structures work on Polymarket's Central Limit Order Book (CLOB).</p>
+    </header>
+
+    <!-- Side by Side Conceptual Cards -->
+    <div class="card-grid">
+      <!-- MAKER CARD -->
+      <div class="card maker">
+        <span class="badge badge-maker">Liquidity Provider (Passive)</span>
+        <h2>Maker Rebate</h2>
+        <p>A maker order <strong>adds liquidity</strong> to the orderbook. It sits as a resting limit order (bid below ask, or ask above bid) waiting for someone else to fill it.</p>
+        
+        <h3>Why exchanges pay Maker Rebates:</h3>
+        <ul>
+          <li><strong>Deep Orderbooks:</strong> Polymarket needs tight spreads so retail users don't suffer huge slippage.</li>
+          <li><strong>Adverse Selection Compensation:</strong> Makers carry inventory risk and risk getting filled right before price collapses.</li>
+          <li><strong>Polymarket Liquidity Rewards:</strong> Distributed daily based on order proximity to midpoint and size.</li>
+        </ul>
+
+        <div class="callout" style="border-color: var(--maker-color); background: var(--maker-bg);">
+          <div class="callout-title" style="color: var(--maker-color);">Typical Formula & Flow:</div>
+          <code>Rebate = Size &times; Spread Proximity Multiplier</code><br>
+          <small style="color: var(--text-muted);">Recorded on-chain as <strong>MAKER_REBATE</strong>.</small>
+        </div>
+      </div>
+
+      <!-- TAKER CARD -->
+      <div class="card taker">
+        <span class="badge badge-taker">Liquidity Consumer (Aggressor)</span>
+        <h2>Taker Rebate</h2>
+        <p>A taker order <strong>removes liquidity</strong> from the orderbook. It matches immediately with existing resting orders (using Market, FAK, or IOC orders).</p>
+        
+        <h3>Why exchanges pay Taker Rebates:</h3>
+        <ul>
+          <li><strong>Volume Tiers / VIP Incentives:</strong> High-frequency funds and top-tier bots (e.g. Obsidian Tier) generate massive fee volume for the protocol.</li>
+          <li><strong>Order Flow Kickbacks:</strong> Exchanges kick back a portion of fees or sponsor fee-free tiers with negative net fees to attract top active traders.</li>
+          <li><strong>Fee Subsidies:</strong> Certain fast binary markets (like 5m BTC) offer negative taker fee incentives to stimulate active turnover.</li>
+        </ul>
+
+        <div class="callout" style="border-color: var(--taker-color); background: var(--taker-bg);">
+          <div class="callout-title" style="color: var(--taker-color);">Observed in Bot Activity:</div>
+          <code>$2,210.23 TAKER_REBATE vs $282.58 MAKER_REBATE</code><br>
+          <small style="color: var(--text-muted);">Generated by high turnover sweeping the book.</small>
+        </div>
+      </div>
+    </div>
+
+    <!-- Visual Orderbook Mechanism -->
+    <div class="diagram-section">
+      <h2>Orderbook Interaction: Who Gets What?</h2>
+      <p>How an incoming trade matches against the CLOB and determines rebate classification:</p>
+      
+      <div class="diagram-container">
+        <div class="orderbook-visual">
+          <!-- Asks -->
+          <div class="book-column">
+            <div style="font-weight: 600; margin-bottom: 0.5rem; color: #f87171;">ASKS (Sell Orders)</div>
+            <div class="book-level ask-level"><span>$0.52</span><span>1,200 shares</span></div>
+            <div class="book-level ask-level"><span>$0.51</span><span>500 shares</span></div>
+            <div class="book-level ask-level"><span>$0.50</span><span>250 shares</span></div>
+            
+            <div class="spread-divider">0.02 Spread (Mid: $0.49)</div>
+            
+            <!-- Bids -->
+            <div class="book-level bid-level"><span>$0.48</span><span>400 shares</span></div>
+            <div class="book-level bid-level"><span>$0.47</span><span>850 shares</span></div>
+            <div class="book-level bid-level"><span>$0.46</span><span>2,000 shares</span></div>
+            <div style="font-weight: 600; margin-top: 0.5rem; color: #34d399;">BIDS (Buy Orders)</div>
+          </div>
+
+          <!-- Flow Action -->
+          <div class="action-arrow">
+            <svg class="arrow-svg" viewBox="0 0 180 60">
+              <defs>
+                <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#f59e0b" />
+                </marker>
+              </defs>
+              <line x1="10" y1="30" x2="160" y2="30" stroke="#f59e0b" stroke-width="4" stroke-dasharray="6,4" marker-end="url(#arrow)" />
+            </svg>
+            <div style="font-size: 0.85rem; color: var(--taker-color); font-weight: bold;">
+              TAKER SWEEPS ASKS<br>
+              <span style="font-size: 0.75rem; color: #9ca3af; font-weight: normal;">(Immediate match @ $0.50 & $0.51)</span>
+            </div>
+            <div style="font-size: 0.75rem; margin-top: 0.5rem; color: #6ee7b7;">
+              Resting Limit Makers at $0.50 get passively filled
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Comparative Table -->
+    <div class="diagram-section">
+      <h2>Comprehensive Comparison</h2>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Feature</th>
+              <th>Maker Rebate</th>
+              <th>Taker Rebate</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Primary Role</strong></td>
+              <td><span class="highlight-maker">Liquidity Provider</span> (Resting quote)</td>
+              <td><span class="highlight-taker">Liquidity Aggressor</span> (Immediate cross)</td>
+            </tr>
+            <tr>
+              <td><strong>Execution Order Type</strong></td>
+              <td><code>GTC</code> (Good 'Til Cancelled) with <code>post_only=true</code></td>
+              <td><code>FAK</code> (Fill-And-Kill), <code>FOK</code>, or Market</td>
+            </tr>
+            <tr>
+              <td><strong>Incentive Objective</strong></td>
+              <td>Encourages placing bids & asks close to mid to tighten spreads</td>
+              <td>Incentivizes massive trading volume and high-velocity turnover</td>
+            </tr>
+            <tr>
+              <td><strong>Execution Timing</strong></td>
+              <td>Passive (fills when a counterparty crosses your price)</td>
+              <td>Immediate (fills instantly at current best price)</td>
+            </tr>
+            <tr>
+              <td><strong>Risk Exposure</strong></td>
+              <td>Adverse selection & latency arbitrage by faster traders</td>
+              <td>Slippage across orderbook depth</td>
+            </tr>
+            <tr>
+              <td><strong>CSV / API Label</strong></td>
+              <td><code>Type: "MAKER_REBATE"</code></td>
+              <td><code>Type: "TAKER_REBATE"</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Real Account Evidence -->
+    <div class="diagram-section">
+      <h2>Evidence From Target Account Activity</h2>
+      <p>In the <code>dangerously-skip-permissions</code> 24h CSV activity log, both rebate types were recorded:</p>
+      
+      <div class="raw-data-box">
+// Row 8297: Passive maker liquidity incentive
+Type:            MAKER_REBATE
+Timestamp_UTC:   2026-11-07T00:45:10+00:00
+USD_Amount:      $282.5842
+Shares:          282.5842
+
+// Row 8622: High-volume taker turnover incentive (Obsidian Tier)
+Type:            TAKER_REBATE
+Timestamp_UTC:   2026-11-07T00:15:30+00:00
+USD_Amount:      $2,210.2280
+Shares:          2,210.2280
+      </div>
+
+      <p style="margin-top: 1rem; font-size: 0.95rem; color: var(--text-muted);">
+        The ratio (<strong>$2,210.23 Taker Rebates vs $282.58 Maker Rebates</strong>) conclusively shows this bot's revenue model relies on high-turnover taker sweeps with volume tier kickbacks rather than passive spread-making.
+      </p>
+    </div>
+
+  </div>
+</body>
+</html>
