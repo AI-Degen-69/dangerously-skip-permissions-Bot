@@ -486,7 +486,18 @@ export const useResumeBot = () =>
   useBotMutation(() => send<{ ok: boolean; killSwitch: boolean }>('/resume', 'POST'))
 
 export const useStartBot = () =>
-  useBotMutation(() => send<{ running: boolean; pid: number | null; reason?: string }>('/start', 'POST'))
+  useBotMutation((runId?: string | null) =>
+    send<{ running: boolean; pid: number | null; reason?: string; runId?: string }>('/start', 'POST', runId ? { runId } : {}),
+  )
+
+export const useResumeRun = () =>
+  useBotMutation((runId?: string | null) =>
+    send<{ running: boolean; pid: number | null; runId: string; activeRunId: string; isViewOnly: boolean }>(
+      '/resume-run',
+      'POST',
+      runId ? { runId } : {},
+    ),
+  )
 
 export const useStopBot = () =>
   useBotMutation(() => send<{ running: boolean; pid: number | null }>('/stop', 'POST'))

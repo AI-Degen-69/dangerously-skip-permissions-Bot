@@ -19,6 +19,7 @@ Usage:
 
 import argparse
 import json
+import shutil
 import sys
 import threading
 import time
@@ -34,7 +35,7 @@ from bot import constants as C
 from bot.discovery import WINDOW_S, current_slot, get_window
 from bot.executor import m_quotas, pick_side
 from bot.risk import RiskState, assert_single_window, check_window, clip_shares, heartbeat
-from bot.runs import RunWorkspace, get_active_run_id, make_run_id, set_active_run_id
+from bot.runs import RunWorkspace, find_run_id, get_active_run_id, make_run_id, set_active_run_id
 from bot.signal import LeanSignal
 from bot.ws import LiveBookStreamer
 
@@ -55,10 +56,29 @@ def get_current_workspace() -> RunWorkspace | None:
 def init_run_session(run_id: str | None = None, label: str = "default") -> RunWorkspace:
     """Initialize a run-scoped directory and update active run pointer."""
     global CURRENT_WORKSPACE
-    rid = run_id or make_run_id(mode="paper", label=label)
+    resolved_id = find_run_id(run_id) if run_id else None
+    rid = resolved_id or run_id or make_run_id(mode="paper", label=label)
     ws = RunWorkspace(rid)
     ws.init_workspace(config=load_cfg(), mode="paper", label=label)
     set_active_run_id(ws.run_id)
+    ws.sync_to_paper_runs(RUNS_DIR)
+    try:
+        ws.settle_pending_windows(RUNS_DIR)
+    except Exception:
+        pass
+    if ws.events_file.exists() and ws.events_file.stat().st_size > 0:
+        try:
+            shutil.copyfile(ws.events_file, EVENTS_PATH)
+        except Exception:
+            pass
+    if STATE_PATH.exists():
+        try:
+            st = json.loads(STATE_PATH.read_text())
+            end_ms = st.get("endMs")
+            if end_ms and int(end_ms) < int(time.time() * 1000):
+                STATE_PATH.unlink(missing_ok=True)
+        except Exception:
+            STATE_PATH.unlink(missing_ok=True)
     CURRENT_WORKSPACE = ws
     return ws
 

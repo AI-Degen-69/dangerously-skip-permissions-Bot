@@ -24,6 +24,7 @@ import {
   useBotPerf,
   useBotRuns,
   useResetBot,
+  useResumeRun,
   useSelectRun,
   useStartBot,
   useStopBot,
@@ -70,6 +71,7 @@ export function Dashboard() {
   const runsQuery = useBotRuns()
   const selectRun = useSelectRun()
   const start = useStartBot()
+  const resumeRun = useResumeRun()
   const stop = useStopBot()
   const reset = useResetBot()
   const toast = useToast()
@@ -161,17 +163,33 @@ export function Dashboard() {
                 </Button>
               </>
             ) : (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() =>
-                  selectRun.mutate(null, {
-                    onSuccess: () => toast('Returned to live session'),
-                  })
-                }
-              >
-                Return to Live
-              </Button>
+              <>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  loading={resumeRun.isPending}
+                  onClick={() =>
+                    resumeRun.mutate(selectedRunId, {
+                      onSuccess: (res) => toast(`Resumed run ${res.runId} on existing database`),
+                      onError: (err) => toast(`Failed to resume: ${(err as Error).message}`),
+                    })
+                  }
+                >
+                  <Play />
+                  Resume run
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() =>
+                    selectRun.mutate(null, {
+                      onSuccess: () => toast('Returned to live session'),
+                    })
+                  }
+                >
+                  Return to Live
+                </Button>
+              </>
             )}
           </div>
         }
@@ -189,21 +207,37 @@ export function Dashboard() {
                   Viewing Historical Run: <code className="font-mono">{selectedRunId}</code>
                 </p>
                 <p className="text-[12.5px] text-muted">
-                  Bot controls are disabled in view-only mode to prevent overwriting historical records.
+                  Inspecting past run telemetry and database. Click &ldquo;Resume run&rdquo; to restart the bot on this database and continue from where it stopped.
                 </p>
               </div>
             </div>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() =>
-                selectRun.mutate(null, {
-                  onSuccess: () => toast('Returned to live session'),
-                })
-              }
-            >
-              Back to Live Run
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="primary"
+                loading={resumeRun.isPending}
+                onClick={() =>
+                  resumeRun.mutate(selectedRunId, {
+                    onSuccess: (res) => toast(`Resumed run ${res.runId} on existing database`),
+                    onError: (err) => toast(`Failed to resume: ${(err as Error).message}`),
+                  })
+                }
+              >
+                <Play className="size-3.5" />
+                Resume run
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() =>
+                  selectRun.mutate(null, {
+                    onSuccess: () => toast('Returned to live session'),
+                  })
+                }
+              >
+                Back to Live Run
+              </Button>
+            </div>
           </div>
         </Card>
       )}

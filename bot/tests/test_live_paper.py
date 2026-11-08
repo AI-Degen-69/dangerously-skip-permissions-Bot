@@ -205,7 +205,7 @@ class LivePaperLoopTests(unittest.TestCase):
             '{"ts": "2026-11-08T07:35:01Z", "kind": "skip", "reason": "dust-quote"}\n'
             '{"ts": "2026-11-08T07:36:01Z", "kind": "entry", "reason": "m4-snipe"}\n'
         )
-        with patch.object(api, "EVENTS_PATH", ev_file), patch.object(api, "get_selected_run_id", return_value=None):
+        with patch.object(api, "EVENTS_PATH", ev_file), patch.object(api, "get_selected_run_id", return_value=None), patch.object(api, "resolve_run_workspace", return_value=None):
             items = api.events()
             self.assertEqual(len(items), 6)
             self.assertEqual(items[0]["reason"], "clip-fill")
