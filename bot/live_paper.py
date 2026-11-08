@@ -362,7 +362,7 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
 
     # --- close: write a pending run file, settle in background, NEVER block next window ---
     result = {"event_slug": slug, "market": spec.question or slug, "trades": len(fills),
-              "cost_usd": round(cost, 2), "payout_usd": 0.0, "net_usd": round(-cost, 2),
+              "cost_usd": round(cost, 2), "payout_usd": None, "net_usd": None,
               "winner": None, "pending": True, "fills": fills}
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     (RUNS_DIR / f"{slug}.json").write_text(json.dumps(result, indent=2))
@@ -411,11 +411,12 @@ def settle_slug(slug: str, snap: dict, origin: str | None, budget_s: int = 900) 
                 break
         except Exception as ex:
             print(f"[{slug}] resolve poll: {type(ex).__name__}", flush=True)
-    payout = 0.0
+    payout = None
+    net = None
     if winner:
         wshares = sum(f["shares"] for f in fills if f["outcome"] == winner)
         payout = round(wshares * 1.0, 2)
-    net = round(payout - cost, 2)
+        net = round(payout - cost, 2)
     result = {"event_slug": slug, "market": snap.get("market", slug), "trades": len(fills),
               "cost_usd": cost, "payout_usd": payout, "net_usd": net,
               "winner": winner, "resolvedAt": datetime.now(timezone.utc).isoformat(),

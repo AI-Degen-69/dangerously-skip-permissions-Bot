@@ -102,6 +102,10 @@ def runs() -> list[dict]:
     return out
 
 
+def is_pending(r: dict) -> bool:
+    return bool(r.get("pending")) or not r.get("winner")
+
+
 _LAST_STATE: tuple[str, dict] | None = None
 
 
@@ -329,44 +333,81 @@ def snapshot() -> dict:
     cfg = load_config()
     bankroll = float(cfg.get("bankrollUsd", BANKROLL_DEFAULT))
     all_runs = runs()
-    realized = round(sum(r.get("net_usd", 0) for r in all_runs), 2)
+    settled = [r for r in all_runs if not is_pending(r)]
+    realized = round(sum((r.get("net_usd") or 0.0) for r in settled), 2)
     st = state()
     positions: list[dict] = []
     exposure = 0.0
+    now_ms = int(time.time() * 1000)
     if st and st.get("fills"):
         by_side: dict[str, list[dict]] = {}
         for f in st["fills"]:
             by_side.setdefault(f["outcome"], []).append(f)
+        end_ms = int(st.get("endMs") or now_ms)
+        is_resolving = now_ms >= end_ms
         for side, fills in by_side.items():
             shares = sum(f["shares"] for f in fills)
             cost = sum(f["usd"] for f in fills)
             avg = cost / shares if shares else 0
-            # live mark = current BUY price of that side's token
             mark = None
-            try:
-                from bot.discovery import get_window
-                spec = get_window(client(), st["slug"])
-                tid = spec.up_token_id if side == "Up" else spec.down_token_id
-                mark = float(client().get_price(token_id=tid, side="BUY"))
-            except Exception:
-                mark = None
+            if not is_resolving:
+                try:
+                    from bot.discovery import get_window
+                    spec = get_window(client(), st["slug"])
+                    tid = spec.up_token_id if side == "Up" else spec.down_token_id
+                    mark_val = float(client().get_price(token_id=tid, side="BUY"))
+                    mark = mark_val if mark_val > 0 else None
+                except Exception:
+                    mark = None
             mv = round(mark * shares, 2) if mark is not None else None
             exposure += cost
             positions.append({
                 "id": f"{st['slug']}-{side}", "slug": st["slug"], "interval": "5m",
                 "side": side, "shares": round(shares, 2), "entryPrice": round(avg, 4),
                 "costUsd": round(cost, 2), "modelProb": 0.5, "edge": 0,
-                "entryAtMs": st.get("startedAtMs", int(time.time() * 1000)),
-                "endMs": st.get("endMs", int(time.time() * 1000)),
+                "entryAtMs": st.get("startedAtMs", now_ms),
+                "endMs": end_ms,
                 "bid": mark, "mark": mark, "markValueUsd": mv,
                 "unrealizedPnlUsd": round(mv - cost, 2) if mv is not None else None,
-                "secondsLeft": max(0, round(((st.get("endMs") or 0) - int(time.time() * 1000)) / 1000)),
+                "secondsLeft": max(0, round((end_ms - now_ms) / 1000)),
                 "stalledSec": None,
             })
     equity = round(bankroll + realized + sum(p["unrealizedPnlUsd"] or 0 for p in positions), 2)
     risk_cfg = cfg.get("risk", {})
     day_key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    today = [r for r in all_runs if r.get("event_slug", "").endswith(str(day_key)) ]  # best-effort
+    day_start_ts = int(datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+
+    def _run_ts(r: dict) -> int:
+        slug = str(r.get("event_slug", ""))
+        tail = slug.rsplit("-", 1)[-1]
+        return int(tail) if tail.isdigit() else 0
+
+    def _is_today(r: dict) -> bool:
+        ts = _run_ts(r)
+        if ts > 0:
+            return ts >= day_start_ts
+        return str(r.get("event_slug", "")).endswith(day_key)
+
+    today = [r for r in all_runs if _is_today(r)]
+    prior_settled = [r for r in settled if not _is_today(r)]
+    day_start_equity = round(bankroll + sum((r.get("net_usd") or 0.0) for r in prior_settled), 2)
+
+    cum_eq = bankroll
+    high_water = bankroll
+    for r in sorted(settled, key=_run_ts):
+        cum_eq = round(cum_eq + (r.get("net_usd") or 0.0), 2)
+        if cum_eq > high_water:
+            high_water = cum_eq
+    high_water = max(high_water, equity)
+
+    consecutive_losses = 0
+    for r in reversed(sorted(settled, key=_run_ts)):
+        net_val = r.get("net_usd")
+        if net_val is not None and net_val < 0:
+            consecutive_losses += 1
+        elif net_val is not None and net_val >= 0:
+            break
+
     kills = KILL_PATH.exists()
     try:
         markets = live_markets(cfg)
@@ -379,8 +420,8 @@ def snapshot() -> dict:
         "realizedPnlUsd": realized,
         "risk": {"dayKey": day_key, "tradesToday": len(today),
                  "tradesTodayByInterval": {"5m": len(today), "15m": 0},
-                 "consecutiveLosses": 0, "realizedPnlUsd": realized,
-                 "dayStartEquityUsd": bankroll, "highWaterEquityUsd": max(bankroll, equity),
+                 "consecutiveLosses": consecutive_losses, "realizedPnlUsd": realized,
+                 "dayStartEquityUsd": day_start_equity, "highWaterEquityUsd": high_water,
                  "halted": kills, "haltReason": "kill-switch-file-present" if kills else None,
                  "cooldownUntilMs": 0},
         "limits": {"maxTradesPerDay": 288, "maxConsecutiveLosses": 99,
@@ -406,8 +447,8 @@ def kpis() -> dict:
     cfg = load_config()
     bankroll = float(cfg.get("bankrollUsd", BANKROLL_DEFAULT))
     all_runs = sorted(runs(), key=lambda r: r.get("event_slug", ""))
-    settled = [r for r in all_runs if not r.get("pending")]
-    nets = [r.get("net_usd", 0) for r in settled]
+    settled = [r for r in all_runs if not is_pending(r)]
+    nets = [r.get("net_usd", 0) for r in settled if r.get("net_usd") is not None]
     wins = [n for n in nets if n > 0]
     losses = [-n for n in nets if n <= 0]
     cum, series = 0.0, []
@@ -417,11 +458,11 @@ def kpis() -> dict:
             ts = int(r["event_slug"].split("-")[-1]) * 1000
         except Exception:
             ts = 0
-        if r.get("pending"):
+        if is_pending(r):
             pnl = None
             reason = "awaiting-resolution"
         else:
-            cum = round(cum + r.get("net_usd", 0), 2)
+            cum = round(cum + (r.get("net_usd") or 0.0), 2)
             pnl = r.get("net_usd")
             reason = "paper-resolve"
         series.append({"ts": ts, "equity": round(bankroll + cum, 2)})
@@ -477,7 +518,7 @@ def _window_row(r: dict) -> dict:
     fills = r.get("fills") or []
     cost = _num(r.get("cost_usd"))
     payout = _num(r.get("payout_usd"))
-    pending = bool(r.get("pending")) or not r.get("winner")
+    pending = is_pending(r)
     try:
         start_ms = int(str(r.get("event_slug", "")).split("-")[-1]) * 1000
     except (TypeError, ValueError):
@@ -722,8 +763,8 @@ def trades_view(limit: int) -> list[dict]:
                         "reason": "paper-fill", "mode": "paper"})
         out.append({"ts": rts, "kind": "settle",
                     "slug": r.get("event_slug"), "interval": "5m",
-                    "pnlUsd": None if r.get("pending") else r.get("net_usd"),
-                    "reason": "awaiting-resolution" if r.get("pending") else "paper-resolve",
+                    "pnlUsd": None if is_pending(r) else r.get("net_usd"),
+                    "reason": "awaiting-resolution" if is_pending(r) else "paper-resolve",
                     "mode": "paper",
                     "detail": {"winner": r.get("winner"), "fills": r.get("trades")}})
 

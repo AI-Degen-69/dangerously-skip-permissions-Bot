@@ -339,6 +339,73 @@ class TradesViewLiveTests(unittest.TestCase):
         self.assertIn("btc-updown-5m-100", slugs)
         self.assertIn("btc-updown-5m-400", slugs)
 
+    def test_snapshot_excludes_unresolved_windows_from_loss_and_drawdown(self):
+        import bot.api as api
+        from bot.runs import RunWorkspace
+
+        with tempfile.TemporaryDirectory() as td:
+            ws = RunWorkspace("run_test", runs_root=Path(td))
+            ws.init_workspace()
+            # Pending window with $487.79 cost awaiting resolution
+            (ws.windows_dir / "btc-updown-5m-1794082800.json").write_text(json.dumps({
+                "event_slug": "btc-updown-5m-1794082800",
+                "market": "btc-updown-5m-1794082800",
+                "trades": 45,
+                "cost_usd": 487.79,
+                "payout_usd": None,
+                "net_usd": -487.79,  # even if old format had -cost
+                "winner": None,
+                "pending": True,
+                "fills": [{"minute": 0, "outcome": "Up", "price": 0.5, "shares": 500, "usd": 250.0}],
+            }))
+            with patch.object(api, "resolve_run_workspace", return_value=ws), \
+                 patch.object(api, "state", return_value=None), \
+                 patch.object(api, "is_view_only", return_value=False), \
+                 patch.object(api, "live_markets", return_value=[]):
+                snap = api.snapshot()
+
+        bankroll = snap["bankrollUsd"]
+        self.assertEqual(snap["realizedPnlUsd"], 0.0)
+        self.assertEqual(snap["equityUsd"], bankroll)
+        self.assertEqual(snap["risk"]["dayStartEquityUsd"], bankroll)
+        self.assertEqual(snap["risk"]["highWaterEquityUsd"], bankroll)
+        self.assertEqual(snap["risk"]["consecutiveLosses"], 0)
+
+        # Frontend calculations:
+        day_loss = max(0, snap["risk"]["dayStartEquityUsd"] - snap["equityUsd"])
+        drawdown = max(0, snap["risk"]["highWaterEquityUsd"] - snap["equityUsd"])
+        self.assertEqual(day_loss, 0.0)
+        self.assertEqual(drawdown, 0.0)
+
+    def test_snapshot_counts_trades_today_from_unix_timestamps(self):
+        import bot.api as api
+        from bot.runs import RunWorkspace
+        from datetime import datetime, timezone
+
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        with tempfile.TemporaryDirectory() as td:
+            ws = RunWorkspace("run_test", runs_root=Path(td))
+            ws.init_workspace()
+            (ws.windows_dir / f"btc-updown-5m-{now_ts}.json").write_text(json.dumps({
+                "event_slug": f"btc-updown-5m-{now_ts}",
+                "market": f"btc-updown-5m-{now_ts}",
+                "trades": 10,
+                "cost_usd": 50.0,
+                "payout_usd": 60.0,
+                "net_usd": 10.0,
+                "winner": "Up",
+            }))
+            with patch.object(api, "resolve_run_workspace", return_value=ws), \
+                 patch.object(api, "state", return_value=None), \
+                 patch.object(api, "is_view_only", return_value=False), \
+                 patch.object(api, "live_markets", return_value=[]):
+                snap = api.snapshot()
+
+        self.assertEqual(snap["risk"]["tradesToday"], 1)
+        self.assertEqual(snap["realizedPnlUsd"], 10.0)
+        self.assertEqual(snap["equityUsd"], snap["bankrollUsd"] + 10.0)
+        self.assertEqual(snap["risk"]["consecutiveLosses"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
