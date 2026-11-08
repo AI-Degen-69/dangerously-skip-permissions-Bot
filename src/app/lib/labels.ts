@@ -44,7 +44,7 @@ export const LABELS: Record<string, string> = {
   'entries-resumed': 'Entries resumed',
   'window-trade-cap': 'Window trade cap reached (500)',
   'window-cost-cap': 'Window cost cap reached ($4,000)',
-  'daily-loss-cap': 'Daily loss limit hit — halted ($500)',
+  'daily-loss-cap': 'Daily loss limit hit — halted',
   'daily-loss-limit': 'Daily loss limit hit — halted',
   'single-window-locked': 'Another window already active',
   'single-window-violation': 'Single-window conflict — window refused',
