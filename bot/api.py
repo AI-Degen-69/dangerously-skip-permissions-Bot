@@ -84,7 +84,12 @@ def is_view_only() -> bool:
 
 def runs() -> list[dict]:
     sel = get_selected_run_id()
-    ws = resolve_run_workspace(sel)
+    if sel:
+        ws = resolve_run_workspace(sel)
+        if ws and ws.windows_dir.exists():
+            return ws.list_windows()
+        return []
+    ws = resolve_run_workspace(None)
     if ws and ws.windows_dir.exists():
         ws_runs = ws.list_windows()
         if ws_runs:
@@ -110,9 +115,13 @@ def state() -> dict | None:
 
 def events(limit: int = 150) -> list[dict]:
     sel = get_selected_run_id()
-    ws = resolve_run_workspace(sel)
-    target_path = ws.events_file if (ws and ws.events_file.exists()) else EVENTS_PATH
-    if not target_path.exists():
+    if sel:
+        ws = resolve_run_workspace(sel)
+        target_path = ws.events_file if (ws and ws.events_file.exists()) else None
+    else:
+        ws = resolve_run_workspace(None)
+        target_path = ws.events_file if (ws and ws.events_file.exists()) else EVENTS_PATH
+    if not target_path or not target_path.exists():
         return []
     lines = target_path.read_text().splitlines()[-max(limit, 1):]
     out = []
@@ -866,12 +875,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"running": False, "pid": None})
             elif self.path == "/api/bot/select-run":
                 target_run_id = body.get("runId")
-                if target_run_id:
-                    ws = RunWorkspace(target_run_id)
-                    if not ws.exists():
-                        self._send(404, {"error": f"Run {target_run_id} not found"})
+                if target_run_id and isinstance(target_run_id, str) and target_run_id.strip():
+                    raw_id = target_run_id.strip()
+                    try:
+                        ws = RunWorkspace(raw_id)
+                    except ValueError:
+                        self._send(400, {"error": f"Invalid runId: {raw_id}"})
                         return
-                    set_selected_run_id(target_run_id)
+                    if not ws.exists():
+                        self._send(404, {"error": f"Run {raw_id} not found"})
+                        return
+                    set_selected_run_id(ws.run_id)
                 else:
                     # Switch back to live
                     set_selected_run_id(None)

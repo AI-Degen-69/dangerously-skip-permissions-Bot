@@ -64,6 +64,19 @@ class TestRunScopedSessions(unittest.TestCase):
         api.set_selected_run_id("run_past_050")
         self.assertTrue(api.is_view_only())
 
+    def test_path_traversal_protection(self):
+        # Traversal characters should be stripped or rejected
+        with self.assertRaises(ValueError):
+            RunWorkspace("../..", runs_root=self.tmp)
+
+        with self.assertRaises(ValueError):
+            RunWorkspace("", runs_root=self.tmp)
+
+        # Sanitized ID should stay within runs_root
+        ws = RunWorkspace("run_valid_1", runs_root=self.tmp)
+        self.assertEqual(ws.run_id, "run_valid_1")
+        self.assertTrue(str(ws.root).startswith(str(self.tmp.resolve())))
+
 
 if __name__ == "__main__":
     unittest.main()

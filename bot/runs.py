@@ -69,8 +69,16 @@ class RunWorkspace:
     """Manages files and paths for a single execution or archived run."""
 
     def __init__(self, run_id: str, runs_root: Path = RUNS_DIR):
-        self.run_id = run_id
-        self.root = runs_root / run_id
+        clean_id = "".join(c for c in str(run_id) if c.isalnum() or c in ("-", "_"))
+        if not clean_id:
+            raise ValueError(f"Invalid run_id: {run_id!r}")
+        self.run_id = clean_id
+        self.runs_root = runs_root
+        self.root = (runs_root / self.run_id).resolve()
+        try:
+            self.root.relative_to(runs_root.resolve())
+        except ValueError:
+            raise ValueError(f"run_id {run_id!r} resolves outside runs_root")
         self.windows_dir = self.root / "windows"
         self.meta_file = self.root / "run_meta.json"
         self.events_file = self.root / "events.jsonl"
@@ -195,7 +203,10 @@ def resolve_run_workspace(run_id: str | None = None) -> RunWorkspace | None:
         if all_runs:
             target_id = all_runs[0]["runId"]
     if target_id:
-        ws = RunWorkspace(target_id)
-        if ws.exists() or run_id is not None:
-            return ws
+        try:
+            ws = RunWorkspace(target_id)
+            if ws.exists() or run_id is not None:
+                return ws
+        except ValueError:
+            return None
     return None

@@ -70,7 +70,6 @@ export function Dashboard() {
   const isViewOnly = control.data?.isViewOnly ?? false
   const running = (control.data?.running ?? false) && !isViewOnly
   const selectedRunId = control.data?.selectedRunId ?? runsQuery.data?.selectedRunId ?? null
-  const activeRunId = control.data?.activeRunId ?? runsQuery.data?.activeRunId ?? null
   const availableRuns = runsQuery.data?.runs ?? []
 
   const data = perf.data
