@@ -193,6 +193,11 @@ class LivePaperLoopTests(unittest.TestCase):
         self.assertEqual(det["lossUsd"], 520.0)
         self.assertEqual(det["capUsd"], 500.0)
 
+        st2 = RiskState(daily_loss_usd=-1550.0)
+        det2 = _risk_detail("killed: daily loss cap $1500.0", st2, cost=100.0, trades=10)
+        self.assertEqual(det2["lossUsd"], 1550.0)
+        self.assertEqual(det2["capUsd"], 1500.0)
+
     def test_api_events_normalizes_legacy_reasons(self):
         import bot.api as api
 

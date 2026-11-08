@@ -30,6 +30,7 @@ export interface RiskState {
   tradesTodayByInterval: Record<Interval, number>
   consecutiveLosses: number
   realizedPnlUsd: number
+  dailyLossUsd?: number
   dayStartEquityUsd: number
   highWaterEquityUsd: number
   halted: boolean
@@ -110,6 +111,7 @@ export interface BotSnapshot {
     maxTradesPerDay: number
     maxConsecutiveLosses: number
     dailyLossLimitPct: number
+    dailyLossCapUsd?: number
     maxDrawdownPct: number
     maxConcurrentPositions: number
     minEdge: number
@@ -343,6 +345,9 @@ export interface BotConfigView {
     maxTradesPerDay: number
     maxConsecutiveLosses: number
     dailyLossLimitPct: number
+    dailyLossCapUsd?: number
+    maxUsdPerWindow?: number
+    maxFillsPerWindow?: number
     maxDrawdownPct: number
     cooldownAfterLossSec: number
   }

@@ -1,5 +1,6 @@
 import csv
 import datetime
+import io
 import importlib.util
 import pathlib
 import sys
@@ -39,6 +40,59 @@ class FakeResponse:
 
 
 class SaveTradesToCsvTests(unittest.TestCase):
+    def test_streams_progress_for_each_activity_page(self):
+        page_one = {
+            "data": [{"timestamp": 1794074400}],
+            "pagination": {"next_cursor": "next-page"},
+        }
+        page_two = {
+            "data": [{"timestamp": 1794074399}, {"timestamp": 1794074398}],
+            "pagination": {"next_cursor": None},
+        }
+
+        events = []
+
+        class FlushTrackingStream(io.StringIO):
+            def __init__(self):
+                super().__init__()
+                self.flush_count = 0
+
+            def flush(self):
+                self.flush_count += 1
+                events.append(("flush", len(events)))
+                super().flush()
+
+        stream = FlushTrackingStream()
+        target = datetime.datetime(2026, 11, 7, 18, 0, tzinfo=datetime.timezone.utc)
+
+        def mock_get(*args, **kwargs):
+            events.append(("get", len(events)))
+            get_count = len([e for e in events if e[0] == "get"])
+            return FakeResponse(page_one if get_count == 1 else page_two)
+
+        with patch("sys.stdout", stream), patch.object(
+            SCRIPT.requests,
+            "get",
+            side_effect=mock_get,
+        ):
+            SCRIPT.fetch_activity(
+                now=target,
+                window_days=7,
+                snap_to_window=False,
+                cut_tails=False,
+            )
+
+        progress_lines = [
+            line for line in stream.getvalue().splitlines() if line.startswith("Page ")
+        ]
+        self.assertEqual(
+            progress_lines,
+            ["Page 1: 1 records; 1 total", "Page 2: 2 records; 3 total"],
+        )
+        self.assertEqual(stream.flush_count, 2)
+        # Verify that page 1 was flushed before page 2 was requested
+        self.assertEqual([e[0] for e in events], ["get", "flush", "get", "flush"])
+
     def test_fetches_all_activity_pages_with_fixed_24_hour_bounds(self):
         now = datetime.datetime(2026, 11, 7, 18, 0, tzinfo=datetime.timezone.utc)
         first_page = {
@@ -89,7 +143,7 @@ class SaveTradesToCsvTests(unittest.TestCase):
             "get",
             side_effect=[FakeResponse(first_page), FakeResponse(second_page)],
         ) as get:
-            records = SCRIPT.fetch_24h_activity(now=now)
+            records = SCRIPT.fetch_activity(now=now, window_days=1)
 
         self.assertEqual([record["Type"] for record in records], ["TRADE", "REDEEM"])
         self.assertEqual(get.call_count, 2)
@@ -107,8 +161,7 @@ class SaveTradesToCsvTests(unittest.TestCase):
     def test_writes_header_for_empty_activity(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = pathlib.Path(temp_dir) / "empty.csv"
-            with patch.object(SCRIPT, "OUTPUT_CSV", str(output_path)):
-                SCRIPT.save_to_csv([])
+            SCRIPT.save_to_csv([], str(output_path))
 
             with output_path.open(encoding="utf-8", newline="") as output_file:
                 reader = csv.reader(output_file)
@@ -118,6 +171,119 @@ class SaveTradesToCsvTests(unittest.TestCase):
         self.assertIn("Type", header)
         self.assertEqual(rows, [])
 
+    def test_default_output_filename_uses_username_and_trade_date(self):
+        target_dt = datetime.datetime(2026, 11, 7, 0, 0, tzinfo=datetime.timezone.utc)
+
+        filename = SCRIPT.default_output_filename(
+            "Test User", target_dt, window_days=1, date_only=True
+        )
+
+        self.assertEqual(filename, "test_user_2026-11-06.csv")
+
+    def test_fetches_requested_window_lengths(self):
+        target = datetime.datetime(2026, 11, 7, 18, 0, tzinfo=datetime.timezone.utc)
+        page = {"data": [], "pagination": {"next_cursor": None}}
+
+        for window_days in (1, 7):
+            with self.subTest(window_days=window_days):
+                with patch.object(
+                    SCRIPT.requests, "get", return_value=FakeResponse(page)
+                ) as get:
+                    SCRIPT.fetch_activity(
+                        now=target,
+                        window_days=window_days,
+                        snap_to_window=False,
+                        cut_tails=False,
+                    )
+
+                params = get.call_args.kwargs["params"]
+                self.assertEqual(params["end"], int(target.timestamp()))
+                self.assertEqual(
+                    params["end"] - params["start"],
+                    window_days * 24 * 60 * 60,
+                )
+
+    def test_fetches_seven_days_ending_after_requested_date(self):
+        page = {"data": [], "pagination": {"next_cursor": None}}
+
+        with patch.object(
+            SCRIPT.requests, "get", return_value=FakeResponse(page)
+        ) as get:
+            SCRIPT.fetch_activity(
+                now="06/11/2026",
+                window_days=7,
+                snap_to_window=False,
+                cut_tails=False,
+            )
+
+        params = get.call_args.kwargs["params"]
+        expected_end = int(
+            datetime.datetime(2026, 11, 7, tzinfo=datetime.timezone.utc).timestamp()
+        )
+        self.assertEqual(params["end"], expected_end)
+        self.assertEqual(params["end"] - params["start"], 7 * 24 * 60 * 60)
+
+    def test_rejects_unsupported_window_length(self):
+        with self.assertRaisesRegex(ValueError, "window_days must be 1 or 7"):
+            SCRIPT.fetch_activity(window_days=2)
+
+    def test_default_output_filename_includes_week_range(self):
+        target = datetime.datetime(2026, 11, 7, tzinfo=datetime.timezone.utc)
+
+        filename = SCRIPT.default_output_filename(
+            "Test User", target, window_days=7, date_only=True
+        )
+
+        self.assertEqual(filename, "test_user_2026-10-31_to_2026-11-06.csv")
+
+    def test_default_output_filename_keeps_single_day_shape(self):
+        target = datetime.datetime(2026, 11, 7, tzinfo=datetime.timezone.utc)
+
+        filename = SCRIPT.default_output_filename(
+            "Test User", target, window_days=1, date_only=True
+        )
+
+        self.assertEqual(filename, "test_user_2026-11-06.csv")
+
+    def test_default_output_filename_uses_target_utc_date_for_timestamp(self):
+        target = datetime.datetime(2026, 11, 7, 18, 0, tzinfo=datetime.timezone.utc)
+
+        filename = SCRIPT.default_output_filename(
+            "Test User", target, window_days=7, date_only=False
+        )
+
+        self.assertEqual(filename, "test_user_2026-10-31_to_2026-11-07.csv")
+
+    def test_main_preserves_custom_output_and_defaults_to_week(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = str(pathlib.Path(temp_dir) / "custom.csv")
+            with (
+                patch.object(
+                    SCRIPT,
+                    "resolve_user_address",
+                    return_value=(SCRIPT.USER_ADDRESS, "Test User"),
+                ),
+                patch.object(SCRIPT, "fetch_activity", return_value=[]) as fetch,
+                patch.object(SCRIPT, "save_to_csv") as save,
+                patch(
+                    "sys.argv",
+                    [
+                        str(SCRIPT_PATH),
+                        "--user",
+                        "Test User",
+                        "--date",
+                        "06/11/2026",
+                        "--output",
+                        output_path,
+                    ],
+                ),
+            ):
+                SCRIPT.main()
+
+        fetch.assert_called_once()
+        self.assertEqual(fetch.call_args.kwargs["window_days"], 7)
+        save.assert_called_once_with([], output_path=output_path)
+
     def test_propagates_http_errors(self):
         with patch.object(
             SCRIPT.requests,
@@ -125,7 +291,7 @@ class SaveTradesToCsvTests(unittest.TestCase):
             return_value=FakeResponse(error=requests.HTTPError("service unavailable")),
         ):
             with self.assertRaises(requests.HTTPError):
-                SCRIPT.fetch_24h_activity(
+                SCRIPT.fetch_activity(
                     now=datetime.datetime(2026, 11, 7, tzinfo=datetime.timezone.utc)
                 )
 
@@ -136,7 +302,7 @@ class SaveTradesToCsvTests(unittest.TestCase):
             return_value=FakeResponse({"data": [], "pagination": {}}),
         ):
             with self.assertRaisesRegex(ValueError, "missing next_cursor"):
-                SCRIPT.fetch_24h_activity(
+                SCRIPT.fetch_activity(
                     now=datetime.datetime(2026, 11, 7, tzinfo=datetime.timezone.utc)
                 )
 
@@ -224,7 +390,7 @@ class SaveTradesToCsvTests(unittest.TestCase):
         self.assertEqual(len(cleaned), 1)
         self.assertEqual(cleaned[0]["Event_Slug"], "btc-updown-5m-1300")
 
-    def test_fetch_24h_activity_snapping_to_window(self):
+    def test_fetch_activity_snapping_to_window(self):
         # Unaligned now (e.g. 18:02:45 UTC) should snap down to 18:00:00 (multiple of 300)
         unaligned_now = datetime.datetime(2026, 11, 7, 18, 2, 45, tzinfo=datetime.timezone.utc)
         expected_end = int(datetime.datetime(2026, 11, 7, 18, 0, 0, tzinfo=datetime.timezone.utc).timestamp())
@@ -237,7 +403,9 @@ class SaveTradesToCsvTests(unittest.TestCase):
             "get",
             return_value=FakeResponse(page),
         ) as get:
-            SCRIPT.fetch_24h_activity(now=unaligned_now, snap_to_window=True)
+            SCRIPT.fetch_activity(
+                now=unaligned_now, snap_to_window=True, window_days=1
+            )
 
         params = get.call_args_list[0].kwargs["params"]
         self.assertEqual(params["end"], expected_end)
@@ -273,7 +441,7 @@ class SaveTradesToCsvTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             SCRIPT.parse_date_input("invalid-date-string")
 
-    def test_fetch_24h_activity_with_date_string(self):
+    def test_fetch_activity_with_date_string(self):
         page = {
             "data": [],
             "pagination": {"next_cursor": None},
@@ -283,7 +451,7 @@ class SaveTradesToCsvTests(unittest.TestCase):
             "get",
             return_value=FakeResponse(page),
         ) as get:
-            SCRIPT.fetch_24h_activity(now="06/11")
+            SCRIPT.fetch_activity(now="06/11", window_days=1)
 
         params = get.call_args_list[0].kwargs["params"]
         # 06/11 -> end_ts should be 2026-11-07 00:00:00 UTC

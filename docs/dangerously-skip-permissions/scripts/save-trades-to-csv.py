@@ -13,7 +13,6 @@ BASE_URL = "https://data-api.polymarket.com/v2/activity"
 GAMMA_URL = "https://gamma-api.polymarket.com"
 DEFAULT_USERNAME = "dangerously-skip-permissions"
 USER_ADDRESS = "0xc53375ff94e96100f2b30a4b5775db35218d69a9"
-OUTPUT_CSV = "dangerously-skip-permissions_24h_trades.csv"
 PAGE_LIMIT = 100
 REQUEST_DELAY_SECONDS = 0.2
 REQUEST_TIMEOUT_SECONDS = 30
@@ -46,13 +45,13 @@ def parse_date_input(
 ) -> datetime.datetime:
     """
     Parses a date input into an end_dt (timezone-aware UTC) representing
-    the ceiling from which to fetch 24 hours backward.
+    the end boundary of the requested fetch window.
 
     Rules:
     - If None, empty, or 'now': returns now in UTC.
     - If date-only (e.g. '06/11', '06/11/2026', '2026-11-06'):
-      Starts from the end of that day (day + 1 at 00:00:00 UTC) to capture
-      the whole 24 hours of that date backward to day 00:00:00 UTC.
+      Returns the start of the following day (00:00:00 UTC), so the fetch
+      window includes the full requested date and the preceding days.
       Example: '06/11' (DD/MM) -> 07/11 00:00:00 UTC.
     - If datetime is specified (e.g. '06/11 15:30' or ISO): returns that exact datetime.
     """
@@ -405,17 +404,21 @@ def cut_tail_markets(
     return cleaned_records, removed_records
 
 
-def fetch_24h_activity(
+def fetch_activity(
     user_address: str | None = None,
     now: datetime.datetime | str | None = None,
     snap_to_window: bool = True,
     cut_tails: bool = True,
     verify_remote: bool = False,
-):
+    window_days: int = 7,
+) -> list[dict]:
     """
-    Fetches 24-hour activity from Polymarket Data API v2 backward from the end boundary.
+    Fetches one or seven days of activity backward from the end boundary.
     Supports user address resolution, target date parsing, full window alignment, and tail cutting.
     """
+    if window_days not in (1, 7):
+        raise ValueError("window_days must be 1 or 7")
+
     # Backward compatibility: if caller passed 'now' positionally as first arg
     if isinstance(user_address, datetime.datetime) or (
         isinstance(user_address, str)
@@ -440,17 +443,20 @@ def fetch_24h_activity(
         end_ts = (now_ts // WINDOW_SIZE_SECONDS) * WINDOW_SIZE_SECONDS
     else:
         end_ts = now_ts
-    start_ts = end_ts - 24 * 60 * 60
+    start_ts = end_ts - window_days * 24 * 60 * 60
 
     print(
         f"Fetching activity for {user_address} backward from "
         f"{datetime.datetime.fromtimestamp(end_ts, tz=UTC).isoformat()} "
-        f"to {datetime.datetime.fromtimestamp(start_ts, tz=UTC).isoformat()} (24-hour window)..."
+        f"to {datetime.datetime.fromtimestamp(start_ts, tz=UTC).isoformat()} "
+        f"({window_days}-day window)..."
     )
 
     records = []
     cursor = None
     seen_cursors = set()
+    page_number = 0
+    fetched_count = 0
 
     while True:
         params = {
@@ -517,6 +523,14 @@ def fetch_24h_activity(
                 }
             )
 
+        page_number += 1
+        fetched_count += len(page)
+        print(
+            f"Page {page_number}: {len(page)} records; "
+            f"{fetched_count} total",
+            flush=True,
+        )
+
         next_cursor = pagination["next_cursor"]
         if next_cursor is None:
             break
@@ -549,11 +563,8 @@ def fetch_24h_activity(
     return records
 
 
-def save_to_csv(records: list[dict], output_path: str | None = None):
+def save_to_csv(records: list[dict], output_path: str):
     """Saves activity records to a CSV file."""
-    if output_path is None:
-        output_path = OUTPUT_CSV
-
     with open(output_path, "w", newline="", encoding="utf-8") as output_file:
         writer = csv.DictWriter(output_file, fieldnames=CSV_FIELDS, extrasaction="ignore")
         writer.writeheader()
@@ -562,8 +573,32 @@ def save_to_csv(records: list[dict], output_path: str | None = None):
     print(f"Successfully saved {len(records)} activity records to '{output_path}'.")
 
 
+def default_output_filename(
+    display_name: str,
+    target_dt: datetime.datetime,
+    window_days: int,
+    date_only: bool,
+) -> str:
+    safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', display_name).lower()
+    target_date = target_dt.date()
+    if date_only:
+        target_date -= datetime.timedelta(days=1)
+
+    if window_days == 1:
+        return f"{safe_name}_{target_date:%Y-%m-%d}.csv"
+
+    start_date = (
+        target_date - datetime.timedelta(days=window_days - 1)
+        if date_only
+        else (target_dt - datetime.timedelta(days=window_days)).date()
+    )
+    return f"{safe_name}_{start_date:%Y-%m-%d}_to_{target_date:%Y-%m-%d}.csv"
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Save 24-hour Polymarket trade activity to CSV.")
+    parser = argparse.ArgumentParser(
+        description="Save Polymarket activity to CSV."
+    )
     parser.add_argument(
         "-u", "--user",
         help="Polymarket username, @handle, profile URL, or wallet address (e.g. 'Tokor' or '0xa19cb...')"
@@ -571,7 +606,17 @@ def main():
     parser.add_argument(
         "-d", "--date", "--start-date",
         dest="date",
-        help="Target date to fetch 24 hours backward from (e.g. '06/11' -> whole day of Nov 6, 'YYYY-MM-DD', or 'now'). Default: now"
+        help=(
+            "Target date/time ending the fetch window. A date-only value fetches "
+            "that full UTC date and preceding days; default: now"
+        )
+    )
+    parser.add_argument(
+        "--days",
+        type=int,
+        choices=(1, 7),
+        default=7,
+        help="Number of days to fetch (1 or 7; default: 7)",
     )
     parser.add_argument(
         "-o", "--output",
@@ -635,23 +680,30 @@ def main():
     if args.output:
         output_file = args.output
     else:
-        safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', display_name).lower()
-        if date_input and date_input.strip().lower() != "now":
-            date_label = (target_dt - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-            output_file = f"{safe_name}_{date_label}_24h_trades.csv"
-        else:
-            output_file = f"{safe_name}_24h_trades.csv"
+        normalized_date_input = date_input.strip()
+        date_only = (
+            normalized_date_input.lower() != "now"
+            and "T" not in normalized_date_input
+            and len(normalized_date_input.split()) == 1
+        )
+        output_file = default_output_filename(
+            display_name,
+            target_dt,
+            window_days=args.days,
+            date_only=date_only,
+        )
 
-    activity = fetch_24h_activity(
+    activity = fetch_activity(
         user_address=resolved_address,
         now=target_dt,
         snap_to_window=not args.no_snap,
         cut_tails=not args.no_cut_tails,
         verify_remote=args.verify_remote,
+        window_days=args.days,
     )
 
     if not activity:
-        print("No account activity found within the 24-hour window.")
+        print(f"No account activity found within the {args.days}-day window.")
     save_to_csv(activity, output_path=output_file)
 
 
