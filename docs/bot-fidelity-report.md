@@ -1,6 +1,6 @@
 # Paper Fidelity Report (Phase 5, 2026-11-07)
 
-Gate from `tasks/plan.md`: 288-window paper run must reproduce the frozen CSV
+Gate specification: 288-window paper run must reproduce the frozen CSV
 moments (45 median trades/market, both-sides rate, M0–M4 shape) before any live keys.
 
 ## Deterministic sim — `python bot/run_paper.py` (dumb lean, no network)
