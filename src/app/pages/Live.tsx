@@ -546,8 +546,8 @@ function WssStreamTape({ ws, ticks }: { ws?: WsStatus; ticks?: WsTick[] }) {
 
         <div className="rounded-card border border-line bg-surface-1 p-3.5">
           <div className="flex items-center justify-between">
-            <span className="flex items-center gap-1.5 text-[13px] font-semibold text-accent">
-              <span className="size-2 rounded-full bg-accent" /> Down Outcome Book
+            <span className="flex items-center gap-1.5 text-[13px] font-semibold text-danger">
+              <span className="size-2 rounded-full bg-danger" /> Down Outcome Book
             </span>
             <span className="text-[11.5px] text-faint">
               depth: {ws?.down_book?.bid_depth ?? 0}b / {ws?.down_book?.ask_depth ?? 0}a
@@ -609,7 +609,7 @@ function WssStreamTape({ ws, ticks }: { ws?: WsStatus; ticks?: WsTick[] }) {
                       </span>
                     </td>
                     <td className="py-1.5">
-                      <Badge tone={t.outcome === 'Up' ? 'success' : 'accent'} className="px-1.5 py-0 text-[10.5px]">
+                      <Badge tone={t.outcome === 'Up' ? 'success' : 'danger'} className="px-1.5 py-0 text-[10.5px]">
                         {t.outcome}
                       </Badge>
                     </td>

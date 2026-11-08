@@ -556,28 +556,37 @@ def watch_cli(slot: int | None = None, limit: int | None = None) -> None:
         nonlocal tick_count
         tick_count += 1
         age_ms = int((time.time() - tick.ts) * 1000)
-        outcome_color = "\033[32m" if tick.outcome == "Up" else "\033[35m"
+        outcome_color = "\033[32m" if tick.outcome == "Up" else "\033[31m"
         reset = "\033[0m"
+        outcome_padded = f"{tick.outcome:<4}"
+        outcome_str = f"{outcome_color}{outcome_padded}{reset}"
 
         if tick.event_type == "snapshot":
-            bid_s = f"{tick.best_bid:.2f}" if tick.best_bid is not None else "--"
-            ask_s = f"{tick.best_ask:.2f}" if tick.best_ask is not None else "--"
-            bid_sz = f" ({tick.bid_size:.0f} sh)" if tick.bid_size is not None else ""
-            ask_sz = f" ({tick.ask_size:.0f} sh)" if tick.ask_size is not None else ""
-            mid_s = f"{tick.midpoint:.3f}" if tick.midpoint is not None else "--"
+            bid_str = f"{tick.best_bid:>5.2f}" if tick.best_bid is not None else "   --"
+            ask_str = f"{tick.best_ask:>5.2f}" if tick.best_ask is not None else "   --"
+            bid_sz_str = f"({tick.bid_size:.0f} sh)" if tick.bid_size is not None else ""
+            ask_sz_str = f"({tick.ask_size:.0f} sh)" if tick.ask_size is not None else ""
+            bid_block = f"bid: \033[1m{bid_str}\033[0m {bid_sz_str:<12}"
+            ask_block = f"ask: \033[1m{ask_str}\033[0m {ask_sz_str:<12}"
+            mid_str = f"{tick.midpoint:>5.3f}" if tick.midpoint is not None else "  ---"
             print(
-                f"[{tick.time_str}] 📦 SNAPSHOT {outcome_color}{tick.outcome:<4}{reset} "
-                f"bid: \033[1m{bid_s}{bid_sz}\033[0m | ask: \033[1m{ask_s}{ask_sz}\033[0m | mid: \033[1m{mid_s}\033[0m"
+                f"[{tick.time_str}] 📦 SNAPSHOT {outcome_str} {bid_block} | {ask_block} | mid: \033[1m{mid_str}\033[0m"
             )
         else:
             side_color = "\033[32m" if str(tick.side).upper() in ("BUY", "BID") else "\033[31m"
-            side_str = f"{side_color}{tick.side or 'TICK':<4}{reset}"
-            px_str = f"{tick.price:.2f}" if tick.price is not None else "--"
-            sz_str = f"{tick.size:.1f}" if tick.size is not None else "--"
-            mid_s = f"{tick.midpoint:.3f}" if tick.midpoint is not None else "--"
+            raw_side = tick.side or "TICK"
+            side_padded = f"{raw_side:<4}"
+            side_str = f"{side_color}{side_padded}{reset}"
+            px_val = f"{tick.price:>5.2f}" if tick.price is not None else "   --"
+            px_str = f"\033[1m{px_val}\033[0m"
+            sz_val = f"{tick.size:.1f}" if tick.size is not None else "--"
+            size_block = f"(size: {sz_val})"
+            size_padded = f"{size_block:<18}"
+            mid_val = f"{tick.midpoint:>5.3f}" if tick.midpoint is not None else "  ---"
+            mid_str = f"\033[1m{mid_val}\033[0m"
+            age_str = f"{age_ms:>3}ms"
             print(
-                f"[{tick.time_str}] ⚡ TICK {outcome_color}{tick.outcome:<4}{reset} "
-                f"{side_str} {px_str} (size: {sz_str}) | mid: {mid_s} | age: {age_ms}ms"
+                f"[{tick.time_str}] ⚡ TICK {outcome_str} {side_str} {px_str} {size_padded} | mid: {mid_str} | age: {age_str}"
             )
 
         if limit is not None and tick_count >= limit:
