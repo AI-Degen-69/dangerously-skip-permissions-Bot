@@ -91,9 +91,7 @@ def runs() -> list[dict]:
         return []
     ws = resolve_run_workspace(None)
     if ws and ws.windows_dir.exists():
-        ws_runs = ws.list_windows()
-        if ws_runs:
-            return ws_runs
+        return ws.list_windows()
     out = []
     if RUNS_DIR.exists():
         for p in sorted(RUNS_DIR.glob("*.json")):
@@ -137,6 +135,14 @@ def log_event(kind: str, reason: str, **kw) -> None:
     rec = {"ts": utc_now_iso(), "kind": kind, "mode": "paper", "reason": reason, **kw}
     with EVENTS_PATH.open("a") as f:
         f.write(json.dumps(rec) + "\n")
+    ws = resolve_run_workspace(None)
+    if ws:
+        try:
+            ws.root.mkdir(parents=True, exist_ok=True)
+            with ws.events_file.open("a") as f:
+                f.write(json.dumps(rec) + "\n")
+        except Exception:
+            pass
 
 
 def _win_alive(pid: int) -> bool:
@@ -855,6 +861,9 @@ class Handler(BaseHTTPRequestHandler):
                 log_event("info", "loop-started", detail={"pid": proc.pid})
                 self._send(200, {"running": True, "pid": proc.pid})
             elif self.path == "/api/bot/stop":
+                if is_view_only():
+                    self._send(400, {"error": "Cannot stop bot while in view-only mode", "isViewOnly": True})
+                    return
                 pid = loop_running()
                 if pid:
                     try:
@@ -885,7 +894,10 @@ class Handler(BaseHTTPRequestHandler):
                     if not ws.exists():
                         self._send(404, {"error": f"Run {raw_id} not found"})
                         return
-                    set_selected_run_id(ws.run_id)
+                    if ws.run_id == get_active_run_id():
+                        set_selected_run_id(None)
+                    else:
+                        set_selected_run_id(ws.run_id)
                 else:
                     # Switch back to live
                     set_selected_run_id(None)
@@ -895,13 +907,23 @@ class Handler(BaseHTTPRequestHandler):
                     "isViewOnly": is_view_only(),
                 })
             elif self.path == "/api/bot/reset":
+                if is_view_only():
+                    self._send(400, {"error": "Cannot reset while in view-only mode", "isViewOnly": True})
+                    return
                 for p in RUNS_DIR.glob("*.json"):
                     p.unlink()
+                active_ws = resolve_run_workspace(None)
+                if active_ws and active_ws.windows_dir.exists():
+                    for p in active_ws.windows_dir.glob("*.json"):
+                        p.unlink(missing_ok=True)
                 for p in (STATE_PATH, EVENTS_PATH):
                     p.unlink(missing_ok=True)
                 log_event("risk", "paper-reset", detail={"bankrollUsd": load_config().get("bankrollUsd")})
                 self._send(200, {"bankrollUsd": load_config().get("bankrollUsd"), "resetAt": utc_now_iso()})
             elif self.path == "/api/bot/kill-switch":
+                if is_view_only():
+                    self._send(400, {"error": "Cannot toggle kill-switch while in view-only mode", "isViewOnly": True})
+                    return
                 if body.get("active"):
                     KILL_PATH.write_text(utc_now_iso())
                     log_event("risk", "kill-switch-file-present")
@@ -909,6 +931,9 @@ class Handler(BaseHTTPRequestHandler):
                     KILL_PATH.unlink(missing_ok=True)
                 self._send(200, {"killSwitch": KILL_PATH.exists()})
             elif self.path == "/api/bot/resume":
+                if is_view_only():
+                    self._send(400, {"error": "Cannot resume while in view-only mode", "isViewOnly": True})
+                    return
                 KILL_PATH.unlink(missing_ok=True)
                 log_event("info", "entries-resumed")
                 self._send(200, {"ok": True, "killSwitch": False})
@@ -918,6 +943,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(500, {"error": f"{type(ex).__name__}: {ex}"})
 
     def do_PUT(self):
+        if is_view_only():
+            self._send(400, {"error": "Cannot edit config while in view-only mode", "isViewOnly": True})
+            return
         if self.path != "/api/bot/config":
             self._send(404, {"error": "not found"})
             return

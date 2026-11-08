@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bot import api
+from bot import api, runs
 from bot.runs import (
     RunWorkspace,
     get_active_run_id,
@@ -20,8 +20,14 @@ class TestRunScopedSessions(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.orig_runs_dir = api.RUNS_DIR
+        self.orig_runs_root = runs.RUNS_DIR
+        self.orig_active_pointer = runs.ACTIVE_RUN_POINTER
+        runs.RUNS_DIR = self.tmp
+        runs.ACTIVE_RUN_POINTER = self.tmp / "active_run.json"
 
     def tearDown(self):
+        runs.RUNS_DIR = self.orig_runs_root
+        runs.ACTIVE_RUN_POINTER = self.orig_active_pointer
         shutil.rmtree(self.tmp, ignore_errors=True)
         api.set_selected_run_id(None)
         set_active_run_id(None)
@@ -76,6 +82,13 @@ class TestRunScopedSessions(unittest.TestCase):
         ws = RunWorkspace("run_valid_1", runs_root=self.tmp)
         self.assertEqual(ws.run_id, "run_valid_1")
         self.assertTrue(str(ws.root).startswith(str(self.tmp.resolve())))
+
+    def test_make_run_id_collision(self):
+        id1 = make_run_id(mode="paper", label="coll", runs_root=self.tmp)
+        (self.tmp / id1).mkdir(parents=True, exist_ok=True)
+        id2 = make_run_id(mode="paper", label="coll", runs_root=self.tmp)
+        self.assertNotEqual(id1, id2)
+        self.assertTrue(id2.startswith(id1))
 
 
 if __name__ == "__main__":

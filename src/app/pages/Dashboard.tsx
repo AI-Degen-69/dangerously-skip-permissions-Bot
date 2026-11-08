@@ -91,8 +91,10 @@ export function Dashboard() {
             {availableRuns.length > 0 && (
               <div className="flex items-center gap-1.5 rounded-pill border border-subtle bg-subtle px-2.5 py-1 text-[12px]">
                 <History className="size-3.5 text-muted" />
-                <span className="text-muted font-medium">Session:</span>
+                <label htmlFor="dashboard-session" className="text-muted font-medium cursor-pointer">Session:</label>
                 <select
+                  id="dashboard-session"
+                  aria-label="Paper trading session"
                   value={selectedRunId ?? ''}
                   onChange={(e) => {
                     const val = e.target.value || null

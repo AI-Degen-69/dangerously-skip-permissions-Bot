@@ -35,10 +35,16 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def make_run_id(mode: str = "paper", label: str = "default") -> str:
+def make_run_id(mode: str = "paper", label: str = "default", runs_root: Path = RUNS_DIR) -> str:
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     clean_label = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in label)
-    return f"run_{ts}_{mode}_{clean_label}"
+    base_id = f"run_{ts}_{mode}_{clean_label}"
+    candidate = base_id
+    counter = 1
+    while (runs_root / candidate).exists():
+        candidate = f"{base_id}_{counter}"
+        counter += 1
+    return candidate
 
 
 @dataclass

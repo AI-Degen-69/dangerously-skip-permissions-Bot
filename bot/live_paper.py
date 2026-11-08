@@ -56,7 +56,7 @@ def init_run_session(run_id: str | None = None, label: str = "default") -> RunWo
     rid = run_id or make_run_id(mode="paper", label=label)
     ws = RunWorkspace(rid)
     ws.init_workspace(config=load_cfg(), mode="paper", label=label)
-    set_active_run_id(rid)
+    set_active_run_id(ws.run_id)
     CURRENT_WORKSPACE = ws
     return ws
 
@@ -326,8 +326,8 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
         try:
             ws.windows_dir.mkdir(parents=True, exist_ok=True)
             (ws.windows_dir / f"{slug}.json").write_text(json.dumps(result, indent=2))
-        except Exception:
-            pass
+        except Exception as ex:
+            log(f"warning: failed to save {slug}.json to workspace {ws.run_id}: {ex}")
     try:
         STATE_PATH.unlink()
     except OSError:
@@ -429,11 +429,26 @@ def main() -> None:
     ws = init_run_session(run_id=args.run_id, label=args.label)
     print(f"session initialized: {ws.run_id}", flush=True)
 
+    def _sigterm_handler(signum, frame):
+        ws.finalize(status="interrupted")
+        sys.exit(0)
+
+    try:
+        import signal
+        signal.signal(signal.SIGTERM, _sigterm_handler)
+    except Exception:
+        pass
+
     if args.slot:
         try:
             trade_window(c, args.slot, args.origin or None)
-        finally:
             ws.finalize(status="completed")
+        except KeyboardInterrupt:
+            ws.finalize(status="interrupted")
+            raise
+        except Exception:
+            ws.finalize(status="failed")
+            raise
         return
     if args.once:
         slot = current_slot()
@@ -446,8 +461,13 @@ def main() -> None:
         wait_while_killed()
         try:
             trade_window(c, slot, args.origin or None)
-        finally:
             ws.finalize(status="completed")
+        except KeyboardInterrupt:
+            ws.finalize(status="interrupted")
+            raise
+        except Exception:
+            ws.finalize(status="failed")
+            raise
         return
     # --loop (default if nothing passed)
     try:

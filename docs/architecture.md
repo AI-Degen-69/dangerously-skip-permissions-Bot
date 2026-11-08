@@ -88,7 +88,7 @@ Designed as **zero live-risk / paper-only** (no private keys, loopback HTTP only
   * **Clipping**: Periodically adds clip sizes (`~30` shares) up to target limits (`~45` median fills/window, capped at 50 shares).
   * **Hold to Redeem**: Stops before window close (`15s`), lets the contract resolve, and credits $1/share on winning sides.
 * **`bot/ws.py` & `bot/signal.py`**: Low-latency streaming of Polymarket CLOB books and Binance spot prices to compute the microprice drift / lean direction.
-* **`bot/risk.py`**: Guardrails ensuring single-window execution, loss caps (`dailyLossCapUsd: 500`), max USD per window, heartbeat monitoring (`updatedAtMs`), and kill-switch verification.
+* **`bot/risk.py`**: Guardrails ensuring single-window execution, loss caps (`dailyLossCapUsd: 500` active when cumulative PnL breaches threshold), max USD per window, heartbeat monitoring (`updatedAtMs`), and kill-switch verification.
 * **`bot/reconcile.py` & `bot/redeem.py`**: Validates execution fidelity and settlement against frozen replay records of the target wallet.
 
 ---
