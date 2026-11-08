@@ -261,6 +261,7 @@ def live_markets(cfg: dict) -> list[dict]:
         start_ms, end_ms = s * 1000, (s + WINDOW_S) * 1000
         remaining = max(0, round((end_ms - now_ms) / 1000))
         elapsed = max(0, round((now_ms - start_ms) / 1000))
+        elapsed_sec = max(0.0, (now_ms - start_ms) / 1000.0)
         asks = [q["ask"] for q in quotes.values() if q["ask"] is not None]
         bids = [q["bid"] for q in quotes.values() if q["bid"] is not None]
         spread = (min(asks) - max(bids)) if asks and bids else None
@@ -275,7 +276,7 @@ def live_markets(cfg: dict) -> list[dict]:
         if remaining <= stop_before:
             verdict = {"action": "skip", "reason": "too-late-in-window",
                        "detail": {"remainingSec": remaining, "needsSec": stop_before}}
-        elif not has_fills and elapsed < open_delay:
+        elif not has_fills and elapsed_sec < open_delay:
             verdict = {"action": "skip", "reason": "opening-delay",
                        "detail": {"elapsedSec": elapsed, "needsSec": open_delay}}
         elif spread is not None and spread > 0.30:
@@ -284,7 +285,7 @@ def live_markets(cfg: dict) -> list[dict]:
         elif not asks:
             verdict = {"action": "skip", "reason": "no-liquidity", "detail": {"side": "both"}}
         elif fills_count == 1:
-            verdict = {"action": "enter", "reason": "hedge-leg",
+            verdict = {"action": "enter", "reason": "hedge-pending",
                        "detail": {"fills": fills_count}}
         elif fills_count >= 2:
             verdict = {"action": "enter", "reason": "working-fills",
@@ -1101,6 +1102,7 @@ class QuietThreadingHTTPServer(ThreadingHTTPServer):
 
 
 def main() -> None:
+    """Run loopback desk API server."""
     ap = argparse.ArgumentParser(description="Paper desk API (loopback only)")
     ap.add_argument("--port", type=int, default=8789)
     args = ap.parse_args()
@@ -1110,6 +1112,7 @@ def main() -> None:
         server.serve_forever()
     except Exception as ex:
         print(f"API server exit: {type(ex).__name__}: {ex}", file=sys.stderr, flush=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

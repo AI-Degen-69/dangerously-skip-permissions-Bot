@@ -1,11 +1,12 @@
 export const LABELS: Record<string, string> = {
   // Window Timing & Planned Cutoffs
-  'opening-delay': 'Waiting opening delay (~T+13s)',
-  'too-late-in-window': 'Planned entry cutoff (last 15s)',
+  'opening-delay': 'Waiting opening delay',
+  'too-late-in-window': 'Planned entry cutoff',
   'awaiting-resolution': 'Window ended — awaiting market resolution',
 
   // Order Execution & Fills
   'straddle-open': 'Market opened — first touch',
+  'hedge-pending': 'First leg filled — hedge pending',
   'hedge-leg': 'Hedge leg filled (+15s) — both sides held',
   'working-fills': 'Working fills (M1–M3)',
   'm4-snipe': 'M4 late snipe & fade',
@@ -88,6 +89,10 @@ export const REASON_METRICS: Record<string, MetricSpec[]> = {
     { key: 'shares', label: 'shares' },
     { key: 'lean', label: 'lean', unit: 'ratio' },
   ],
+  'hedge-pending': [
+    { key: 'price', label: 'price', unit: 'price' },
+    { key: 'shares', label: 'shares' },
+  ],
   'hedge-leg': [
     { key: 'price', label: 'price', unit: 'price' },
     { key: 'shares', label: 'shares' },
@@ -106,7 +111,6 @@ export const REASON_METRICS: Record<string, MetricSpec[]> = {
     { key: 'price', label: 'anchor', unit: 'usd' },
     { key: 'source', label: 'source' },
   ],
-  'thesis-intact': [{ key: 'bid', label: 'bid', unit: 'price' }],
   'stalled-but-waiting': [
     { key: 'bid', label: 'bid', unit: 'price' },
     { key: 'stalledSec', label: 'stalled', unit: 'sec' },
