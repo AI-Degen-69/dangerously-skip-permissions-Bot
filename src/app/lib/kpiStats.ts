@@ -25,8 +25,8 @@ export interface CalculatedKpis {
   payoffRatio: number
   expectancyUsd: number
   expectancyRatio: number
-  breakEvenWinRate: number
-  edgePct: number
+  breakEvenWinRate: number | null
+  edgePct: number | null
 
   // Risk & Volatility
   sharpeRatio: number
@@ -126,9 +126,19 @@ export function computeKpiStats(
     apiSummary?.expectancyUsd ?? (settled.length > 0 ? netUsd / settled.length : 0)
   const expectancyRatio =
     apiSummary?.expectancyRatio ?? (winRate * payoffRatio - lossRate)
+  const activeRate = (winsCount + lossesCount) / (settled.length || 1)
   const breakEvenWinRate =
-    apiSummary?.breakEvenWinRate ?? (payoffRatio > 0 ? 1 / (1 + payoffRatio) : 0.5)
-  const edgePct = (winRate - breakEvenWinRate) * 100
+    apiSummary?.breakEvenWinRate !== undefined
+      ? apiSummary.breakEvenWinRate
+      : winsCount > 0 && payoffRatio > 0
+        ? activeRate / (1 + payoffRatio)
+        : null
+  const edgePct =
+    apiSummary?.edgePct !== undefined
+      ? apiSummary.edgePct
+      : breakEvenWinRate !== null
+        ? (winRate - breakEvenWinRate) * 100
+        : null
 
   // 105,120 5-minute windows in a 365-day year
   const ANNUAL_FACTOR = Math.sqrt(288 * 365)
@@ -276,8 +286,8 @@ export function computeKpiStats(
 
     upCount: upWindows.length,
     downCount: downWindows.length,
-    upWins: apiSummary?.upWins ?? upWins,
-    downWins: apiSummary?.downWins ?? downWins,
+    upWins: apiSummary?.upWinRate !== undefined ? (apiSummary.upWins ?? upWins) : upWins,
+    downWins: apiSummary?.downWinRate !== undefined ? (apiSummary.downWins ?? downWins) : downWins,
     upWinRate: apiSummary?.upWinRate ?? upWinRate,
     downWinRate: apiSummary?.downWinRate ?? downWinRate,
     upNetUsd: apiSummary?.upNetUsd ?? upNetUsd,

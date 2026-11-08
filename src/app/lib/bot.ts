@@ -266,7 +266,8 @@ export interface BotPerf {
     payoffRatio?: number
     expectancyUsd?: number
     expectancyRatio?: number
-    breakEvenWinRate?: number
+    breakEvenWinRate?: number | null
+    edgePct?: number | null
     sharpeRatio?: number
     sortinoRatio?: number
     maxDrawdownUsd?: number

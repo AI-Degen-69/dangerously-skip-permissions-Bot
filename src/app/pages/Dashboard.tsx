@@ -14,7 +14,7 @@ import {
   TrendingUp,
 } from 'lucide-react'
 import { Link } from 'react-router'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 
 import { Badge, Button, Card, ConfirmDialog, EmptyState, PageHeader, Skeleton, useToast } from '../components/ui'
 import { InteractivePnlChart } from '../components/InteractivePnlChart'
@@ -300,9 +300,13 @@ export function Dashboard() {
               hint={`${stats.winsCount}W – ${stats.lossesCount}L (${stats.settled} settled)`}
               tone={stats.winRate >= 0.5 ? 'success' : 'danger'}
               badge={
-                <Badge tone={stats.edgePct >= 0 ? 'success' : 'warning'}>
-                  {stats.edgePct >= 0 ? `+${stats.edgePct.toFixed(1)}% edge` : `${stats.edgePct.toFixed(1)}% edge`}
-                </Badge>
+                stats.edgePct !== null ? (
+                  <Badge tone={stats.edgePct >= 0 ? 'success' : 'warning'}>
+                    {stats.edgePct >= 0 ? `+${stats.edgePct.toFixed(1)}% edge` : `${stats.edgePct.toFixed(1)}% edge`}
+                  </Badge>
+                ) : (
+                  <Badge tone="neutral">No edge data</Badge>
+                )
               }
               tip="Percentage of settled windows closing positive. Edge reflects surplus over the break-even required win rate."
               icon={<Percent className="size-3.5" />}
@@ -310,7 +314,7 @@ export function Dashboard() {
             <Stat
               label="Expectancy"
               value={`${stats.expectancyUsd >= 0 ? '+' : ''}${usd(stats.expectancyUsd)}`}
-              unit="/ win"
+              unit="/ window"
               hint={`Avg Win +${usd(stats.avgWinUsd)} · Loss -${usd(stats.avgLossUsd)}`}
               tone={stats.expectancyUsd >= 0 ? 'success' : 'danger'}
               badge={
@@ -324,22 +328,22 @@ export function Dashboard() {
             />
             <Stat
               label="Profit Factor"
-              value={stats.profitFactor >= 99 ? '∞' : stats.profitFactor.toFixed(2)}
+              value={stats.grossLossUsd === 0 && stats.grossProfitUsd > 0 ? '∞' : stats.profitFactor.toFixed(2)}
               hint={`Gross: +${usd(stats.grossProfitUsd)} / -${usd(stats.grossLossUsd)}`}
               tone={stats.profitFactor >= 1.5 ? 'success' : stats.profitFactor >= 1.0 ? 'warning' : 'danger'}
               badge={
                 <Badge tone="neutral" className="font-mono text-[10.5px]">
-                  Payoff {stats.payoffRatio >= 99 ? '∞' : `${stats.payoffRatio.toFixed(2)}x`}
+                  Payoff {stats.lossesCount === 0 && stats.winsCount > 0 ? '∞' : `${stats.payoffRatio.toFixed(2)}x`}
                 </Badge>
               }
-              tip="Ratio of gross winning window payouts to gross losing costs. >1.0 means profitable, >1.5 is strong quant tier."
+              tip="Total profit from winning windows divided by total loss from losing windows. >1.0 means profitable, >1.5 is strong quant tier."
               icon={<Scale className="size-3.5" />}
             />
             <Stat
               label="Sharpe Ratio"
               value={stats.sharpeRatio.toFixed(2)}
               unit="Ann."
-              hint={`Sortino: ${stats.sortinoRatio >= 99 ? '∞' : stats.sortinoRatio.toFixed(2)} · Max DD: -${stats.maxDrawdownPct.toFixed(1)}%`}
+              hint={`Sortino: ${stats.lossesCount === 0 && stats.settled > 0 && stats.netUsd > 0 ? '∞' : stats.sortinoRatio.toFixed(2)} · Max DD: -${stats.maxDrawdownPct.toFixed(1)}%`}
               tone={stats.sharpeRatio >= 1.0 ? 'success' : stats.sharpeRatio >= 0 ? 'neutral' : 'danger'}
               badge={
                 <Badge tone={stats.maxDrawdownPct <= 15 ? 'success' : stats.maxDrawdownPct <= 30 ? 'warning' : 'danger'}>
@@ -364,12 +368,12 @@ export function Dashboard() {
                 </Badge>
                 {stats.settled > 0 && (
                   <Badge tone={stats.expectancyUsd >= 0 ? 'success' : 'danger'} className="text-[11px]">
-                    EV: {stats.expectancyUsd >= 0 ? '+' : ''}{usd(stats.expectancyUsd)}/win
+                    EV: {stats.expectancyUsd >= 0 ? '+' : ''}{usd(stats.expectancyUsd)}/window
                   </Badge>
                 )}
                 {stats.settled > 0 && (
                   <Badge tone="neutral" className="text-[11px]">
-                    PF: {stats.profitFactor >= 99 ? '∞' : stats.profitFactor.toFixed(2)}
+                    PF: {stats.grossLossUsd === 0 && stats.grossProfitUsd > 0 ? '∞' : stats.profitFactor.toFixed(2)}
                   </Badge>
                 )}
               </div>
@@ -463,33 +467,42 @@ export function Dashboard() {
                     <span className="tabular-nums font-semibold text-fg">
                       {(stats.winRate * 100).toFixed(1)}%{' '}
                       <span className="text-[11px] font-normal text-muted">
-                        ({stats.winsCount}W · {stats.lossesCount}L)
+                        ({stats.winsCount}W · {stats.lossesCount}L{stats.scratchCount > 0 ? ` · ${stats.scratchCount}T` : ''})
                       </span>
                     </span>
                   </div>
                   <div className="mt-2 flex h-2 overflow-hidden rounded-full bg-surface-2">
                     <div
                       className="h-full bg-success transition-all duration-300"
-                      style={{ width: `${Math.max(2, stats.winRate * 100)}%` }}
+                      style={{ width: `${Math.max(stats.winsCount > 0 ? 2 : 0, stats.winRate * 100)}%` }}
                       title={`${(stats.winRate * 100).toFixed(1)}% Wins (${stats.winsCount})`}
                     />
+                    {stats.scratchCount > 0 && (
+                      <div
+                        className="h-full bg-line/80 transition-all duration-300"
+                        style={{ width: `${((stats.scratchCount / (stats.settled || 1)) * 100).toFixed(1)}%` }}
+                        title={`${((stats.scratchCount / (stats.settled || 1)) * 100).toFixed(1)}% Break-even (${stats.scratchCount})`}
+                      />
+                    )}
                     <div
                       className="h-full bg-danger transition-all duration-300"
-                      style={{ width: `${Math.max(0, (1 - stats.winRate) * 100)}%` }}
-                      title={`${((1 - stats.winRate) * 100).toFixed(1)}% Losses (${stats.lossesCount})`}
+                      style={{ width: `${Math.max(stats.lossesCount > 0 ? 2 : 0, stats.lossRate * 100)}%` }}
+                      title={`${(stats.lossRate * 100).toFixed(1)}% Losses (${stats.lossesCount})`}
                     />
                   </div>
                   <div className="mt-2.5 grid grid-cols-2 gap-2 border-t border-line/60 pt-2 text-[11.5px]">
                     <div>
                       <span className="text-faint">Payoff (Avg W/L): </span>
                       <span className="font-medium tabular-nums text-fg">
-                        {stats.payoffRatio >= 99 ? '∞' : `${stats.payoffRatio.toFixed(2)}x`}
+                        {stats.lossesCount === 0 && stats.winsCount > 0 ? '∞' : `${stats.payoffRatio.toFixed(2)}x`}
                       </span>
                     </div>
                     <div className="text-right">
                       <span className="text-faint">Break-Even Req: </span>
                       <span className="font-medium tabular-nums text-fg">
-                        {(stats.breakEvenWinRate * 100).toFixed(1)}%
+                        {stats.breakEvenWinRate !== null
+                          ? `${(stats.breakEvenWinRate * 100).toFixed(1)}%`
+                          : 'N/A'}
                       </span>
                     </div>
                   </div>
@@ -513,12 +526,12 @@ export function Dashboard() {
                   />
                   <Row
                     label="Sortino Ratio"
-                    value={stats.sortinoRatio >= 99 ? '∞' : stats.sortinoRatio.toFixed(2)}
+                    value={stats.lossesCount === 0 && stats.settled > 0 && stats.netUsd > 0 ? '∞' : stats.sortinoRatio.toFixed(2)}
                     tone={stats.sortinoRatio >= 1.5 ? 'success' : undefined}
                   />
                   <Row
                     label="Best / Worst Window"
-                    value={`+${usd(stats.bestUsd)} / -${usd(Math.abs(stats.worstUsd))}`}
+                    value={`${stats.bestUsd > 0 ? `+${usd(stats.bestUsd)}` : usd(stats.bestUsd)} / ${stats.worstUsd > 0 ? `+${usd(stats.worstUsd)}` : usd(stats.worstUsd)}`}
                   />
                   <Row
                     label="Streak (Current · Best · Worst)"
@@ -798,6 +811,7 @@ function Stat({
   tone?: 'success' | 'danger' | 'warning' | 'neutral'
   icon?: React.ReactNode
 }) {
+  const tipId = useId()
   return (
     <Card className="group relative flex h-[116px] flex-col justify-between p-3.5 transition-colors hover:border-line-strong">
       <div className="flex items-center justify-between gap-1.5">
@@ -809,11 +823,13 @@ function Stat({
               <span
                 tabIndex={0}
                 aria-label={`About ${label}`}
+                aria-describedby={tipId}
                 className="cursor-help text-faint transition-colors hover:text-fg focus-visible:text-fg"
               >
                 <Info className="size-3" aria-hidden="true" />
               </span>
               <span
+                id={tipId}
                 role="tooltip"
                 className="pointer-events-none absolute bottom-full left-0 z-50 mb-1.5 hidden w-64 rounded-tile bg-fg px-2.5 py-2 text-[11.5px] font-normal normal-case leading-relaxed text-surface shadow-pop group-hover/tip:block group-focus-within/tip:block"
               >

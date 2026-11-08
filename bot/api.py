@@ -848,7 +848,8 @@ def perf() -> dict:
     loss_rate = round(losses_count / len(settled), 4) if settled else 0.0
     expectancy_usd = round(net / len(settled), 2) if settled else 0.0
     expectancy_ratio = round((win_rate * payoff_ratio) - loss_rate, 2) if settled else 0.0
-    be_win_rate = round(1.0 / (1.0 + payoff_ratio), 4) if payoff_ratio > 0 else 0.0
+    be_win_rate = round(((wins_count + losses_count) / len(settled)) / (1.0 + payoff_ratio), 4) if (settled and wins_count > 0 and payoff_ratio > 0) else None
+    edge_pct = round((win_rate - be_win_rate) * 100, 2) if (settled and be_win_rate is not None) else None
 
     annual_factor = math.sqrt(288 * 365)
     if len(nets) >= 2:
@@ -941,6 +942,7 @@ def perf() -> dict:
             "expectancyUsd": expectancy_usd,
             "expectancyRatio": expectancy_ratio,
             "breakEvenWinRate": be_win_rate,
+            "edgePct": edge_pct,
             "sharpeRatio": sharpe_ratio,
             "sortinoRatio": sortino_ratio,
             "maxDrawdownUsd": max_dd_usd,
