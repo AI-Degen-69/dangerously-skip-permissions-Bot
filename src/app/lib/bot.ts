@@ -20,6 +20,8 @@ export interface MarketView {
   secondsRemaining: number
   verdict: { action: 'enter' | 'skip' | 'blocked' | 'refuse' | 'done'; reason: string; detail: Record<string, unknown> }
   oddsHistory?: { t: number; v: number }[]
+  lean?: number | null
+  leanSource?: string | null
 }
 
 export interface RiskState {
@@ -116,6 +118,8 @@ export interface BotSnapshot {
   killSwitch: boolean
   newsBlocked: boolean
   feed: { price: number | null; updatedAtMs: number | null; history: { ts: number; value: number }[] }
+  lean?: number | null
+  leanSource?: string | null
   markets: MarketView[]
   positions: PositionView[]
   ws?: WsStatus
