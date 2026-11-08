@@ -1,10 +1,66 @@
 import { Activity, ArrowUpRight, Radio, TrendingDown, TrendingUp } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 
-import { useBotConfig, type BotConfigView, type Interval, type MarketView, type PositionView } from '../lib/bot'
+import { useBotConfig, type BotConfigView, type Interval, type MarketView, type PositionView, type WsStatus } from '../lib/bot'
 import { cx } from '../lib/cx'
 import { reasonLabel } from '../lib/labels'
 import { Badge, Card } from './ui'
+
+export function getWsLatencyStatus(ws?: WsStatus | null) {
+  if (!ws || ws.state === 'disconnected') {
+    return {
+      label: 'Disconnected',
+      rawMs: null,
+      tone: 'neutral' as const,
+      badgeClass: 'bg-surface-2 text-muted',
+      dotClass: 'bg-muted',
+      colorClass: 'text-muted',
+    }
+  }
+  if (ws.state === 'fallback_active' || ws.state === 'stale') {
+    const ageMs = ws.age_ms ?? 3000
+    return {
+      label: `Stale (${(ageMs / 1000).toFixed(1)}s)`,
+      rawMs: ageMs,
+      tone: 'danger' as const,
+      badgeClass: 'bg-danger-soft text-danger',
+      dotClass: 'bg-danger',
+      colorClass: 'text-danger',
+    }
+  }
+  const ageMs = ws.age_ms
+  // Green range: < 150ms
+  if (ageMs == null || ageMs < 150) {
+    return {
+      label: ageMs == null ? '<40ms' : `${ageMs}ms`,
+      rawMs: ageMs,
+      tone: 'success' as const,
+      badgeClass: 'bg-success-soft text-success',
+      dotClass: 'bg-success',
+      colorClass: 'text-success',
+    }
+  }
+  // Yellow range: 150ms - 500ms
+  if (ageMs <= 500) {
+    return {
+      label: `${ageMs}ms`,
+      rawMs: ageMs,
+      tone: 'warning' as const,
+      badgeClass: 'bg-warning-soft text-warning',
+      dotClass: 'bg-warning',
+      colorClass: 'text-warning',
+    }
+  }
+  // Red range: > 500ms
+  return {
+    label: `${ageMs}ms`,
+    rawMs: ageMs,
+    tone: 'danger' as const,
+    badgeClass: 'bg-danger-soft text-danger',
+    dotClass: 'bg-danger',
+    colorClass: 'text-danger',
+  }
+}
 
 // Polymarket's official embed only plots last-trade prints, so a market this
 // quiet is stuck at its listing price forever. These panels keep the Polymarket
@@ -77,12 +133,19 @@ const useOddsSeries = (market: MarketView): OddsPoint[] => {
 }
 
 const priceCents = (value: number | null) => (value === null ? '-' : `${Math.round(value * 100)}¢`)
-const pct = (value: number | null, digits = 3) => (value === null ? '-' : `${value.toFixed(digits)}%`)
 const clock = (ms: number) => new Date(ms).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
 // Elapsed time into the window, e.g. 5:00 — "passed", not "remaining".
 const mmss = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`
 
-export function PolymarketLiveChart({ markets, positions = [] }: { markets: MarketView[]; positions?: PositionView[] }) {
+export function PolymarketLiveChart({
+  markets,
+  positions = [],
+  ws,
+}: {
+  markets: MarketView[]
+  positions?: PositionView[]
+  ws?: WsStatus
+}) {
   const { data: config } = useBotConfig()
   const lastMarkets = useRef<MarketView[]>([])
   useEffect(() => {
@@ -110,6 +173,7 @@ export function PolymarketLiveChart({ markets, positions = [] }: { markets: Mark
             positions={positions.filter((p) => p.slug === market.slug)}
             params={config?.config.intervalParams[market.interval] ?? null}
             wide={activeMarkets.length === 1}
+            ws={ws}
           />
         ))
       )}
@@ -122,11 +186,13 @@ function MarketChartPanel({
   positions = [],
   params,
   wide = false,
+  ws,
 }: {
   market: MarketView
   positions?: PositionView[]
   params: BotConfigView['intervalParams'][Interval] | null
   wide?: boolean
+  ws?: WsStatus
 }) {
   const points = useOddsSeries(market)
   const total = Math.max(1, market.endMs - market.startMs)
@@ -221,12 +287,123 @@ function MarketChartPanel({
   const slug = market.slug
   const eventUrl = `https://polymarket.com/event/${slug}?utm_medium=embed&utm_campaign=market&utm_content=spread-hunter`
 
+  const upPos = positions.find((p) => p.side === 'Up')
+  const downPos = positions.find((p) => p.side === 'Down')
+  const upShares = upPos?.shares ?? 0
+  const downShares = downPos?.shares ?? 0
+  const upAvgPrice = upPos?.entryPrice ?? null
+  const downAvgPrice = downPos?.entryPrice ?? null
+  const hasHoldings = upShares > 0 || downShares > 0
+  const isHedged = upShares > 0 && downShares > 0
+
+  // 1. Pair Cost
+  let pairCost: number | null = null
+  let isIndicative = false
+  if (isHedged && upAvgPrice != null && downAvgPrice != null) {
+    pairCost = upAvgPrice + downAvgPrice
+  } else if (market.quotes.Up.ask != null && market.quotes.Down.ask != null) {
+    pairCost = market.quotes.Up.ask + market.quotes.Down.ask
+    isIndicative = true
+  }
+
+  // 2. Holdings Balance
+  const delta = Math.round(upShares) - Math.round(downShares)
+  const holdingsText = hasHoldings
+    ? `${Math.round(upShares)} Up · ${Math.round(downShares)} Down`
+    : '0 Up · 0 Down'
+  const holdingsHint = !hasHoldings
+    ? 'flat'
+    : delta === 0
+    ? 'balanced 1:1'
+    : delta > 0
+    ? `+${delta} Up bias`
+    : `+${Math.abs(delta)} Down bias`
+
+  // 3. Settlement Payoff
+  const totalCost = (upPos?.costUsd ?? 0) + (downPos?.costUsd ?? 0)
+  const payIfUp = upShares * 1.0 - totalCost
+  const payIfDown = downShares * 1.0 - totalCost
+  const minFloor = hasHoldings ? Math.min(payIfUp, payIfDown) : 0
+  const maxPayoff = hasHoldings ? Math.max(payIfUp, payIfDown) : 0
+
+  // 4. Microprice Lean
+  let leanVal = market.lean
+  let leanConf = 0.5
+  if (leanVal == null) {
+    const upMid =
+      market.quotes.Up.ask != null && market.quotes.Up.bid != null
+        ? (market.quotes.Up.ask + market.quotes.Up.bid) / 2
+        : (market.quotes.Up.ask ?? market.quotes.Up.bid ?? 0.5)
+    const downMid =
+      market.quotes.Down.ask != null && market.quotes.Down.bid != null
+        ? (market.quotes.Down.ask + market.quotes.Down.bid) / 2
+        : (market.quotes.Down.ask ?? market.quotes.Down.bid ?? 0.5)
+    const edge = (upMid - downMid) / 2.0
+    const raw = edge * 4.0
+    leanVal = Math.max(-1.0, Math.min(1.0, raw))
+    const spreadDist = Math.abs(upMid + downMid - 1.0)
+    leanConf = Math.max(0, Math.min(1.0, 1.0 - spreadDist * 5.0))
+  }
+
+  // 5. Cadence Fills
+  const fillsCount =
+    Number(market.verdict?.detail?.fills) ||
+    (positions.length > 0 ? (hasUp ? 1 : 0) + (hasDown ? 1 : 0) : 0)
+  const targetFills = 45
+
+  // 6. CLOB Spread & Depth
+  const upSpread =
+    market.quotes.Up.ask != null && market.quotes.Up.bid != null
+      ? market.quotes.Up.ask - market.quotes.Up.bid
+      : null
+  const downSpread =
+    market.quotes.Down.ask != null && market.quotes.Down.bid != null
+      ? market.quotes.Down.ask - market.quotes.Down.bid
+      : null
+  const clobSpread =
+    upSpread != null && downSpread != null
+      ? Math.min(upSpread, downSpread)
+      : (upSpread ?? downSpread)
+
+  const upDepth = ws?.up_book ? ws.up_book.bid_depth + ws.up_book.ask_depth : 0
+  const downDepth = ws?.down_book ? ws.down_book.bid_depth + ws.down_book.ask_depth : 0
+  const depthHint =
+    upDepth > 0 || downDepth > 0
+      ? `depth $${(upDepth / 1000).toFixed(1)}k / $${(downDepth / 1000).toFixed(1)}k`
+      : 'best bid/ask'
+
+  const wsLatency = getWsLatencyStatus(ws)
+
   return (
     <Card aria-label={`Live odds for ${slug}`} className={cx('flex flex-col p-5', wide && 'lg:col-span-2')}>
-      <p className="flex items-center gap-1.5 text-[11px] text-faint">
-        <Radio className="size-3 text-danger" aria-hidden />
-        Live odds · via Polymarket
-      </p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="flex items-center gap-1.5 text-[11px] text-faint">
+          <Radio className="size-3 text-danger" aria-hidden />
+          Live odds · via Polymarket
+        </p>
+        <div className="flex items-center gap-2">
+          <span
+            className={cx(
+              'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-medium tabular-nums',
+              wsLatency.badgeClass,
+            )}
+            title={`WebSocket latency: ${wsLatency.rawMs != null ? `${wsLatency.rawMs}ms` : '<40ms'}`}
+          >
+            <span className={cx('size-1.5 rounded-full', wsLatency.dotClass)} />
+            WSS {wsLatency.label}
+          </span>
+          <a
+            href={eventUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-[11px] font-medium text-accent hover:underline"
+            title="Open live market on Polymarket"
+          >
+            trade on Polymarket
+            <ArrowUpRight className="size-3" aria-hidden />
+          </a>
+        </div>
+      </div>
       <div className="mt-1 flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <h3 className="flex items-center gap-2 text-[13px] font-semibold">
@@ -284,13 +461,43 @@ function MarketChartPanel({
         ))}
       </div>
 
-      <dl className="mt-3 grid grid-cols-3 gap-x-4 gap-y-2">
-        <Field label="BTC" value={market.price === null ? '-' : market.price.toFixed(2)} />
-        <Field label="Anchor" value={market.anchor ? market.anchor.value.toFixed(2) : 'pending'} hint={market.anchor?.source} />
-        <Field label="Move" value={pct(market.movePct)} hint={`needs ${market.requiredMovePct}%`} />
-        <Field label="Model p" value={market.modelProb === null ? '-' : market.modelProb.toFixed(3)} />
-        <Field label="Edge" value={market.edge === null ? '-' : `${(market.edge * 100).toFixed(1)}¢`} />
-        <Field label="Spread" value={market.spreadCents === null ? '-' : `${market.spreadCents.toFixed(1)}¢`} />
+      <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2.5 rounded-tile border border-line/50 bg-surface-2/30 p-3 sm:grid-cols-3">
+        <Field
+          label="Pair Cost"
+          value={pairCost != null ? `${(pairCost * 100).toFixed(1)}¢` : '—'}
+          valueClassName={
+            pairCost == null ? 'text-faint' : pairCost <= 1.0 ? 'text-success' : 'text-danger'
+          }
+          hint={
+            pairCost == null
+              ? 'awaiting fills'
+              : pairCost <= 1.0
+              ? `+${((1.0 - pairCost) * 100).toFixed(1)}¢ margin${isIndicative ? ' (book)' : ''}`
+              : `−${((pairCost - 1.0) * 100).toFixed(1)}¢ over par${isIndicative ? ' (book)' : ''}`
+          }
+        />
+        <Field label="Holdings Balance" value={holdingsText} hint={holdingsHint} />
+        <Field
+          label="Settlement Payoff"
+          value={hasHoldings ? `${minFloor >= 0 ? '+' : '−'}$${Math.abs(minFloor).toFixed(2)}` : '—'}
+          valueClassName={!hasHoldings ? 'text-faint' : minFloor >= 0 ? 'text-success' : 'text-danger'}
+          hint={hasHoldings ? `max +$${maxPayoff.toFixed(2)}` : 'min floor'}
+        />
+        <Field
+          label="Microprice Lean"
+          value={
+            leanVal == null || Math.abs(leanVal) < 0.02
+              ? 'Neutral'
+              : `${leanVal > 0 ? `+${leanVal.toFixed(2)}` : leanVal.toFixed(2)} ${leanVal > 0 ? 'Up' : 'Down'}`
+          }
+          hint={`${Math.round(leanConf * 100)}% conf · OB`}
+        />
+        <Field label="Cadence Fills" value={`${fillsCount} / ${targetFills} target`} hint="M1–M3 clips" />
+        <Field
+          label="CLOB Spread & Depth"
+          value={clobSpread != null ? `${(clobSpread * 100).toFixed(1)}¢` : '—'}
+          hint={depthHint}
+        />
       </dl>
 
       <div className="mt-2.5 grid grid-cols-2 gap-2">
@@ -319,14 +526,6 @@ function MarketChartPanel({
       </div>
 
       <OddsChart market={market} points={points} />
-
-      <div className="mt-1 flex items-center justify-between gap-2 text-[10.5px] text-faint">
-        <span>Implied by the book · sampled 2s</span>
-        <a href={eventUrl} target="_blank" rel="noopener" className="inline-flex items-center gap-1 font-medium hover:text-accent">
-          trade on Polymarket
-          <ArrowUpRight className="size-3" aria-hidden />
-        </a>
-      </div>
     </Card>
   )
 }
@@ -405,13 +604,23 @@ function OddsChart({ market, points }: { market: MarketView; points: OddsPoint[]
   )
 }
 
-function Field({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function Field({
+  label,
+  value,
+  hint,
+  valueClassName,
+}: {
+  label: string
+  value: React.ReactNode
+  hint?: React.ReactNode
+  valueClassName?: string
+}) {
   return (
-    <div>
-      <dt className="text-[10px] uppercase tracking-wide text-faint">{label}</dt>
-      <dd className="mt-0.5 text-[12px] font-medium tabular-nums">
+    <div className="min-w-0">
+      <dt className="truncate text-[10px] font-medium uppercase tracking-wide text-faint">{label}</dt>
+      <dd className={cx('mt-0.5 truncate text-[12.5px] font-semibold tabular-nums', valueClassName ?? 'text-fg')}>
         {value}
-        {hint && <span className="ml-1 text-[10px] font-normal text-faint">{hint}</span>}
+        {hint && <span className="ml-1.5 text-[10.5px] font-normal text-faint">{hint}</span>}
       </dd>
     </div>
   )

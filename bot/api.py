@@ -365,6 +365,8 @@ def live_markets(cfg: dict) -> list[dict]:
             "spreadCents": round(spread * 100, 1) if spread is not None else None,
             "secondsRemaining": remaining, "verdict": verdict,
             "oddsHistory": list(hist),
+            "lean": curr_state.get("lean") if (curr_state and curr_state.get("slug") == slug) else None,
+            "leanSource": curr_state.get("leanSource") if (curr_state and curr_state.get("slug") == slug) else None,
         })
     if len(_ODDS_HISTORY) > 10 or len(_WINDOW_SPEC_CACHE) > 10:
         active_slugs = {f"btc-updown-5m-{s}" for s in visible_slots()}
@@ -506,6 +508,8 @@ def snapshot() -> dict:
                    "minEdge": 0, "feeRate": 0, "profitTargetCents": 100},
         "killSwitch": kills, "newsBlocked": False,
         "feed": {"price": None, "updatedAtMs": None, "history": []},
+        "lean": (st or {}).get("lean"),
+        "leanSource": (st or {}).get("leanSource"),
         "markets": markets, "positions": positions,
         "ws": (st or {}).get("ws") or {
             "state": "disconnected" if not loop_running() else "connecting",
@@ -781,8 +785,22 @@ def perf() -> dict:
     severity = {"danger": 0, "warning": 1, "info": 2, "success": 3}
     notes.sort(key=lambda n: severity.get(n["tone"], 9))
 
+    cfg_bankroll = None
+    sel = get_selected_run_id()
+    if sel:
+        ws = resolve_run_workspace(sel)
+        if ws:
+            meta = ws.read_meta()
+            if meta and meta.config_snapshot:
+                cfg_bankroll = meta.config_snapshot.get("bankrollUsd")
+    if cfg_bankroll is None:
+        cfg = load_config()
+        if isinstance(cfg, dict):
+            cfg_bankroll = cfg.get("bankrollUsd")
+    bankroll = _num(cfg_bankroll, default=float(BANKROLL_DEFAULT))
     return {
         "summary": {
+            "bankrollUsd": bankroll,
             "settled": len(settled), "pending": len(pending), "fills": fills,
             "costUsd": cost, "payoutUsd": payout, "netUsd": net,
             "roi": round(net / cost, 4) if cost else 0.0,

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Activity, Clock, Play, Radio, ShieldAlert, Target, Zap } from 'lucide-react'
+import { Activity, Play, Radio, ShieldAlert, Target, Zap } from 'lucide-react'
 
 import { PolymarketLiveChart } from '../components/PolymarketEmbed'
 import { eventMetrics, KIND_TONE, reasonLabel as label } from '../lib/labels'
@@ -209,23 +209,9 @@ export function Live() {
       ) : (
         data && (
           <>
-            <Card className="mt-3 flex flex-wrap items-center justify-between gap-4 p-4">
-              <div>
-                <p className="text-[11.5px] uppercase tracking-wide text-faint">BTC reference price</p>
-                <p className="text-[24px] font-semibold tracking-[-0.02em] tabular-nums">
-                  {data.feed.price === null ? '—' : data.feed.price.toFixed(2)}
-                </p>
-              </div>
-              <div className="h-14 w-full max-w-[440px]">
-                <Spark points={data.feed.history} />
-              </div>
-              <p className="text-[12px] text-faint">
-                <Clock className="mr-1 inline size-3.5" />
-                updated {data.feed.updatedAtMs ? clock(data.feed.updatedAtMs) : '—'}
-              </p>
-            </Card>
+            <StraddleDeskStrip data={data} ws={ws} />
 
-            <PolymarketLiveChart markets={data.markets} positions={data.positions} />
+            <PolymarketLiveChart markets={data.markets} positions={data.positions} ws={ws} />
 
             <div className="mt-3 grid gap-3 lg:grid-cols-3">
               <Card className="p-5 lg:col-span-2">
@@ -839,25 +825,148 @@ function Trades({ items }: { items: BotTrade[] }) {
   )
 }
 
-function Spark({ points }: { points: { ts: number; value: number }[] }) {
-  if (points.length < 2) {
-    return <div className="grid h-full place-items-center text-[12px] text-faint">collecting price…</div>
+function StraddleDeskStrip({ data, ws }: { data: BotSnapshot; ws?: WsStatus }) {
+  const activeMarket = data.markets[0]
+  const positions = data.positions
+  const upPos = positions.find((p) => p.side === 'Up')
+  const downPos = positions.find((p) => p.side === 'Down')
+
+  const upShares = upPos?.shares ?? 0
+  const downShares = downPos?.shares ?? 0
+  const upAvg = upPos?.entryPrice ?? null
+  const downAvg = downPos?.entryPrice ?? null
+  const isHedged = upShares > 0 && downShares > 0
+  const hasHoldings = upShares > 0 || downShares > 0
+
+  let pairCost: number | null = null
+  let isIndicative = false
+  if (isHedged && upAvg != null && downAvg != null) {
+    pairCost = upAvg + downAvg
+  } else if (activeMarket?.quotes.Up.ask != null && activeMarket?.quotes.Down.ask != null) {
+    pairCost = activeMarket.quotes.Up.ask + activeMarket.quotes.Down.ask
+    isIndicative = true
   }
-  const values = points.map((point) => point.value)
-  const min = Math.min(...values)
-  const max = Math.max(...values)
-  const span = max - min || 1
-  const width = 440
-  const height = 56
-  const path = points
-    .map((point, index) => `${index === 0 ? 'M' : 'L'}${(index / (points.length - 1)) * width},${height - ((point.value - min) / span) * (height - 4) - 2}`)
-    .join(' ')
-  const up = values[values.length - 1] >= values[0]
+
+  const totalCost = (upPos?.costUsd ?? 0) + (downPos?.costUsd ?? 0)
+  const payIfUp = upShares * 1.0 - totalCost
+  const payIfDown = downShares * 1.0 - totalCost
+  const minFloor = hasHoldings ? Math.min(payIfUp, payIfDown) : 0
+  const maxPayoff = hasHoldings ? Math.max(payIfUp, payIfDown) : 0
+  const favoredSide = payIfUp >= payIfDown ? 'Up' : 'Down'
+  const delta = Math.round(upShares) - Math.round(downShares)
+
+  const fillsCount =
+    Number(activeMarket?.verdict?.detail?.fills) ||
+    (positions.length > 0 ? (upShares > 0 ? 1 : 0) + (downShares > 0 ? 1 : 0) : 0)
+  const targetFills = 45
+  const windowCap = 4000
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full" preserveAspectRatio="none" aria-hidden>
-      <path d={path} fill="none" stroke={up ? 'var(--color-success)' : 'var(--color-danger)'} strokeWidth="1.75" vectorEffect="non-scaling-stroke" />
-    </svg>
+    <Card className="mt-3 p-4">
+      <div className="grid grid-cols-2 gap-4 divide-y sm:divide-y-0 sm:divide-x divide-line lg:grid-cols-4">
+        {/* Metric 1: Combined Pair Cost */}
+        <div className="pt-2 sm:pt-0 sm:px-3 first:pl-0">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-faint">Combined Pair Cost</p>
+          <div className="mt-1 flex items-baseline gap-2">
+            <span
+              className={cx(
+                'text-[22px] font-semibold tracking-[-0.02em] tabular-nums',
+                pairCost == null
+                  ? 'text-faint'
+                  : pairCost <= 1.0
+                  ? 'text-success'
+                  : 'text-danger',
+              )}
+            >
+              {pairCost != null ? `${(pairCost * 100).toFixed(1)}¢` : '—'}
+            </span>
+            {pairCost != null && (
+              <span className="text-[11.5px] text-muted">
+                {isIndicative ? '/ book' : '/ pair'}
+              </span>
+            )}
+          </div>
+          <p className="mt-0.5 text-[11.5px] text-muted">
+            {pairCost == null ? (
+              'Awaiting first fill'
+            ) : pairCost <= 1.0 ? (
+              <span className="font-medium text-success">
+                +{((1.0 - pairCost) * 100).toFixed(1)}¢ margin{isIndicative ? ' (book)' : ''}
+              </span>
+            ) : (
+              <span className="font-medium text-danger">
+                −{((pairCost - 1.0) * 100).toFixed(1)}¢ underwater{isIndicative ? ' (book)' : ''}
+              </span>
+            )}
+          </p>
+        </div>
+
+        {/* Metric 2: Holdings & Net Bias */}
+        <div className="pt-2 sm:pt-0 sm:px-3">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-faint">Holdings & Net Bias</p>
+          <p className="mt-1 text-[22px] font-semibold tracking-[-0.02em] tabular-nums">
+            {hasHoldings ? `${Math.round(upShares)} Up · ${Math.round(downShares)} Down` : '0 Up · 0 Down'}
+          </p>
+          <p className="mt-0.5 text-[11.5px] text-muted">
+            {!hasHoldings ? (
+              'Flat · No open inventory'
+            ) : delta === 0 ? (
+              <span className="font-medium text-success">Balanced 1:1 (Flat Delta)</span>
+            ) : delta > 0 ? (
+              <span className="font-medium text-accent">Net: +{delta} Up bias</span>
+            ) : (
+              <span className="font-medium text-warning">Net: +{Math.abs(delta)} Down bias</span>
+            )}
+          </p>
+        </div>
+
+        {/* Metric 3: Guaranteed Settlement Floor */}
+        <div className="pt-2 sm:pt-0 sm:px-3">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-faint">Settlement Payoff Floor</p>
+          <div className="mt-1 flex items-baseline gap-2">
+            <span
+              className={cx(
+                'text-[22px] font-semibold tracking-[-0.02em] tabular-nums',
+                !hasHoldings ? 'text-faint' : minFloor >= 0 ? 'text-success' : 'text-danger',
+              )}
+            >
+              {hasHoldings ? `${minFloor >= 0 ? '+' : '−'}$${Math.abs(minFloor).toFixed(2)}` : '—'}
+            </span>
+            {hasHoldings && <span className="text-[11px] text-faint">min floor</span>}
+          </div>
+          <p className="mt-0.5 text-[11.5px] text-muted">
+            {hasHoldings ? (
+              <>
+                Max: <span className="font-medium text-fg">+${maxPayoff.toFixed(2)}</span> ({favoredSide} wins)
+              </>
+            ) : (
+              'Redemption guarantee at expiry'
+            )}
+          </p>
+        </div>
+
+        {/* Metric 4: Window Budget & Clips */}
+        <div className="pt-2 sm:pt-0 sm:px-3 last:pr-0">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-faint">Window Budget & Clips</p>
+          <div className="mt-1 flex items-baseline gap-2">
+            <span className="text-[22px] font-semibold tracking-[-0.02em] tabular-nums">
+              ${totalCost.toFixed(2)}
+            </span>
+            <span className="text-[11.5px] text-faint">of ${windowCap.toLocaleString()}</span>
+          </div>
+          <div className="mt-1 flex items-center justify-between text-[11px] text-faint">
+            <span className="tabular-nums">
+              {fillsCount}/{targetFills} clips
+            </span>
+            {ws?.state === 'connected' && (
+              <span className="tabular-nums opacity-80">
+                WSS {ws.age_ms != null ? `${ws.age_ms}ms` : '<40ms'}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </Card>
   )
 }
 

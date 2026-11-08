@@ -35,11 +35,14 @@ def paper_run(slug: str, fills: list[dict], winner: str | None) -> dict:
 
 
 class PerfTests(unittest.TestCase):
-    def build(self, runs: list[dict], *, running: bool = False, killed: bool = False, state: dict | None = None) -> dict:
+    def build(self, runs: list[dict], *, running: bool = False, killed: bool = False, state: dict | None = None, config: dict | None = None) -> dict:
+        cfg = {"bankrollUsd": 1000.0} if config is None else config
         with (
             patch.object(api, "runs", return_value=runs),
             patch.object(api, "state", return_value=state),
             patch.object(api, "loop_running", return_value=4321 if running else None),
+            patch.object(api, "load_config", return_value=cfg),
+            patch.object(api, "get_selected_run_id", return_value=None),
             patch.object(api, "KILL_PATH") as kill_path,
         ):
             kill_path.exists.return_value = killed
@@ -50,6 +53,7 @@ class PerfTests(unittest.TestCase):
         summary = perf["summary"]
 
         self.assertEqual(summary["settled"], 1)
+        self.assertEqual(summary["bankrollUsd"], 1000.0)
         self.assertEqual(summary["pending"], 0)
         self.assertEqual(summary["fills"], 3)
         self.assertAlmostEqual(summary["costUsd"], 20.6)
@@ -92,6 +96,13 @@ class PerfTests(unittest.TestCase):
 
         self.assertTrue(perf["health"]["killSwitch"])
         self.assertIn("Kill switch engaged", [note["title"] for note in perf["notes"]])
+
+    def test_bankroll_reads_custom_config_and_handles_invalid_value(self):
+        perf_custom = self.build([paper_run(SLUG, FILLS, "Up")], config={"bankrollUsd": 2500.0})
+        self.assertEqual(perf_custom["summary"]["bankrollUsd"], 2500.0)
+
+        perf_invalid = self.build([paper_run(SLUG, FILLS, "Up")], config={"bankrollUsd": "invalid"})
+        self.assertEqual(perf_invalid["summary"]["bankrollUsd"], 1000.0)
 
 
 if __name__ == "__main__":
