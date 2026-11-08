@@ -843,7 +843,7 @@ def perf() -> dict:
          "detail": "Total-variation distance from the tape's minute mix (3,081/3,821/4,289/3,914/1,750)."},
     ]
 
-    redeem_due = [w for w in settled if w["winner"] and not w["redeemed"]]
+    redeem_due = [w for w in settled if w["winner"] and not w["redeemed"] and (w.get("payoutUsd") or 0) > 0]
     redeem_payout = round(sum(w["payoutUsd"] for w in redeem_due), 2)
 
     pid = loop_running()
@@ -881,7 +881,7 @@ def perf() -> dict:
              "Payout is not final until the market resolves; these are excluded from net, cost and the gate.")
     if redeem_due:
         note("warning", f"{len(redeem_due)} winning window{'s' if len(redeem_due) != 1 else ''} unredeemed (${redeem_payout:,.2f})",
-             "Hold-to-redeem is the strategy: paper only books the win when claimed. Run python bot/redeem.py --dry-run, then without the flag.")
+             "Hold-to-redeem is the strategy: paper only books the win when claimed. Redeem via the Dashboard or run python bot/redeem.py.")
     if zero_fills:
         note("danger", f"{zero_fills} fills at $0.00",
              "No capital moved, but they still count toward the fill median and skew the M4 bucket. Fix the late dust path before trusting fill fidelity.")
@@ -1510,6 +1510,20 @@ class Handler(BaseHTTPRequestHandler):
                 KILL_PATH.unlink(missing_ok=True)
                 log_event("info", "entries-resumed")
                 self._send(200, {"ok": True, "killSwitch": False})
+            elif self.path == "/api/bot/redeem":
+                if is_view_only():
+                    self._send(400, {
+                        "error": "Cannot redeem windows while in view-only mode. Switch back to live run first.",
+                        "isViewOnly": True,
+                    })
+                    return
+                from bot.redeem import execute_redeem
+                sel_run = get_selected_run_id()
+                try:
+                    res = execute_redeem(run_id=sel_run, dry_run=False)
+                    self._send(200, res)
+                except ValueError as err:
+                    self._send(400, {"error": str(err)})
             else:
                 self._send(404, {"error": "not found"})
         except (ConnectionError, BrokenPipeError):

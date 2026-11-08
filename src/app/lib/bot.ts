@@ -506,3 +506,15 @@ export const useResumeRun = () =>
 
 export const useStopBot = () =>
   useBotMutation(() => send<{ running: boolean; pid: number | null }>('/stop', 'POST'))
+
+export const useRedeemBot = () =>
+  useBotMutation(() =>
+    send<{
+      ok: boolean
+      redeemedCount: number
+      zeroCleanCount: number
+      totalWindowsMarked: number
+      payoutUsd: number
+      redeemedAt: string
+    }>('/redeem', 'POST'),
+  )
