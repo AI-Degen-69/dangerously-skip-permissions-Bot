@@ -756,8 +756,10 @@ def perf() -> dict:
     severity = {"danger": 0, "warning": 1, "info": 2, "success": 3}
     notes.sort(key=lambda n: severity.get(n["tone"], 9))
 
+    bankroll = float(load_config().get("bankrollUsd", BANKROLL_DEFAULT))
     return {
         "summary": {
+            "bankrollUsd": bankroll,
             "settled": len(settled), "pending": len(pending), "fills": fills,
             "costUsd": cost, "payoutUsd": payout, "netUsd": net,
             "roi": round(net / cost, 4) if cost else 0.0,

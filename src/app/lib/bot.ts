@@ -226,6 +226,7 @@ export interface PerfNote {
 
 export interface BotPerf {
   summary: {
+    bankrollUsd?: number
     settled: number
     pending: number
     fills: number

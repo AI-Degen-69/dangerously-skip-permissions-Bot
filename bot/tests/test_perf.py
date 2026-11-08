@@ -50,6 +50,7 @@ class PerfTests(unittest.TestCase):
         summary = perf["summary"]
 
         self.assertEqual(summary["settled"], 1)
+        self.assertEqual(summary["bankrollUsd"], 1000.0)
         self.assertEqual(summary["pending"], 0)
         self.assertEqual(summary["fills"], 3)
         self.assertAlmostEqual(summary["costUsd"], 20.6)
