@@ -125,7 +125,7 @@ Output format:
   - Unit test thread-safety under concurrent readers and writers.
   - *Verification*: `python -m unittest bot.tests.test_ws` (all green).
 
-- [ ] **Task 4: Trading Loop & Desk API Integration (`bot/live_paper.py` + `bot/api.py`)** `[Backend/Integration]` [Size: M]
+- [x] **Task 4: Trading Loop & Desk API Integration (`bot/live_paper.py` + `bot/api.py`)** `[Backend/Integration]` [Size: M]
   - Update `bot/live_paper.py`: In `trade_window()`, start `LiveBookStreamer(up_id, down_id)`.
   - Update `microprice_lean()` and `live_buy_price()` to query the streamer first.
   - Ensure streamer is cleanly stopped when the 5-minute window closes.

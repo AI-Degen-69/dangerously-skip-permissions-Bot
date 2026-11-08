@@ -3,7 +3,7 @@
 import threading
 import time
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from bot.signal import LeanSignal
 from bot.ws import ConnectionState, LiveBookStreamer, StreamTick, TokenBook
@@ -195,5 +195,42 @@ class StreamerLogicTests(unittest.TestCase):
         self.assertEqual(len(errors), 0)
 
 
+
+class LivePaperIntegrationTests(unittest.TestCase):
+    def test_live_buy_price_queries_streamer(self):
+        from bot.live_paper import live_buy_price
+        c = MagicMock()
+        streamer = MagicMock()
+        streamer.get_buy_price.return_value = 0.44
+
+        px = live_buy_price(c, "up_tok", streamer=streamer)
+        self.assertEqual(px, 0.44)
+        c.get_price.assert_not_called()
+
+    def test_microprice_lean_queries_streamer(self):
+        from bot.live_paper import microprice_lean
+        c = MagicMock()
+        streamer = MagicMock()
+        streamer.get_lean.return_value = LeanSignal(lean=0.5, confidence=0.8, source="wss-book-microprice")
+
+        sig = microprice_lean(c, "up", "down", streamer=streamer)
+        self.assertEqual(sig.lean, 0.5)
+        self.assertEqual(sig.source, "wss-book-microprice")
+        c.get_midpoint.assert_not_called()
+
+    def test_api_snapshot_includes_ws_and_recent_ticks(self):
+        import bot.api as api
+        with patch.object(api, "loop_running", return_value=True),              patch.object(api, "state", return_value={
+                 "slug": "btc-updown-5m-1",
+                 "ws": {"state": "connected", "is_connected": True},
+                 "recentTicks": [{"ts": 123, "outcome": "Up"}],
+             }):
+            snap = api.snapshot()
+            self.assertIn("ws", snap)
+            self.assertEqual(snap["ws"]["state"], "connected")
+            self.assertEqual(len(snap["recentTicks"]), 1)
+
+
 if __name__ == "__main__":
+
     unittest.main()

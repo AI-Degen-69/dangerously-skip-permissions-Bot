@@ -275,6 +275,15 @@ def snapshot() -> dict:
         "killSwitch": kills, "newsBlocked": False,
         "feed": {"price": None, "updatedAtMs": None, "history": []},
         "markets": markets, "positions": positions,
+        "ws": (st or {}).get("ws") or {
+            "state": "disconnected" if not loop_running() else "connecting",
+            "is_connected": False,
+            "is_stale": False,
+            "age_ms": None,
+            "reconnect_count": 0,
+            "tick_count": 0,
+        },
+        "recentTicks": (st or {}).get("recentTicks") or [],
     }
 
 
@@ -716,6 +725,18 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, {"online": False, "snapshot": None, "ageMs": age})
                 else:
                     self._send(200, {"online": True, "snapshot": snapshot(), "ageMs": age})
+            elif url.path == "/api/bot/ws-ticks":
+                st = state()
+                ws_status = (st or {}).get("ws") or {
+                    "state": "disconnected" if not loop_running() else "connecting",
+                    "is_connected": False,
+                    "is_stale": False,
+                    "age_ms": None,
+                    "reconnect_count": 0,
+                    "tick_count": 0,
+                }
+                ticks = (st or {}).get("recentTicks") or []
+                self._send(200, {"status": ws_status, "ticks": ticks})
             elif url.path == "/api/bot/events":
                 self._send(200, {"items": events(int(qs.get("limit", ["150"])[0]))})
             elif url.path == "/api/bot/trades":
