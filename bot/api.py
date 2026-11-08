@@ -16,9 +16,11 @@ import argparse
 import json
 import math
 import os
+import shutil
 import statistics
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 from datetime import datetime, timezone
@@ -30,6 +32,7 @@ sys.path.insert(0, str(ROOT))
 
 from bot.runs import (
     RunWorkspace,
+    find_run_id,
     get_active_run_id,
     list_all_runs,
     make_run_id,
@@ -228,6 +231,61 @@ def loop_running() -> int | None:
     except Exception:
         return None
     return pid if alive else None
+
+
+_loop_lock = threading.Lock()
+
+
+def stop_loop_process(timeout: float = 3.0) -> int | None:
+    with _loop_lock:
+        pid = loop_running()
+        if pid:
+            try:
+                if os.name == "nt":
+                    subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
+                else:
+                    os.kill(pid, 15)
+            except Exception:
+                pass
+            start_t = time.time()
+            while time.time() - start_t < timeout:
+                if not loop_running():
+                    break
+                time.sleep(0.1)
+            if os.name != "nt" and loop_running():
+                try:
+                    os.kill(pid, 9)
+                except Exception:
+                    pass
+            PID_PATH.unlink(missing_ok=True)
+            log_event("risk", "loop-stopped", detail={"pid": pid})
+        return pid
+
+
+def start_loop_process(run_id: str | None = None) -> int:
+    with _loop_lock:
+        existing_pid = loop_running()
+        if existing_pid:
+            return existing_pid
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        logf = LOG_PATH.open("ab")
+        cmd = [sys.executable, "bot/live_paper.py", "--loop"]
+        if run_id:
+            cmd.extend(["--run-id", run_id])
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(ROOT), stdout=logf, stderr=subprocess.STDOUT,
+            start_new_session=True)
+        PID_PATH.write_text(str(proc.pid))
+        if run_id:
+            try:
+                ws = resolve_run_workspace(run_id)
+                if ws:
+                    ws.pid_file.write_text(str(proc.pid))
+            except Exception:
+                pass
+        log_event("info", "loop-started", detail={"pid": proc.pid, "runId": run_id})
+        return proc.pid
 
 
 # ---------------------------------------------------------------- live reads
@@ -1219,45 +1277,153 @@ class Handler(BaseHTTPRequestHandler):
         body = self._body()
         try:
             if self.path == "/api/bot/start":
+                req_run_id = body.get("runId")
+                resume_requested = body.get("resume", False)
+                if req_run_id or resume_requested:
+                    if req_run_id:
+                        resolved_id = find_run_id(str(req_run_id))
+                        if not resolved_id:
+                            self._send(404, {"error": f"Run not found: {req_run_id}"})
+                            return
+                    else:
+                        target = get_selected_run_id() or get_active_run_id()
+                        resolved_id = find_run_id(str(target)) if target else None
+
+                    if resolved_id:
+                        prev_active = get_active_run_id()
+                        prev_selected = get_selected_run_id()
+                        stop_loop_process()
+
+                        if prev_active and STATE_PATH.exists():
+                            try:
+                                prev_ws = RunWorkspace(prev_active)
+                                if prev_ws.exists():
+                                    shutil.copyfile(STATE_PATH, prev_ws.root / "state.json")
+                            except Exception:
+                                pass
+
+                        try:
+                            set_active_run_id(resolved_id)
+                            set_selected_run_id(None)
+                            ws = RunWorkspace(resolved_id)
+                            ws.init_workspace(config=load_config(), mode="paper")
+                            ws.sync_to_paper_runs(RUNS_DIR)
+                            try:
+                                ws.settle_pending_windows(RUNS_DIR, max_windows=15)
+                            except Exception:
+                                pass
+                            if ws.events_file.exists() and ws.events_file.stat().st_size > 0:
+                                try:
+                                    shutil.copyfile(ws.events_file, EVENTS_PATH)
+                                except Exception:
+                                    pass
+                            else:
+                                if EVENTS_PATH.exists():
+                                    try:
+                                        EVENTS_PATH.unlink()
+                                    except Exception:
+                                        pass
+                            STATE_PATH.unlink(missing_ok=True)
+                            KILL_PATH.unlink(missing_ok=True)
+                            pid = start_loop_process(run_id=resolved_id)
+                        except Exception as err:
+                            if prev_active:
+                                set_active_run_id(prev_active)
+                            if prev_selected:
+                                set_selected_run_id(prev_selected)
+                            self._send(500, {"error": f"Failed to start run {resolved_id}: {err}"})
+                            return
+
+                        self._send(200, {"running": True, "pid": pid, "runId": resolved_id, "activeRunId": resolved_id, "isViewOnly": False})
+                        return
+
                 if is_view_only():
                     self._send(400, {
-                        "error": "Cannot start bot while inspecting a past run in view-only mode. Switch back to live run first.",
+                        "error": "Cannot start bot while inspecting a past run in view-only mode. Use 'Resume run' or switch back to live run first.",
                         "isViewOnly": True,
                     })
                     return
                 if loop_running():
                     self._send(200, {"running": True, "pid": loop_running(), "reason": "already-running"})
                     return
-                LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-                logf = LOG_PATH.open("ab")
-                proc = subprocess.Popen(
-                    [sys.executable, "bot/live_paper.py", "--loop"],
-                    cwd=str(ROOT), stdout=logf, stderr=subprocess.STDOUT,
-                    start_new_session=True)
-                PID_PATH.write_text(str(proc.pid))
-                log_event("info", "loop-started", detail={"pid": proc.pid})
-                self._send(200, {"running": True, "pid": proc.pid})
+                active_id = get_active_run_id()
+                pid = start_loop_process(run_id=active_id)
+                self._send(200, {"running": True, "pid": pid, "runId": active_id})
+            elif self.path == "/api/bot/resume-run":
+                target = body.get("runId") or get_selected_run_id() or get_active_run_id()
+                if not target:
+                    self._send(400, {"error": "No runId specified or selected to resume"})
+                    return
+                resolved_id = find_run_id(str(target))
+                if not resolved_id:
+                    self._send(404, {"error": f"Run {target} not found"})
+                    return
+                ws = RunWorkspace(resolved_id)
+                if not ws.exists():
+                    self._send(404, {"error": f"Run workspace {resolved_id} does not exist"})
+                    return
+
+                prev_active = get_active_run_id()
+                prev_selected = get_selected_run_id()
+                stop_loop_process()
+
+                if prev_active and STATE_PATH.exists():
+                    try:
+                        prev_ws = RunWorkspace(prev_active)
+                        if prev_ws.exists():
+                            shutil.copyfile(STATE_PATH, prev_ws.root / "state.json")
+                    except Exception:
+                        pass
+
+                try:
+                    set_active_run_id(resolved_id)
+                    set_selected_run_id(None)
+                    ws.init_workspace(config=load_config(), mode="paper")
+                    ws.sync_to_paper_runs(RUNS_DIR)
+                    try:
+                        ws.settle_pending_windows(RUNS_DIR, max_windows=15)
+                    except Exception:
+                        pass
+                    if ws.events_file.exists() and ws.events_file.stat().st_size > 0:
+                        try:
+                            shutil.copyfile(ws.events_file, EVENTS_PATH)
+                        except Exception:
+                            pass
+                    else:
+                        if EVENTS_PATH.exists():
+                            try:
+                                EVENTS_PATH.unlink()
+                            except Exception:
+                                pass
+                    STATE_PATH.unlink(missing_ok=True)
+                    KILL_PATH.unlink(missing_ok=True)
+
+                    pid = start_loop_process(run_id=resolved_id)
+                except Exception as err:
+                    if prev_active:
+                        set_active_run_id(prev_active)
+                    if prev_selected:
+                        set_selected_run_id(prev_selected)
+                    self._send(500, {"error": f"Failed to resume run {resolved_id}: {err}"})
+                    return
+
+                self._send(200, {
+                    "running": True,
+                    "pid": pid,
+                    "runId": resolved_id,
+                    "activeRunId": resolved_id,
+                    "isViewOnly": False,
+                })
             elif self.path == "/api/bot/stop":
                 if is_view_only():
                     self._send(400, {"error": "Cannot stop bot while in view-only mode", "isViewOnly": True})
                     return
-                pid = loop_running()
-                if pid:
-                    try:
-                        if os.name == "nt":
-                            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
-                                           capture_output=True)
-                        else:
-                            os.kill(pid, 15)
-                    except Exception:
-                        pass
-                    PID_PATH.unlink(missing_ok=True)
-                    log_event("risk", "loop-stopped", detail={"pid": pid})
+                pid = stop_loop_process()
                 active_id = get_active_run_id()
                 if active_id:
                     ws = RunWorkspace(active_id)
                     if ws.exists():
-                        ws.finalize(status="completed", summary=perf().get("summary", {}))
+                        ws.finalize(status="interrupted", summary=perf().get("summary", {}))
                 self._send(200, {"running": False, "pid": None})
             elif self.path == "/api/bot/select-run":
                 target_run_id = body.get("runId")

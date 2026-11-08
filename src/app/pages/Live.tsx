@@ -12,6 +12,7 @@ import {
   useBotTrades,
   useSetKillSwitch,
   useResumeBot,
+  useResumeRun,
   useStartBot,
   useBotWsTicks,
   type WsStatus,
@@ -55,6 +56,7 @@ export function Live() {
   const killSwitch = useSetKillSwitch()
   const control = useBotControl()
   const start = useStartBot()
+  const resumeRun = useResumeRun()
   const wsTicks = useBotWsTicks()
   const toast = useToast()
 
@@ -130,9 +132,25 @@ export function Live() {
             <Badge tone={data?.mode === 'live' ? 'danger' : 'warning'}>{data?.mode === 'live' ? 'LIVE money' : 'Paper'}</Badge>
             {running && stopped && <Badge tone="warning">Entries paused</Badge>}
             {isViewOnly ? (
-              <Badge tone="warning" dot>
-                View only
-              </Badge>
+              <div className="flex items-center gap-2">
+                <Badge tone="warning" dot>
+                  View only
+                </Badge>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  loading={resumeRun.isPending}
+                  onClick={() =>
+                    resumeRun.mutate(control.data?.selectedRunId, {
+                      onSuccess: (res) => toast(`Resumed run ${res.runId} on existing database`),
+                      onError: (err) => toast(`Failed to resume: ${(err as Error).message}`),
+                    })
+                  }
+                >
+                  <Play />
+                  Resume run
+                </Button>
+              </div>
             ) : (
               <Button
                 variant={stopped ? 'primary' : 'danger'}
