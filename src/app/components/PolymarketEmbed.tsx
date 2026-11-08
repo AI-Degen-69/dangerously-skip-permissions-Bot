@@ -133,7 +133,6 @@ const useOddsSeries = (market: MarketView): OddsPoint[] => {
 }
 
 const priceCents = (value: number | null) => (value === null ? '-' : `${Math.round(value * 100)}¢`)
-const pct = (value: number | null, digits = 3) => (value === null ? '-' : `${value.toFixed(digits)}%`)
 const clock = (ms: number) => new Date(ms).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
 // Elapsed time into the window, e.g. 5:00 — "passed", not "remaining".
 const mmss = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`

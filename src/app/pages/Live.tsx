@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Activity, Clock, Play, Radio, ShieldAlert, Target, Zap } from 'lucide-react'
+import { Activity, Play, Radio, ShieldAlert, Target, Zap } from 'lucide-react'
 
 import { PolymarketLiveChart } from '../components/PolymarketEmbed'
 import { eventMetrics, KIND_TONE, reasonLabel as label } from '../lib/labels'
@@ -335,7 +335,7 @@ function EventTitle({ event }: { event: BotEvent }) {
     )
   }
 
-  return <span className="truncate text-[13px]">{label(event.reason, event.detail, event.side)}</span>
+  return <span className="truncate text-[13px]">{label(event.reason)}</span>
 }
 
 function EventRow({ event }: { event: BotEvent }) {
@@ -948,16 +948,15 @@ function StraddleDeskStrip({ data, ws }: { data: BotSnapshot; ws?: WsStatus }) {
             </span>
             <span className="text-[11.5px] text-faint">of ${windowCap.toLocaleString()}</span>
           </div>
-          <div className="mt-1 flex items-center gap-2">
-            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-2">
-              <div
-                className="h-full rounded-full bg-accent transition-all duration-300"
-                style={{ width: `${Math.min(100, Math.round((fillsCount / targetFills) * 100))}%` }}
-              />
-            </div>
-            <span className="text-[11px] tabular-nums text-faint">
+          <div className="mt-1 flex items-center justify-between text-[11px] text-faint">
+            <span className="tabular-nums">
               {fillsCount}/{targetFills} clips
             </span>
+            {ws?.state === 'connected' && (
+              <span className="tabular-nums opacity-80">
+                WSS {ws.age_ms != null ? `${ws.age_ms}ms` : '<40ms'}
+              </span>
+            )}
           </div>
         </div>
       </div>
