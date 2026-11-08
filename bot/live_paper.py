@@ -44,6 +44,7 @@ EVENTS_PATH = Path("bot/events.jsonl")
 CONFIG_PATH = Path("bot/config.json")
 KILL_PATH = Path("bot/kill")
 CURRENT_WORKSPACE: RunWorkspace | None = None
+_STATE_LOCK = threading.Lock()
 
 
 def get_current_workspace() -> RunWorkspace | None:
@@ -159,7 +160,15 @@ def write_state(
         payload["ws"] = ws_status
     if recent_ticks is not None:
         payload["recentTicks"] = recent_ticks
-    STATE_PATH.write_text(json.dumps(payload))
+    with _STATE_LOCK:
+        tmp = STATE_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload))
+        for _ in range(5):
+            try:
+                tmp.replace(STATE_PATH)
+                break
+            except OSError:
+                time.sleep(0.005)
 
 
 def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool = True) -> dict:
@@ -200,19 +209,29 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
         rest_fallback_client=c,
     )
     streamer.start()
+    write_state(slug, end_ms, started_ms, fills, LeanSignal(0.0, 0.0, "observing"),
+                ws_status=streamer.get_status(), recent_ticks=streamer.get_recent_ticks(30))
     stop_sync = threading.Event()
 
     def _sync_loop():
         while not stop_sync.is_set():
             try:
-                if STATE_PATH.exists():
-                    raw = STATE_PATH.read_text()
-                    if isinstance(raw, str):
-                        st = json.loads(raw)
-                        st["updatedAtMs"] = int(time.time() * 1000)
-                        st["ws"] = streamer.get_status()
-                        st["recentTicks"] = streamer.get_recent_ticks(30)
-                        STATE_PATH.write_text(json.dumps(st))
+                with _STATE_LOCK:
+                    if STATE_PATH.exists():
+                        raw = STATE_PATH.read_text()
+                        if isinstance(raw, str):
+                            st = json.loads(raw)
+                            st["updatedAtMs"] = int(time.time() * 1000)
+                            st["ws"] = streamer.get_status()
+                            st["recentTicks"] = streamer.get_recent_ticks(30)
+                            tmp = STATE_PATH.with_suffix(".tmp")
+                            tmp.write_text(json.dumps(st))
+                            for _ in range(5):
+                                try:
+                                    tmp.replace(STATE_PATH)
+                                    break
+                                except OSError:
+                                    time.sleep(0.005)
             except (OSError, json.JSONDecodeError, TypeError):
                 pass
             stop_sync.wait(1.0)
@@ -282,17 +301,14 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
             tid = spec.up_token_id if outcome == "Up" else spec.down_token_id
             px = live_buy_price(c, tid, streamer=streamer)
             if px is None:
-                heartbeat()
                 streamer.wait_for_tick(timeout=0.25)
                 continue
             if px < min_fill:
                 log(f"M{minute} {outcome} dust {px:.3f} — skipped")
-                heartbeat()
                 streamer.wait_for_tick(timeout=0.25)
                 continue
             # M4 snipe: only take extremes late (matches CSV: extremes only in M4)
             if minute < 4 and (px <= 0.15 or px >= 0.85) and len(fills) % 4 != 0:
-                heartbeat()
                 streamer.wait_for_tick(timeout=0.25)
                 continue
 

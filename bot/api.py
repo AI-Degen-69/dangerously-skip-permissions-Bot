@@ -102,13 +102,24 @@ def runs() -> list[dict]:
     return out
 
 
+_LAST_STATE: tuple[str, dict] | None = None
+
+
 def state() -> dict | None:
+    global _LAST_STATE
     if is_view_only():
         return None
-    try:
-        return json.loads(STATE_PATH.read_text())
-    except Exception:
+    if not STATE_PATH.exists():
+        _LAST_STATE = None
         return None
+    for _ in range(3):
+        try:
+            st = json.loads(STATE_PATH.read_text())
+            _LAST_STATE = (str(STATE_PATH), st)
+            return st
+        except Exception:
+            time.sleep(0.005)
+    return _LAST_STATE[1] if _LAST_STATE and _LAST_STATE[0] == str(STATE_PATH) else None
 
 
 def events(limit: int = 150) -> list[dict]:
@@ -204,22 +215,31 @@ def visible_slots(now_ts: int | None = None) -> list[int]:
     return [slot]
 
 
+_WINDOW_SPEC_CACHE: dict[str, object] = {}
+_LAST_MARKETS: list[dict] = []
+_ODDS_HISTORY: dict[str, list[dict]] = {}
+
+
 def live_markets(cfg: dict) -> list[dict]:
     """Current 5m window with live CLOB quotes (public reads only).
 
     The next window joins at 4:45 (its last 15s), so the page shows one
     panel for most of the window and two only at the handover.
     """
+    global _LAST_MARKETS, _ODDS_HISTORY
     from bot.discovery import WINDOW_S, get_window
 
     c = client()
     out = []
     for s in visible_slots():
         slug = f"btc-updown-5m-{s}"
-        try:
-            spec = get_window(c, slug)
-        except Exception:
-            continue
+        spec = _WINDOW_SPEC_CACHE.get(slug)
+        if spec is None:
+            try:
+                spec = get_window(c, slug)
+                _WINDOW_SPEC_CACHE[slug] = spec
+            except Exception:
+                continue
         quotes: dict[str, dict[str, float | None]] = {}
         for side, tid in (("Up", spec.up_token_id), ("Down", spec.down_token_id)):
             try:
@@ -257,14 +277,43 @@ def live_markets(cfg: dict) -> list[dict]:
                 lean_side = None
             verdict = {"action": "enter", "reason": "straddle-open",
                        "detail": {"leanSide": lean_side or "even"}}
+
+        up_val = quotes.get("Up", {}).get("ask") or quotes.get("Up", {}).get("bid")
+        down_val = quotes.get("Down", {}).get("ask") or quotes.get("Down", {}).get("bid")
+        if up_val is not None and down_val is not None and (up_val + down_val) > 0:
+            imp_up = round(up_val / (up_val + down_val), 4)
+        elif up_val is not None:
+            imp_up = round(up_val, 4)
+        elif down_val is not None:
+            imp_up = round(1.0 - down_val, 4)
+        else:
+            imp_up = 0.5
+
+        hist = _ODDS_HISTORY.setdefault(slug, [])
+        if not hist:
+            hist.append({"t": start_ms, "v": 0.5})
+        if now_ms - hist[-1]["t"] >= 1500:
+            hist.append({"t": now_ms, "v": imp_up})
+            if len(hist) > 500:
+                hist.pop(0)
+
         out.append({
             "slug": slug, "interval": "5m", "startMs": start_ms, "endMs": end_ms,
             "price": None, "anchor": None, "movePct": None, "requiredMovePct": 0,
             "side": None, "quotes": quotes, "modelProb": None, "edge": None,
             "spreadCents": round(spread * 100, 1) if spread is not None else None,
             "secondsRemaining": remaining, "verdict": verdict,
+            "oddsHistory": list(hist),
         })
-    return out
+    if len(_ODDS_HISTORY) > 10:
+        active_slugs = {f"btc-updown-5m-{s}" for s in visible_slots()}
+        for old in list(_ODDS_HISTORY.keys()):
+            if old not in active_slugs:
+                _ODDS_HISTORY.pop(old, None)
+    if out:
+        _LAST_MARKETS = out
+        return out
+    return _LAST_MARKETS
 
 
 def snapshot() -> dict:

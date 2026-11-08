@@ -34,21 +34,22 @@ interface GateTick {
 }
 
 const MAX_SAMPLES = 500
-const useOddsSeries = (market: MarketView): OddsPoint[] => {
-  const series = useRef<{ slug: string; points: OddsPoint[] }>({ slug: '', points: [] })
+const ODDS_SERIES_CACHE = new Map<string, OddsPoint[]>()
 
+const useOddsSeries = (market: MarketView): OddsPoint[] => {
   // When the bot engine provides continuous server-side odds history, use it
   if (market.oddsHistory && market.oddsHistory.length > 0) {
-    series.current = { slug: market.slug, points: market.oddsHistory }
-    return series.current.points
+    ODDS_SERIES_CACHE.set(market.slug, market.oddsHistory)
+    return market.oddsHistory
   }
 
-  if (series.current.slug !== market.slug) {
-    series.current = { slug: market.slug, points: [] }
+  let points = ODDS_SERIES_CACHE.get(market.slug)
+  if (!points) {
+    points = []
+    ODDS_SERIES_CACHE.set(market.slug, points)
   }
   const now = Date.now()
   const v = impliedUp(market)
-  const points = series.current.points
 
   if (points.length === 0) {
     // Only anchor at 0.5 if we are actually at the start of the window
@@ -61,7 +62,7 @@ const useOddsSeries = (market: MarketView): OddsPoint[] => {
   }
   if (points.length > MAX_SAMPLES) points.splice(0, points.length - MAX_SAMPLES)
 
-  return series.current.points
+  return points
 }
 
 const priceCents = (value: number | null) => (value === null ? '-' : `${Math.round(value * 100)}¢`)
@@ -72,21 +73,26 @@ const mmss = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec %
 
 export function PolymarketLiveChart({ markets, positions = [] }: { markets: MarketView[]; positions?: PositionView[] }) {
   const { data: config } = useBotConfig()
+  const lastMarkets = useRef<MarketView[]>([])
+  if (markets.length > 0) {
+    lastMarkets.current = markets
+  }
+  const activeMarkets = markets.length > 0 ? markets : lastMarkets.current
 
   return (
     <div className="mt-3 grid gap-3 lg:grid-cols-2">
-      {markets.length === 0 ? (
+      {activeMarkets.length === 0 ? (
         <Card className="p-5 lg:col-span-2">
           <WaitingBody />
         </Card>
       ) : (
-        markets.map((market) => (
+        activeMarkets.map((market) => (
           <MarketChartPanel
             key={market.slug}
             market={market}
             position={positions.find((p) => p.slug === market.slug)}
             params={config?.config.intervalParams[market.interval] ?? null}
-            wide={markets.length === 1}
+            wide={activeMarkets.length === 1}
           />
         ))
       )}

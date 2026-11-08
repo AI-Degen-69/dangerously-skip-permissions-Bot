@@ -84,7 +84,9 @@ def heartbeat(state_path: Path | str = "bot/state.json") -> None:
         return
     st["updatedAtMs"] = int(time.time() * 1000)
     try:
-        p.write_text(json.dumps(st))
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(st))
+        tmp.replace(p)
     except OSError:
         pass
 

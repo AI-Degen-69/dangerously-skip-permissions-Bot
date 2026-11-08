@@ -349,6 +349,7 @@ export const useBotSnapshot = () =>
   useQuery({
     queryKey: ['bot', 'snapshot'],
     queryFn: () => getJson<{ online: boolean; snapshot: BotSnapshot | null; ageMs: number | null }>('/snapshot'),
+    placeholderData: (prev) => prev,
     refetchInterval: 2_000,
     refetchIntervalInBackground: true,
     retry: false,
@@ -382,6 +383,7 @@ export const useBotControl = () =>
   useQuery({
     queryKey: ['bot', 'control'],
     queryFn: () => getJson<BotControl>('/control'),
+    placeholderData: (prev) => prev,
     refetchInterval: 3_000,
     retry: false,
   })
@@ -390,6 +392,7 @@ export const useBotWsTicks = () =>
   useQuery({
     queryKey: ['bot', 'ws-ticks'],
     queryFn: () => getJson<{ status: WsStatus; ticks: WsTick[] }>('/ws-ticks'),
+    placeholderData: (prev) => prev,
     refetchInterval: 1_000,
     retry: false,
   })
