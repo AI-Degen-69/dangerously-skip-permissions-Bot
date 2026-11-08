@@ -1075,6 +1075,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 class QuietThreadingHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+
     def handle_error(self, request, client_address):
         ex = sys.exc_info()[1]
         if isinstance(ex, (ConnectionError, BrokenPipeError)):
@@ -1086,9 +1088,12 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Paper desk API (loopback only)")
     ap.add_argument("--port", type=int, default=8789)
     args = ap.parse_args()
-    server = QuietThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    print(f"paper desk API on http://127.0.0.1:{args.port} (loopback only, no keys)", flush=True)
-    server.serve_forever()
+    try:
+        server = QuietThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+        print(f"paper desk API on http://127.0.0.1:{args.port} (loopback only, no keys)", flush=True)
+        server.serve_forever()
+    except Exception as ex:
+        print(f"API server exit: {type(ex).__name__}: {ex}", file=sys.stderr, flush=True)
 
 
 if __name__ == "__main__":
