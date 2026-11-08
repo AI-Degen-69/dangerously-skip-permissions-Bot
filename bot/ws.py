@@ -32,6 +32,7 @@ STALE_THRESHOLD_S = 3.0
 FALLBACK_THRESHOLD_S = 10.0
 PING_INTERVAL_S = 15.0
 DEFAULT_BUFFER_SIZE = 100
+DEFAULT_REST_POLL_INTERVAL_S = 1.0
 
 
 class ConnectionState(str, Enum):
@@ -175,14 +176,17 @@ class LiveBookStreamer:
         buffer_size: int = DEFAULT_BUFFER_SIZE,
         endpoint: str = WS_ENDPOINT,
         on_tick: Callable[[StreamTick], None] | None = None,
+        rest_poll_interval: float = DEFAULT_REST_POLL_INTERVAL_S,
     ):
         self.up_token_id = str(up_token_id)
         self.down_token_id = str(down_token_id)
         self.rest_fallback_client = rest_fallback_client
         self.endpoint = endpoint
         self.on_tick = on_tick
+        self.rest_poll_interval = float(rest_poll_interval)
 
         self._lock = threading.RLock()
+        self._tick_cond = threading.Condition(self._lock)
         self.books: dict[str, TokenBook] = {
             self.up_token_id: TokenBook(asset_id=self.up_token_id, outcome="Up"),
             self.down_token_id: TokenBook(asset_id=self.down_token_id, outcome="Down"),
@@ -194,27 +198,43 @@ class LiveBookStreamer:
         self.tick_count: int = 0
 
         self._thread: threading.Thread | None = None
+        self._fallback_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
 
+    def wait_for_tick(self, timeout: float = 0.25) -> bool:
+        """Wait for next tick to arrive or timeout. Returns True if notified, False if timed out."""
+        with self._lock:
+            return self._tick_cond.wait(timeout=max(0.01, timeout))
+
     def start(self) -> None:
-        """Start the background streamer thread."""
+        """Start the background streamer and fallback poller threads."""
         with self._lock:
             if self._thread and self._thread.is_alive():
                 return
             self._stop_event.clear()
             self._thread = threading.Thread(target=self._run_loop, daemon=True, name="WSS-Streamer")
             self._thread.start()
+            if self.rest_fallback_client is not None:
+                self._fallback_thread = threading.Thread(
+                    target=self._fallback_worker, daemon=True, name="WSS-FallbackPoller"
+                )
+                self._fallback_thread.start()
 
     def stop(self) -> None:
-        """Stop the background streamer thread cleanly."""
+        """Stop the background streamer and fallback poller threads cleanly."""
         self._stop_event.set()
+        with self._lock:
+            self._tick_cond.notify_all()
         if self._loop and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._loop.stop)
+        if self._fallback_thread and self._fallback_thread.is_alive():
+            self._fallback_thread.join(timeout=1.0)
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
         with self._lock:
             self.state = ConnectionState.DISCONNECTED
+            self._tick_cond.notify_all()
 
     def _run_loop(self) -> None:
         self._loop = asyncio.new_event_loop()
@@ -291,6 +311,90 @@ class LiveBookStreamer:
                 except asyncio.CancelledError:
                     break
 
+    def _fallback_worker(self) -> None:
+        """Background poller when WebSocket is disconnected or stale (>3s)."""
+        while not self._stop_event.is_set():
+            now = time.time()
+            needs_fallback = False
+            with self._lock:
+                is_stale = (self.last_tick_ts > 0 and (now - self.last_tick_ts) > STALE_THRESHOLD_S)
+                if self.state != ConnectionState.CONNECTED or is_stale or self.last_tick_ts == 0:
+                    needs_fallback = True
+
+            if needs_fallback and self.rest_fallback_client is not None:
+                self._poll_rest_fallback()
+
+            self._stop_event.wait(self.rest_poll_interval)
+
+    def _poll_rest_fallback(self) -> None:
+        """Active fallback: query rest_fallback_client for fresh prices and emit ticks."""
+        if self.rest_fallback_client is None:
+            return
+        for tok_id, outcome in ((self.up_token_id, "Up"), (self.down_token_id, "Down")):
+            if self._stop_event.is_set():
+                break
+            best_ask = None
+            best_bid = None
+            midpoint = None
+            try:
+                px = float(self.rest_fallback_client.get_price(token_id=tok_id, side="BUY"))
+                if 0.0 < px <= 1.0:
+                    best_ask = px
+            except Exception:
+                pass
+            try:
+                px = float(self.rest_fallback_client.get_price(token_id=tok_id, side="SELL"))
+                if 0.0 < px <= 1.0:
+                    best_bid = px
+            except Exception:
+                pass
+            try:
+                mid = float(self.rest_fallback_client.get_midpoint(token_id=tok_id))
+                if 0.0 < mid <= 1.0:
+                    midpoint = mid
+            except Exception:
+                pass
+
+            if midpoint is None and best_ask is not None and best_bid is not None:
+                midpoint = round((best_bid + best_ask) / 2.0, 5)
+
+            if best_ask is None and best_bid is None and midpoint is None:
+                continue
+
+            now = time.time()
+            tick = None
+            with self._lock:
+                book = self.books[tok_id]
+                if best_ask is not None:
+                    book.best_ask = best_ask
+                if best_bid is not None:
+                    book.best_bid = best_bid
+                if midpoint is not None:
+                    book.midpoint = midpoint
+                book.last_update_ts = now
+                self.last_tick_ts = now
+                self.tick_count += 1
+                tick = StreamTick(
+                    ts=now,
+                    time_str=datetime.now(timezone.utc).strftime("%H:%M:%S.%f")[:-3],
+                    outcome=outcome,
+                    event_type="rest_poll",
+                    side=None,
+                    price=None,
+                    size=None,
+                    best_bid=book.best_bid,
+                    best_ask=book.best_ask,
+                    midpoint=book.midpoint,
+                )
+                self.ticks.append(tick)
+                self._tick_cond.notify_all()
+
+            if tick and self.on_tick:
+                try:
+                    self.on_tick(tick)
+                except Exception:
+                    pass
+
     def process_payload(self, data: Any) -> None:
         """Parse incoming JSON payload from WebSocket."""
         if isinstance(data, list):
@@ -336,6 +440,7 @@ class LiveBookStreamer:
                 ask_size=ask_sz,
             )
             self.ticks.append(tick)
+            self._tick_cond.notify_all()
         if self.on_tick:
             try:
                 self.on_tick(tick)
@@ -376,6 +481,7 @@ class LiveBookStreamer:
                 midpoint=book.midpoint,
             )
             self.ticks.append(tick)
+            self._tick_cond.notify_all()
         if self.on_tick:
             try:
                 self.on_tick(tick)
@@ -427,9 +533,11 @@ class LiveBookStreamer:
             book = self.books.get(token_id)
             now = time.time()
             is_fresh = (
-                self.state == ConnectionState.CONNECTED
-                and self.last_tick_ts > 0
-                and (now - self.last_tick_ts) <= FALLBACK_THRESHOLD_S
+                book is not None
+                and (
+                    (self.state == ConnectionState.CONNECTED and self.last_tick_ts > 0 and (now - self.last_tick_ts) <= FALLBACK_THRESHOLD_S)
+                    or (book.last_update_ts > 0 and (now - book.last_update_ts) <= STALE_THRESHOLD_S)
+                )
             )
             if is_fresh and book and book.best_ask is not None:
                 if 0.0 < book.best_ask <= 1.0:
@@ -455,9 +563,11 @@ class LiveBookStreamer:
             book = self.books.get(token_id)
             now = time.time()
             is_fresh = (
-                self.state == ConnectionState.CONNECTED
-                and self.last_tick_ts > 0
-                and (now - self.last_tick_ts) <= FALLBACK_THRESHOLD_S
+                book is not None
+                and (
+                    (self.state == ConnectionState.CONNECTED and self.last_tick_ts > 0 and (now - self.last_tick_ts) <= FALLBACK_THRESHOLD_S)
+                    or (book.last_update_ts > 0 and (now - book.last_update_ts) <= STALE_THRESHOLD_S)
+                )
             )
             if is_fresh and book and book.best_bid is not None:
                 if 0.0 < book.best_bid <= 1.0:
@@ -483,9 +593,11 @@ class LiveBookStreamer:
             book = self.books.get(token_id)
             now = time.time()
             is_fresh = (
-                self.state == ConnectionState.CONNECTED
-                and self.last_tick_ts > 0
-                and (now - self.last_tick_ts) <= FALLBACK_THRESHOLD_S
+                book is not None
+                and (
+                    (self.state == ConnectionState.CONNECTED and self.last_tick_ts > 0 and (now - self.last_tick_ts) <= FALLBACK_THRESHOLD_S)
+                    or (book.last_update_ts > 0 and (now - book.last_update_ts) <= STALE_THRESHOLD_S)
+                )
             )
             if is_fresh and book and book.midpoint is not None:
                 if 0.0 < book.midpoint <= 1.0:

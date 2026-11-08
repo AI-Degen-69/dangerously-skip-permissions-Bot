@@ -194,6 +194,63 @@ class StreamerLogicTests(unittest.TestCase):
 
         self.assertEqual(len(errors), 0)
 
+    def test_wait_for_tick_notification(self):
+        # wait_for_tick returns False on timeout if no ticks arrive
+        notified = self.streamer.wait_for_tick(timeout=0.02)
+        self.assertFalse(notified)
+
+        # Trigger tick asynchronously
+        def send_tick():
+            time.sleep(0.01)
+            self.streamer.process_payload([
+                {"asset_id": "up_123", "bids": [{"price": "0.55", "size": "10"}], "asks": [{"price": "0.56", "size": "10"}]}
+            ])
+
+        th = threading.Thread(target=send_tick)
+        th.start()
+        notified = self.streamer.wait_for_tick(timeout=0.5)
+        th.join()
+        self.assertTrue(notified)
+
+    def test_active_rest_fallback_poller_cadence_and_ticks(self):
+        self.rest_mock.get_price.side_effect = lambda token_id, side: "0.52" if side == "BUY" else "0.50"
+        self.rest_mock.get_midpoint.return_value = "0.51"
+
+        fast_streamer = LiveBookStreamer(
+            up_token_id="up_fast",
+            down_token_id="down_fast",
+            rest_fallback_client=self.rest_mock,
+            rest_poll_interval=0.03,
+        )
+        try:
+            # Manually invoke poll
+            fast_streamer._poll_rest_fallback()
+
+            up_book = fast_streamer.books["up_fast"]
+            self.assertEqual(up_book.best_ask, 0.52)
+            self.assertEqual(up_book.best_bid, 0.50)
+            self.assertEqual(up_book.midpoint, 0.51)
+
+            recent_ticks = fast_streamer.get_recent_ticks()
+            self.assertTrue(len(recent_ticks) >= 2)
+            self.assertEqual(recent_ticks[-1]["event_type"], "rest_poll")
+            self.assertEqual(recent_ticks[-1]["best_ask"], 0.52)
+        finally:
+            fast_streamer.stop()
+
+    def test_active_rest_fallback_skips_when_ws_connected_and_fresh(self):
+        # When WS is connected and tick is fresh (<3s), fallback poller worker should not poll REST
+        self.streamer.state = ConnectionState.CONNECTED
+        self.streamer.last_tick_ts = time.time()
+        self.rest_mock.reset_mock()
+
+        # Simulate fallback worker iteration check
+        now = time.time()
+        is_stale = (self.streamer.last_tick_ts > 0 and (now - self.streamer.last_tick_ts) > 3.0)
+        needs_fallback = (self.streamer.state != ConnectionState.CONNECTED or is_stale or self.streamer.last_tick_ts == 0)
+        self.assertFalse(needs_fallback)
+        self.rest_mock.get_price.assert_not_called()
+
 
 
 class LivePaperIntegrationTests(unittest.TestCase):

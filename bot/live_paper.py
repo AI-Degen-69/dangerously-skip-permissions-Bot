@@ -169,12 +169,14 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
         while not stop_sync.is_set():
             try:
                 if STATE_PATH.exists():
-                    st = json.loads(STATE_PATH.read_text())
-                    st["updatedAtMs"] = int(time.time() * 1000)
-                    st["ws"] = streamer.get_status()
-                    st["recentTicks"] = streamer.get_recent_ticks(30)
-                    STATE_PATH.write_text(json.dumps(st))
-            except (OSError, json.JSONDecodeError):
+                    raw = STATE_PATH.read_text()
+                    if isinstance(raw, str):
+                        st = json.loads(raw)
+                        st["updatedAtMs"] = int(time.time() * 1000)
+                        st["ws"] = streamer.get_status()
+                        st["recentTicks"] = streamer.get_recent_ticks(30)
+                        STATE_PATH.write_text(json.dumps(st))
+            except (OSError, json.JSONDecodeError, TypeError):
                 pass
             stop_sync.wait(1.0)
 
@@ -218,14 +220,26 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
             write_state(slug, end_ms, started_ms, fills, lean,
                         ws_status=streamer.get_status(), recent_ticks=streamer.get_recent_ticks(30))
 
-        # --- work M1-M3 + M4 snipe: distribute remaining fills over time left ---
+        # --- work M1-M3 + M4 snipe: dynamic event-driven fills on live ticks ---
         end = slot + WINDOW_S - stop_before  # stop before close
+        last_fill_ts = 0.0
+        last_fill_tick_count = -1
+        min_fill_spacing = 0.5  # minimum seconds between fills to prevent runaway burning on static tick
+
         while True:
             now = int(datetime.now(timezone.utc).timestamp())
             if now >= end or len(fills) >= target_total:
                 break
             if check_window(len(fills), cost, state):
                 break
+
+            # Dynamic anti-runaway gating: if tick hasn't changed and min spacing hasn't elapsed, wait
+            current_tick_count = streamer.tick_count
+            time_since_fill = time.time() - last_fill_ts
+            if current_tick_count == last_fill_tick_count and time_since_fill < min_fill_spacing:
+                streamer.wait_for_tick(timeout=0.1)
+                continue
+
             lean = microprice_lean(c, spec.up_token_id, spec.down_token_id, streamer=streamer)
             minute = min(max((now - slot) // 60, 0), 4)
             up_bias = 0.5 + lean.lean * 0.25 * (0.5 + 0.5 * lean.confidence)
@@ -237,32 +251,34 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
             px = live_buy_price(c, tid, streamer=streamer)
             if px is None:
                 heartbeat()
-                time.sleep(5)
+                streamer.wait_for_tick(timeout=0.25)
                 continue
             if px < min_fill:
                 log(f"M{minute} {outcome} dust {px:.3f} — skipped")
                 heartbeat()
-                time.sleep(5)
+                streamer.wait_for_tick(timeout=0.25)
                 continue
             # M4 snipe: only take extremes late (matches CSV: extremes only in M4)
             if minute < 4 and (px <= 0.15 or px >= 0.85) and len(fills) % 4 != 0:
                 heartbeat()
-                time.sleep(5)
+                streamer.wait_for_tick(timeout=0.25)
                 continue
             shares = clip_shares(clip_default if len(fills) % clip_nth == 0 else median_shares)
             shares = min(shares, max_shares)
             fills.append({"minute": minute, "ts": int(time.time() * 1000), "outcome": outcome,
                           "price": px, "shares": shares, "usd": round(px * shares, 2)})
             cost += px * shares
+            last_fill_ts = time.time()
+            last_fill_tick_count = current_tick_count
+
             if len(fills) % 10 == 0:
                 log_event("hold", "thesis-intact", slug, side=outcome,
                           detail={"bid": px, "fills": len(fills)})
             log(f"M{minute} {outcome} {shares:.1f} @ {px:.3f} (lean {lean.lean:+.2f})")
             write_state(slug, end_ms, started_ms, fills, lean,
                         ws_status=streamer.get_status(), recent_ticks=streamer.get_recent_ticks(30))
-            left = end - int(datetime.now(timezone.utc).timestamp())
-            remaining = target_total - len(fills)
-            time.sleep(max(2.0, min(20.0, left / max(remaining, 1))))
+            # Event-driven wait: react instantly to next tick or time out after short cadence
+            streamer.wait_for_tick(timeout=0.25)
     finally:
         stop_sync.set()
         sync_thread.join(timeout=1.0)
