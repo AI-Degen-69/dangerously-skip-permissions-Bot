@@ -1,4 +1,4 @@
-import { Activity, Clock, Play, ShieldAlert, Target, Zap } from 'lucide-react'
+import { Activity, Clock, Play, Radio, ShieldAlert, Target, Zap } from 'lucide-react'
 
 import { PolymarketLiveChart } from '../components/PolymarketEmbed'
 import { eventMetrics, KIND_TONE, reasonLabel as label } from '../lib/labels'
@@ -12,6 +12,9 @@ import {
   useSetKillSwitch,
   useResumeBot,
   useStartBot,
+  useBotWsTicks,
+  type WsStatus,
+  type WsTick,
   type BotEvent,
   type BotSnapshot,
   type BotTrade,
@@ -50,9 +53,12 @@ export function Live() {
   const killSwitch = useSetKillSwitch()
   const control = useBotControl()
   const start = useStartBot()
+  const wsTicks = useBotWsTicks()
   const toast = useToast()
 
   const data = snapshot.data?.snapshot ?? null
+  const ws = wsTicks.data?.status ?? data?.ws
+  const ticks = wsTicks.data?.ticks ?? data?.recentTicks ?? []
   const online = Boolean(snapshot.data?.online && data)
   const stopped = data?.killSwitch ?? false
   const running = control.data?.running ?? false
@@ -72,6 +78,28 @@ export function Live() {
             <Badge tone={snapshot.isError && !snapshot.data ? 'neutral' : running ? 'success' : 'neutral'} dot>
               {snapshot.isError && !snapshot.data ? 'No signal' : running ? 'Streaming' : 'Stopped'}
             </Badge>
+            {ws && (
+              <Badge
+                tone={
+                  ws.state === 'connected'
+                    ? 'success'
+                    : ws.state === 'stale'
+                    ? 'warning'
+                    : ws.state === 'fallback_active'
+                    ? 'danger'
+                    : 'neutral'
+                }
+                dot
+              >
+                {ws.state === 'connected'
+                  ? `WSS Live (${ws.age_ms != null ? `${ws.age_ms}ms` : '<40ms'})`
+                  : ws.state === 'stale'
+                  ? `WSS Stale (${((ws.age_ms ?? 3000) / 1000).toFixed(1)}s)`
+                  : ws.state === 'fallback_active'
+                  ? 'REST Fallback'
+                  : 'WSS Disconnected'}
+              </Badge>
+            )}
             <Badge tone={data?.mode === 'live' ? 'danger' : 'warning'}>{data?.mode === 'live' ? 'LIVE money' : 'Paper'}</Badge>
             {running && stopped && <Badge tone="warning">Entries paused</Badge>}
             <Button
@@ -200,6 +228,8 @@ export function Live() {
                 <RiskPanel data={data} />
               </div>
             </div>
+
+            <WssStreamTape ws={ws} ticks={ticks} />
 
             <Trades items={trades.data?.items ?? []} />
           </>
@@ -443,5 +473,165 @@ function Spark({ points }: { points: { ts: number; value: number }[] }) {
     <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full" preserveAspectRatio="none" aria-hidden>
       <path d={path} fill="none" stroke={up ? 'var(--color-success)' : 'var(--color-danger)'} strokeWidth="1.75" vectorEffect="non-scaling-stroke" />
     </svg>
+  )
+}
+
+
+function WssStreamTape({ ws, ticks }: { ws?: WsStatus; ticks?: WsTick[] }) {
+  const isConnected = ws?.state === 'connected'
+  const isStale = ws?.state === 'stale'
+  const isFallback = ws?.state === 'fallback_active'
+
+  return (
+    <Card className="mt-3 p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
+        <div className="flex items-center gap-2.5">
+          <span className="grid size-8 place-items-center rounded-card bg-accent-soft text-accent">
+            <Radio className="size-4 animate-pulse" />
+          </span>
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-[14px] font-semibold">Live WSS Orderbook Stream</h2>
+              <Badge
+                tone={isConnected ? 'success' : isStale ? 'warning' : isFallback ? 'danger' : 'neutral'}
+                dot
+              >
+                {isConnected
+                  ? 'Connected (<40ms)'
+                  : isStale
+                  ? 'Stale Feed (>3s)'
+                  : isFallback
+                  ? 'REST Fallback Active'
+                  : 'Disconnected'}
+              </Badge>
+            </div>
+            <p className="font-mono text-[11px] text-faint">wss://ws-subscriptions-clob.polymarket.com/ws/market</p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {ws?.age_ms != null && <MetricChip text={`Tick Age: ${ws.age_ms}ms`} />}
+          <MetricChip text={`Ticks: ${ws?.tick_count ?? 0}`} />
+          {ws?.reconnect_count ? <MetricChip text={`Reconnects: ${ws.reconnect_count}`} /> : null}
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="rounded-card border border-line bg-surface-1 p-3.5">
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-1.5 text-[13px] font-semibold text-success">
+              <span className="size-2 rounded-full bg-success" /> Up Outcome Book
+            </span>
+            <span className="text-[11.5px] text-faint">
+              depth: {ws?.up_book?.bid_depth ?? 0}b / {ws?.up_book?.ask_depth ?? 0}a
+            </span>
+          </div>
+          <div className="mt-2.5 grid grid-cols-3 gap-2 text-center text-[12px]">
+            <div className="rounded bg-surface-2 p-1.5">
+              <div className="text-[10.5px] uppercase text-faint">Best Bid</div>
+              <div className="font-semibold tabular-nums text-fg">{cents(ws?.up_book?.best_bid)}</div>
+            </div>
+            <div className="rounded bg-surface-2 p-1.5">
+              <div className="text-[10.5px] uppercase text-faint">Midpoint</div>
+              <div className="font-semibold tabular-nums text-accent">
+                {ws?.up_book?.midpoint != null ? ws.up_book.midpoint.toFixed(3) : '—'}
+              </div>
+            </div>
+            <div className="rounded bg-surface-2 p-1.5">
+              <div className="text-[10.5px] uppercase text-faint">Best Ask</div>
+              <div className="font-semibold tabular-nums text-fg">{cents(ws?.up_book?.best_ask)}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-card border border-line bg-surface-1 p-3.5">
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-1.5 text-[13px] font-semibold text-accent">
+              <span className="size-2 rounded-full bg-accent" /> Down Outcome Book
+            </span>
+            <span className="text-[11.5px] text-faint">
+              depth: {ws?.down_book?.bid_depth ?? 0}b / {ws?.down_book?.ask_depth ?? 0}a
+            </span>
+          </div>
+          <div className="mt-2.5 grid grid-cols-3 gap-2 text-center text-[12px]">
+            <div className="rounded bg-surface-2 p-1.5">
+              <div className="text-[10.5px] uppercase text-faint">Best Bid</div>
+              <div className="font-semibold tabular-nums text-fg">{cents(ws?.down_book?.best_bid)}</div>
+            </div>
+            <div className="rounded bg-surface-2 p-1.5">
+              <div className="text-[10.5px] uppercase text-faint">Midpoint</div>
+              <div className="font-semibold tabular-nums text-accent">
+                {ws?.down_book?.midpoint != null ? ws.down_book.midpoint.toFixed(3) : '—'}
+              </div>
+            </div>
+            <div className="rounded bg-surface-2 p-1.5">
+              <div className="text-[10.5px] uppercase text-faint">Best Ask</div>
+              <div className="font-semibold tabular-nums text-fg">{cents(ws?.down_book?.best_ask)}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-[12.5px] font-semibold uppercase tracking-wider text-muted">Recent Stream Ticks</h3>
+          <span className="text-[11.5px] text-faint">Millisecond precision tape</span>
+        </div>
+
+        {!ticks || ticks.length === 0 ? (
+          <EmptyState icon={<Radio />} title="Awaiting ticks" description="Real-time orderbook events stream here as they land from WebSocket." />
+        ) : (
+          <div className="scrollbar-thin mt-2 max-h-[280px] overflow-y-auto">
+            <table className="w-full text-left text-[12.5px]">
+              <thead className="sticky top-0 border-b border-line bg-surface-1 text-[11px] uppercase tracking-wide text-faint">
+                <tr>
+                  <th className="py-1.5 font-medium">Timestamp</th>
+                  <th className="py-1.5 font-medium">Event</th>
+                  <th className="py-1.5 font-medium">Outcome</th>
+                  <th className="py-1.5 font-medium">Side</th>
+                  <th className="py-1.5 text-right font-medium">Price</th>
+                  <th className="py-1.5 text-right font-medium">Size</th>
+                  <th className="py-1.5 text-right font-medium">Midpoint</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {[...ticks].reverse().map((t, idx) => (
+                  <tr key={`${t.ts}-${idx}`} className="transition-colors hover:bg-surface-2/50">
+                    <td className="py-1.5 font-mono text-[11.5px] text-muted">{t.time_str || clock(t.ts * 1000)}</td>
+                    <td className="py-1.5">
+                      <span
+                        className={cx(
+                          'inline-flex items-center rounded px-1.5 py-0.5 font-mono text-[10.5px] font-medium',
+                          t.event_type === 'snapshot' ? 'bg-info-soft text-info' : 'bg-surface-2 text-fg',
+                        )}
+                      >
+                        {t.event_type === 'snapshot' ? '📦 SNAP' : '⚡ TICK'}
+                      </span>
+                    </td>
+                    <td className="py-1.5">
+                      <Badge tone={t.outcome === 'Up' ? 'success' : 'accent'} className="px-1.5 py-0 text-[10.5px]">
+                        {t.outcome}
+                      </Badge>
+                    </td>
+                    <td className="py-1.5 text-[11.5px] font-medium">
+                      {t.side ? (
+                        <span className={t.side === 'BUY' ? 'text-success' : 'text-danger'}>{t.side}</span>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                    <td className="py-1.5 text-right font-mono tabular-nums">{t.price != null ? cents(t.price) : '—'}</td>
+                    <td className="py-1.5 text-right font-mono tabular-nums text-muted">{t.size != null ? t.size.toFixed(1) : '—'}</td>
+                    <td className="py-1.5 text-right font-mono tabular-nums text-accent">
+                      {t.midpoint != null ? t.midpoint.toFixed(3) : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </Card>
   )
 }

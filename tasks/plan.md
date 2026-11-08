@@ -133,7 +133,7 @@ Output format:
   - Keep `bot/tests/test_bot.py` mocks aligned so existing test suite continues passing.
   - *Verification*: `python -m unittest discover -s bot/tests`.
 
-- [ ] **Task 5: Dashboard UI Live Stream Panel & Health Badge (`src/app/pages/Live.tsx` + `src/app/lib/bot.ts`)** `[Frontend/UI]` [Size: M]
+- [x] **Task 5: Dashboard UI Live Stream Panel & Health Badge (`src/app/pages/Live.tsx` + `src/app/lib/bot.ts`)** `[Frontend/UI]` [Size: M]
   - Update `src/app/lib/bot.ts` with `WsStatus` types and hook queries.
   - Add connection status badge to `Live.tsx` page header:
     - `🟢 WSS Live` (active, low latency)

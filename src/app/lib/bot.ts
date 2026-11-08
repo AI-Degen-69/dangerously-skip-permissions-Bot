@@ -55,6 +55,43 @@ export interface PositionView {
   stalledSec: number | null
 }
 
+export interface WsBookSummary {
+  asset_id: string
+  outcome: string
+  best_bid: number | null
+  best_ask: number | null
+  midpoint: number | null
+  bid_depth: number
+  ask_depth: number
+  last_update_ts: number
+}
+
+export interface WsStatus {
+  state: 'connecting' | 'connected' | 'stale' | 'disconnected' | 'fallback_active'
+  is_connected: boolean
+  is_stale: boolean
+  age_ms: number | null
+  reconnect_count: number
+  tick_count: number
+  up_book?: WsBookSummary
+  down_book?: WsBookSummary
+}
+
+export interface WsTick {
+  ts: number
+  time_str: string
+  outcome: Side
+  event_type: 'snapshot' | 'price_change'
+  side: 'BUY' | 'SELL' | null
+  price: number | null
+  size: number | null
+  best_bid: number | null
+  best_ask: number | null
+  midpoint: number | null
+  bid_size?: number | null
+  ask_size?: number | null
+}
+
 export interface BotSnapshot {
   version: 1
   mode: 'paper' | 'live'
@@ -81,6 +118,8 @@ export interface BotSnapshot {
   feed: { price: number | null; updatedAtMs: number | null; history: { ts: number; value: number }[] }
   markets: MarketView[]
   positions: PositionView[]
+  ws?: WsStatus
+  recentTicks?: WsTick[]
 }
 
 export interface BotEvent {
@@ -329,6 +368,14 @@ export const useBotControl = () =>
     queryKey: ['bot', 'control'],
     queryFn: () => getJson<BotControl>('/control'),
     refetchInterval: 3_000,
+    retry: false,
+  })
+
+export const useBotWsTicks = () =>
+  useQuery({
+    queryKey: ['bot', 'ws-ticks'],
+    queryFn: () => getJson<{ status: WsStatus; ticks: WsTick[] }>('/ws-ticks'),
+    refetchInterval: 1_000,
     retry: false,
   })
 
