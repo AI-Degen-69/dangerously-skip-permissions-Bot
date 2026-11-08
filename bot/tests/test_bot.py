@@ -406,6 +406,114 @@ class TradesViewLiveTests(unittest.TestCase):
         self.assertEqual(snap["equityUsd"], snap["bankrollUsd"] + 10.0)
         self.assertEqual(snap["risk"]["consecutiveLosses"], 0)
 
+    def test_snapshot_position_active_when_price_zero_and_window_running(self):
+        import time
+        import bot.api as api
+        from types import SimpleNamespace
+
+        now_ms = int(time.time() * 1000)
+        st = {
+            "slug": "btc-updown-5m-123",
+            "endMs": now_ms + 60_000,
+            "startedAtMs": now_ms - 240_000,
+            "fills": [
+                {"outcome": "Down", "shares": 90, "usd": 34.20},
+            ],
+        }
+        mock_spec = SimpleNamespace(up_token_id="tok_up", down_token_id="tok_down")
+        mock_c = MagicMock()
+        # Price is 0 for BUY and SELL
+        mock_c.get_price.return_value = 0.0
+        mock_c.get_midpoint.side_effect = RuntimeError("no midpoint")
+
+        with patch.object(api, "state", return_value=st), \
+             patch.object(api, "client", return_value=mock_c), \
+             patch("bot.discovery.get_window", return_value=mock_spec), \
+             patch.object(api, "is_view_only", return_value=False), \
+             patch.object(api, "live_markets", return_value=[]):
+            snap = api.snapshot()
+
+        positions = snap["positions"]
+        self.assertEqual(len(positions), 1)
+        pos = positions[0]
+        self.assertEqual(pos["side"], "Down")
+        self.assertFalse(pos["resolving"])
+        self.assertGreater(pos["secondsLeft"], 0)
+        self.assertEqual(pos["mark"], 0.0)
+        self.assertEqual(pos["unrealizedPnlUsd"], -34.20)
+
+    def test_snapshot_position_uses_bid_when_ask_is_zero(self):
+        import time
+        import bot.api as api
+        from types import SimpleNamespace
+
+        now_ms = int(time.time() * 1000)
+        st = {
+            "slug": "btc-updown-5m-123",
+            "endMs": now_ms + 53_000,
+            "startedAtMs": now_ms - 247_000,
+            "fills": [
+                {"outcome": "Down", "shares": 90, "usd": 34.20},
+            ],
+        }
+        mock_spec = SimpleNamespace(up_token_id="tok_up", down_token_id="tok_down")
+        mock_c = MagicMock()
+        # Ask is 0, Bid is 0.01 (1¢)
+        def _get_price(token_id, side):
+            if side == "BUY":
+                return 0.0
+            return 0.01
+        mock_c.get_price.side_effect = _get_price
+
+        with patch.object(api, "state", return_value=st), \
+             patch.object(api, "client", return_value=mock_c), \
+             patch("bot.discovery.get_window", return_value=mock_spec), \
+             patch.object(api, "is_view_only", return_value=False), \
+             patch.object(api, "live_markets", return_value=[]):
+            snap = api.snapshot()
+
+        positions = snap["positions"]
+        self.assertEqual(len(positions), 1)
+        pos = positions[0]
+        self.assertEqual(pos["side"], "Down")
+        self.assertFalse(pos["resolving"])
+        self.assertGreater(pos["secondsLeft"], 0)
+        self.assertEqual(pos["mark"], 0.01)
+        self.assertEqual(pos["unrealizedPnlUsd"], round(0.01 * 90 - 34.20, 2))
+
+    def test_snapshot_position_resolving_when_window_ended(self):
+        import time
+        import bot.api as api
+        from types import SimpleNamespace
+
+        now_ms = int(time.time() * 1000)
+        st = {
+            "slug": "btc-updown-5m-123",
+            "endMs": now_ms - 5_000,  # window ended 5s ago
+            "startedAtMs": now_ms - 305_000,
+            "fills": [
+                {"outcome": "Down", "shares": 90, "usd": 34.20},
+            ],
+        }
+        mock_spec = SimpleNamespace(up_token_id="tok_up", down_token_id="tok_down")
+        mock_c = MagicMock()
+
+        with patch.object(api, "state", return_value=st), \
+             patch.object(api, "client", return_value=mock_c), \
+             patch("bot.discovery.get_window", return_value=mock_spec), \
+             patch.object(api, "is_view_only", return_value=False), \
+             patch.object(api, "live_markets", return_value=[]):
+            snap = api.snapshot()
+
+        positions = snap["positions"]
+        self.assertEqual(len(positions), 1)
+        pos = positions[0]
+        self.assertEqual(pos["side"], "Down")
+        self.assertTrue(pos["resolving"])
+        self.assertEqual(pos["secondsLeft"], 0)
+        self.assertIsNone(pos["mark"])
+        self.assertIsNone(pos["unrealizedPnlUsd"])
+
 
 if __name__ == "__main__":
     unittest.main()
