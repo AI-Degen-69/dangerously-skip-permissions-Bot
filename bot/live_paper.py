@@ -32,6 +32,7 @@ from polymarket import PublicClient
 
 from bot import constants as C
 from bot.discovery import WINDOW_S, current_slot, get_window
+from bot.executor import m_quotas, pick_side
 from bot.risk import RiskState, assert_single_window, check_window, clip_shares, heartbeat
 from bot.runs import RunWorkspace, get_active_run_id, make_run_id, set_active_run_id
 from bot.signal import LeanSignal
@@ -43,6 +44,7 @@ EVENTS_PATH = Path("bot/events.jsonl")
 CONFIG_PATH = Path("bot/config.json")
 KILL_PATH = Path("bot/kill")
 CURRENT_WORKSPACE: RunWorkspace | None = None
+_STATE_LOCK = threading.Lock()
 
 
 def get_current_workspace() -> RunWorkspace | None:
@@ -135,6 +137,42 @@ def live_buy_price(c: PublicClient, token_id: str, streamer: LiveBookStreamer | 
     return px
 
 
+def _atomic_write_json(path: Path, data: object) -> None:
+    raw = json.dumps(data)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(raw)
+    for _ in range(5):
+        try:
+            tmp.replace(path)
+            return
+        except OSError:
+            time.sleep(0.005)
+    try:
+        path.write_text(raw)
+    except OSError as ex:
+        print(f"warning: failed to persist {path}: {ex}", flush=True)
+
+
+def _settled_net_usd(path: Path, day_start: int) -> float:
+    tail = path.stem.rsplit("-", 1)[-1]
+    if not tail.isdigit() or int(tail) < day_start:
+        return 0.0
+    try:
+        d = json.loads(path.read_text())
+        if not isinstance(d, dict) or d.get("pending"):
+            return 0.0
+        raw_net = d.get("net_usd")
+        return float(raw_net) if raw_net is not None else 0.0
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return 0.0
+
+
+def _current_daily_pnl(day_start: int) -> float:
+    if not RUNS_DIR.exists():
+        return 0.0
+    return sum(_settled_net_usd(p, day_start) for p in RUNS_DIR.glob("btc-updown-5m-*.json"))
+
+
 def write_state(
     slug: str,
     end_ms: int,
@@ -158,7 +196,8 @@ def write_state(
         payload["ws"] = ws_status
     if recent_ticks is not None:
         payload["recentTicks"] = recent_ticks
-    STATE_PATH.write_text(json.dumps(payload))
+    with _STATE_LOCK:
+        _atomic_write_json(STATE_PATH, payload)
 
 
 def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool = True) -> dict:
@@ -179,7 +218,8 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
     target_total = entry.get("medianFillsTarget", int(C.MEDIAN_TRADES_PER_WINDOW))
     min_spacing_move = float(entry.get("minSpacingMoveSec", 0.5))
     min_spacing_static = float(entry.get("minSpacingStaticSec", 3.0))
-    state = RiskState()
+    day_start = int(datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+    state = RiskState(daily_loss_usd=_current_daily_pnl(day_start))
     fills: list[dict] = []
     cost = 0.0
     end_ms = (slot + WINDOW_S) * 1000
@@ -191,19 +231,22 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
         rest_fallback_client=c,
     )
     streamer.start()
+    write_state(slug, end_ms, started_ms, fills, LeanSignal(0.0, 0.0, "observing"),
+                ws_status=streamer.get_status(), recent_ticks=streamer.get_recent_ticks(30))
     stop_sync = threading.Event()
 
     def _sync_loop():
         while not stop_sync.is_set():
             try:
-                if STATE_PATH.exists():
-                    raw = STATE_PATH.read_text()
-                    if isinstance(raw, str):
-                        st = json.loads(raw)
-                        st["updatedAtMs"] = int(time.time() * 1000)
-                        st["ws"] = streamer.get_status()
-                        st["recentTicks"] = streamer.get_recent_ticks(30)
-                        STATE_PATH.write_text(json.dumps(st))
+                with _STATE_LOCK:
+                    if STATE_PATH.exists():
+                        raw = STATE_PATH.read_text()
+                        if isinstance(raw, str):
+                            st = json.loads(raw)
+                            st["updatedAtMs"] = int(time.time() * 1000)
+                            st["ws"] = streamer.get_status()
+                            st["recentTicks"] = streamer.get_recent_ticks(30)
+                            _atomic_write_json(STATE_PATH, st)
             except (OSError, json.JSONDecodeError, TypeError):
                 pass
             stop_sync.wait(1.0)
@@ -217,7 +260,7 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
 
     try:
         # --- open: first touch at ~T+13s (median), hedge leg +15s (median) ---
-        now = int(datetime.now(timezone.utc).timestamp())
+        now = int(time.time())
         open_at = slot + open_delay
         if now < open_at:
             time.sleep(open_at - now)
@@ -236,7 +279,9 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
             if outcome != ("Up" if first_up else "Down"):
                 time.sleep(hedge_delay)  # hedge leg
                 lean = microprice_lean(c, spec.up_token_id, spec.down_token_id, streamer=streamer)
-            if check_window(len(fills), cost, state):
+            state.daily_loss_usd = _current_daily_pnl(day_start)
+            if reason := check_window(len(fills), cost, state, KILL_PATH):
+                log_event("kill", reason, slug)
                 break
             shares = clip_shares(clip_default)
             fills.append({"minute": 0, "ts": int(time.time() * 1000), "outcome": outcome,
@@ -252,35 +297,35 @@ def trade_window(c: PublicClient, slot: int, origin: str | None, verbose: bool =
         end = slot + WINDOW_S - stop_before  # stop before close
         last_fill_ts = 0.0
         last_fill_px: float | None = None
+        quotas = m_quotas(target_total)
 
         while True:
-            now = int(datetime.now(timezone.utc).timestamp())
-            if now >= end or len(fills) >= target_total:
+            now = int(time.time())
+            if now >= end:
                 break
-            if check_window(len(fills), cost, state):
+            state.daily_loss_usd = _current_daily_pnl(day_start)
+            if reason := check_window(len(fills), cost, state, KILL_PATH):
+                log_event("kill", reason, slug)
                 break
 
-            lean = microprice_lean(c, spec.up_token_id, spec.down_token_id, streamer=streamer)
             minute = min(max((now - slot) // 60, 0), 4)
-            up_bias = 0.5 + lean.lean * 0.25 * (0.5 + 0.5 * lean.confidence)
-            up_side = ((len(fills) + minute) % 2 == 0 and up_bias >= 0.5) or (up_bias > 0.65 and len(fills) % 3 != 0)
-            if lean.lean < 0:
-                up_side = not up_side
-            outcome = "Up" if up_side else "Down"
-            tid = spec.up_token_id if up_side else spec.down_token_id
+            if len(fills) >= target_total or sum(1 for f in fills if f["minute"] == minute) >= quotas[minute]:
+                time.sleep(max(0, min(end, slot + (minute + 1) * 60) - now))
+                continue
+
+            lean = microprice_lean(c, spec.up_token_id, spec.down_token_id, streamer=streamer)
+            outcome = pick_side(len(fills), minute, lean)
+            tid = spec.up_token_id if outcome == "Up" else spec.down_token_id
             px = live_buy_price(c, tid, streamer=streamer)
             if px is None:
-                heartbeat()
                 streamer.wait_for_tick(timeout=0.25)
                 continue
             if px < min_fill:
                 log(f"M{minute} {outcome} dust {px:.3f} — skipped")
-                heartbeat()
                 streamer.wait_for_tick(timeout=0.25)
                 continue
             # M4 snipe: only take extremes late (matches CSV: extremes only in M4)
             if minute < 4 and (px <= 0.15 or px >= 0.85) and len(fills) % 4 != 0:
-                heartbeat()
                 streamer.wait_for_tick(timeout=0.25)
                 continue
 
@@ -471,17 +516,20 @@ def main() -> None:
         return
     # --loop (default if nothing passed)
     try:
+        last_slot: int | None = None
         while True:
+            wait_while_killed()
             slot = current_slot()
-            now = int(datetime.now(timezone.utc).timestamp())
-            if now > slot + WINDOW_S - 60:
+            now = int(time.time())
+            open_delay = cfg_entry("openDelaySec", 13)
+            if slot == last_slot or now > slot + open_delay:
                 slot += WINDOW_S
-            wait = slot + 13 - now
+            wait = slot + open_delay - now
             if wait > 0:
                 print(f"next window in {wait}s…", flush=True)
                 time.sleep(wait)
             try:
-                wait_while_killed()
+                last_slot = slot
                 trade_window(c, slot, args.origin or None)
             except KeyboardInterrupt:
                 raise

@@ -102,13 +102,30 @@ def runs() -> list[dict]:
     return out
 
 
+_LAST_STATE: tuple[str, dict] | None = None
+
+
 def state() -> dict | None:
+    global _LAST_STATE
     if is_view_only():
         return None
-    try:
-        return json.loads(STATE_PATH.read_text())
-    except Exception:
+    if not STATE_PATH.exists():
+        _LAST_STATE = None
         return None
+    for _ in range(3):
+        try:
+            st = json.loads(STATE_PATH.read_text())
+            _LAST_STATE = (str(STATE_PATH), st)
+            return st
+        except Exception:
+            time.sleep(0.005)
+    if _LAST_STATE and _LAST_STATE[0] == str(STATE_PATH):
+        cached = _LAST_STATE[1]
+        end_ms = cached.get("endMs")
+        if end_ms is None or int(end_ms) > int(time.time() * 1000):
+            return cached
+        _LAST_STATE = None
+    return None
 
 
 def events(limit: int = 150) -> list[dict]:
@@ -204,22 +221,31 @@ def visible_slots(now_ts: int | None = None) -> list[int]:
     return [slot]
 
 
+_WINDOW_SPEC_CACHE: dict[str, object] = {}
+_LAST_MARKETS: list[dict] = []
+_ODDS_HISTORY: dict[str, list[dict]] = {}
+
+
 def live_markets(cfg: dict) -> list[dict]:
     """Current 5m window with live CLOB quotes (public reads only).
 
     The next window joins at 4:45 (its last 15s), so the page shows one
     panel for most of the window and two only at the handover.
     """
+    global _LAST_MARKETS, _ODDS_HISTORY
     from bot.discovery import WINDOW_S, get_window
 
     c = client()
     out = []
     for s in visible_slots():
         slug = f"btc-updown-5m-{s}"
-        try:
-            spec = get_window(c, slug)
-        except Exception:
-            continue
+        spec = _WINDOW_SPEC_CACHE.get(slug)
+        if spec is None:
+            try:
+                spec = get_window(c, slug)
+                _WINDOW_SPEC_CACHE[slug] = spec
+            except Exception:
+                continue
         quotes: dict[str, dict[str, float | None]] = {}
         for side, tid in (("Up", spec.up_token_id), ("Down", spec.down_token_id)):
             try:
@@ -257,14 +283,46 @@ def live_markets(cfg: dict) -> list[dict]:
                 lean_side = None
             verdict = {"action": "enter", "reason": "straddle-open",
                        "detail": {"leanSide": lean_side or "even"}}
+
+        up_q = quotes.get("Up", {})
+        down_q = quotes.get("Down", {})
+        up_val = up_q.get("ask") if up_q.get("ask") is not None else up_q.get("bid")
+        down_val = down_q.get("ask") if down_q.get("ask") is not None else down_q.get("bid")
+        if up_val is not None and down_val is not None and (up_val + down_val) > 0:
+            imp_up: float | None = round(up_val / (up_val + down_val), 4)
+        elif up_val is not None:
+            imp_up = round(up_val, 4)
+        elif down_val is not None:
+            imp_up = round(1.0 - down_val, 4)
+        else:
+            imp_up = None
+
+        hist = _ODDS_HISTORY.setdefault(slug, [])
+        if imp_up is not None and (not hist or now_ms - hist[-1]["t"] >= 1500):
+            hist.append({"t": now_ms, "v": imp_up})
+            if len(hist) > 500:
+                hist.pop(0)
+
         out.append({
             "slug": slug, "interval": "5m", "startMs": start_ms, "endMs": end_ms,
             "price": None, "anchor": None, "movePct": None, "requiredMovePct": 0,
             "side": None, "quotes": quotes, "modelProb": None, "edge": None,
             "spreadCents": round(spread * 100, 1) if spread is not None else None,
             "secondsRemaining": remaining, "verdict": verdict,
+            "oddsHistory": list(hist),
         })
-    return out
+    if len(_ODDS_HISTORY) > 10 or len(_WINDOW_SPEC_CACHE) > 10:
+        active_slugs = {f"btc-updown-5m-{s}" for s in visible_slots()}
+        for cache in (_ODDS_HISTORY, _WINDOW_SPEC_CACHE):
+            for old in list(cache.keys()):
+                if old not in active_slugs:
+                    cache.pop(old, None)
+    now_cutoff_ms = int(time.time() * 1000)
+    if out:
+        _LAST_MARKETS = out
+        return out
+    _LAST_MARKETS = [m for m in _LAST_MARKETS if int(m.get("endMs") or 0) > now_cutoff_ms]
+    return _LAST_MARKETS
 
 
 def snapshot() -> dict:
@@ -738,13 +796,16 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def _send(self, code: int, obj: object) -> None:
-        body = json.dumps(obj).encode()
-        self.send_response(code)
-        self._cors()
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            body = json.dumps(obj).encode()
+            self.send_response(code)
+            self._cors()
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (ConnectionError, BrokenPipeError):
+            pass
 
     def do_OPTIONS(self):
         self.send_response(204)
@@ -835,8 +896,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"config": self._config_view(), "configFile": str(CONFIG_PATH)})
             else:
                 self._send(404, {"error": "not found"})
+        except (ConnectionError, BrokenPipeError):
+            pass
         except Exception as ex:
-            self._send(500, {"error": f"{type(ex).__name__}: {ex}"})
+            try:
+                self._send(500, {"error": f"{type(ex).__name__}: {ex}"})
+            except Exception:
+                pass
 
     def do_POST(self):
         body = self._body()
@@ -918,6 +984,10 @@ class Handler(BaseHTTPRequestHandler):
                         p.unlink(missing_ok=True)
                 for p in (STATE_PATH, EVENTS_PATH):
                     p.unlink(missing_ok=True)
+                global _LAST_STATE, _LAST_MARKETS
+                _LAST_STATE = None
+                _LAST_MARKETS = []
+                _ODDS_HISTORY.clear()
                 log_event("risk", "paper-reset", detail={"bankrollUsd": load_config().get("bankrollUsd")})
                 self._send(200, {"bankrollUsd": load_config().get("bankrollUsd"), "resetAt": utc_now_iso()})
             elif self.path == "/api/bot/kill-switch":
@@ -939,8 +1009,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": True, "killSwitch": False})
             else:
                 self._send(404, {"error": "not found"})
+        except (ConnectionError, BrokenPipeError):
+            pass
         except Exception as ex:
-            self._send(500, {"error": f"{type(ex).__name__}: {ex}"})
+            try:
+                self._send(500, {"error": f"{type(ex).__name__}: {ex}"})
+            except Exception:
+                pass
 
     def do_PUT(self):
         if is_view_only():
@@ -999,11 +1074,19 @@ class Handler(BaseHTTPRequestHandler):
                             "minRemainingSeconds": 240, "stallSeconds": 180}}}
 
 
+class QuietThreadingHTTPServer(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        ex = sys.exc_info()[1]
+        if isinstance(ex, (ConnectionError, BrokenPipeError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Paper desk API (loopback only)")
     ap.add_argument("--port", type=int, default=8789)
     args = ap.parse_args()
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    server = QuietThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"paper desk API on http://127.0.0.1:{args.port} (loopback only, no keys)", flush=True)
     server.serve_forever()
 

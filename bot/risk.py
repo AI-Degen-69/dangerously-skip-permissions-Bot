@@ -29,7 +29,10 @@ def clip_shares(want: float) -> float:
     return max(0.0, min(float(want), C.MAX_SHARES))
 
 
-def check_window(trades: int, cost_usd: float, state: RiskState) -> str | None:
+def check_window(trades: int, cost_usd: float, state: RiskState, kill_path: Path | str | None = None) -> str | None:
+    if kill_path is not None and Path(kill_path).exists():
+        state.killed = True
+        state.kill_reason = "kill-switch file present"
     if state.killed:
         return f"killed: {state.kill_reason}"
     if trades >= MAX_TRADES_PER_WINDOW:
@@ -81,7 +84,9 @@ def heartbeat(state_path: Path | str = "bot/state.json") -> None:
         return
     st["updatedAtMs"] = int(time.time() * 1000)
     try:
-        p.write_text(json.dumps(st))
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(st))
+        tmp.replace(p)
     except OSError:
         pass
 

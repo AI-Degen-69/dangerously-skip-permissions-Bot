@@ -301,7 +301,7 @@ class TradesViewLiveTests(unittest.TestCase):
                 "fills": [{"minute": 2, "outcome": "Down", "price": 0.4,
                            "shares": 30, "usd": 12.0}],
             }))
-            with patch.object(api, "RUNS_DIR", runs), patch.object(api, "STATE_PATH", st):
+            with patch.object(api, "RUNS_DIR", runs), patch.object(api, "STATE_PATH", st), patch.object(api, "resolve_run_workspace", return_value=None):
                 items = api.trades_view(50)
 
         live = [t for t in items if t["slug"] == "btc-updown-5m-400"]
@@ -312,6 +312,32 @@ class TradesViewLiveTests(unittest.TestCase):
         self.assertEqual(items[-1]["slug"], "btc-updown-5m-400")
         # The pending settle row is still present, just no longer newest.
         self.assertEqual([t["kind"] for t in items], ["entry", "settle", "entry"])
+
+    def test_live_state_fills_merge_with_active_workspace_windows(self):
+        import bot.api as api
+        from bot.runs import RunWorkspace
+
+        with tempfile.TemporaryDirectory() as td:
+            ws = RunWorkspace("run_test", runs_root=Path(td))
+            ws.init_workspace()
+            (ws.windows_dir / "btc-updown-5m-100.json").write_text(json.dumps({
+                "event_slug": "btc-updown-5m-100", "trades": 1, "cost_usd": 5.0,
+                "payout_usd": 10.0, "net_usd": 5.0, "winner": "Up",
+                "fills": [{"minute": 0, "outcome": "Up", "price": 0.5, "shares": 10, "usd": 5.0}],
+            }))
+            st = Path(td) / "state.json"
+            st.write_text(json.dumps({
+                "slug": "btc-updown-5m-400", "updatedAtMs": 1,
+                "fills": [{"minute": 1, "outcome": "Down", "price": 0.4, "shares": 20, "usd": 8.0}],
+            }))
+            with patch.object(api, "STATE_PATH", st), \
+                 patch.object(api, "resolve_run_workspace", return_value=ws), \
+                 patch.object(api, "is_view_only", return_value=False):
+                items = api.trades_view(50)
+
+        slugs = [t["slug"] for t in items]
+        self.assertIn("btc-updown-5m-100", slugs)
+        self.assertIn("btc-updown-5m-400", slugs)
 
 
 if __name__ == "__main__":
