@@ -14,6 +14,7 @@ bot/events.jsonl. Live market reads via PublicClient (public, no keys).
 
 import argparse
 import json
+import math
 import os
 import statistics
 import subprocess
@@ -836,6 +837,85 @@ def perf() -> dict:
         if isinstance(cfg, dict):
             cfg_bankroll = cfg.get("bankrollUsd")
     bankroll = _num(cfg_bankroll, default=float(BANKROLL_DEFAULT))
+
+    wins = [n for n in nets if n > 0]
+    losses = [-n for n in nets if n < 0]
+    wins_count = len(wins)
+    losses_count = len(losses)
+    gross_profit = round(sum(wins), 2)
+    gross_loss = round(sum(losses), 2)
+    profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else (99.0 if gross_profit > 0 else 0.0)
+    avg_win = round(gross_profit / wins_count, 2) if wins_count > 0 else 0.0
+    avg_loss = round(gross_loss / losses_count, 2) if losses_count > 0 else 0.0
+    payoff_ratio = round(avg_win / avg_loss, 2) if avg_loss > 0 else (99.0 if avg_win > 0 else 0.0)
+    win_rate = round(profitable / len(settled), 4) if settled else 0.0
+    loss_rate = round(losses_count / len(settled), 4) if settled else 0.0
+    expectancy_usd = round(net / len(settled), 2) if settled else 0.0
+    expectancy_ratio = round((win_rate * payoff_ratio) - loss_rate, 2) if settled else 0.0
+    be_win_rate = round(((wins_count + losses_count) / len(settled)) / (1.0 + payoff_ratio), 4) if (settled and wins_count > 0 and payoff_ratio > 0) else None
+    edge_pct = round((win_rate - be_win_rate) * 100, 2) if (settled and be_win_rate is not None) else None
+
+    annual_factor = math.sqrt(288 * 365)
+    if len(nets) >= 2:
+        mean_net = statistics.mean(nets)
+        stdev_net = statistics.stdev(nets)
+        sharpe_ratio = round((mean_net / stdev_net) * annual_factor, 2) if stdev_net > 0.0001 else 0.0
+        downside = [min(0.0, n) for n in nets]
+        downside_variance = sum(d**2 for d in downside) / len(nets)
+        downside_std = math.sqrt(downside_variance)
+        sortino_ratio = round((mean_net / downside_std) * annual_factor, 2) if downside_std > 0.0001 else (99.0 if mean_net > 0 else 0.0)
+    else:
+        sharpe_ratio = 0.0
+        sortino_ratio = 0.0
+
+    sorted_settled = sorted(settled, key=lambda w: w.get("startMs", 0))
+    equity = bankroll
+    peak = equity
+    max_dd_usd = 0.0
+    max_dd_pct = 0.0
+    for w in sorted_settled:
+        n = w.get("netUsd") or 0.0
+        equity += n
+        if equity > peak:
+            peak = equity
+        dd = peak - equity
+        dd_pct = dd / peak if peak > 0 else 0.0
+        if dd > max_dd_usd:
+            max_dd_usd = dd
+        if dd_pct > max_dd_pct:
+            max_dd_pct = dd_pct
+    current_dd_usd = round(max(0.0, peak - equity), 2)
+    current_dd_pct = round(current_dd_usd / peak, 4) if peak > 0 else 0.0
+    max_dd_usd = round(max_dd_usd, 2)
+    max_dd_pct = round(max_dd_pct, 4)
+
+    current_streak = 0
+    max_win_streak = 0
+    max_loss_streak = 0
+    streak = 0
+    for w in sorted_settled:
+        n = w.get("netUsd") or 0.0
+        if n > 0:
+            streak = streak + 1 if streak > 0 else 1
+            if streak > max_win_streak:
+                max_win_streak = streak
+        elif n < 0:
+            streak = streak - 1 if streak < 0 else -1
+            if abs(streak) > max_loss_streak:
+                max_loss_streak = abs(streak)
+        else:
+            streak = 0
+    current_streak = streak
+
+    up_windows = [w for w in settled if w.get("winner") == "Up"]
+    down_windows = [w for w in settled if w.get("winner") == "Down"]
+    up_wins = sum(1 for w in up_windows if (w.get("netUsd") or 0) > 0)
+    down_wins = sum(1 for w in down_windows if (w.get("netUsd") or 0) > 0)
+    up_net = round(sum(w.get("netUsd") or 0.0 for w in up_windows), 2)
+    down_net = round(sum(w.get("netUsd") or 0.0 for w in down_windows), 2)
+    up_win_rate = round(up_wins / len(up_windows), 4) if up_windows else 0.0
+    down_win_rate = round(down_wins / len(down_windows), 4) if down_windows else 0.0
+
     return {
         "summary": {
             "bankrollUsd": bankroll,
@@ -851,8 +931,37 @@ def perf() -> dict:
             "worstUsd": round(min(nets), 2) if nets else 0.0,
             "zeroPriceFills": zero_fills,
             "upFills": up_fills, "downFills": down_fills,
-            "upWins": sum(1 for w in settled if w["winner"] == "Up"),
-            "downWins": sum(1 for w in settled if w["winner"] == "Down"),
+            "upWins": up_wins,
+            "downWins": down_wins,
+            "winRate": win_rate,
+            "lossRate": loss_rate,
+            "winsCount": wins_count,
+            "lossesCount": losses_count,
+            "grossProfitUsd": gross_profit,
+            "grossLossUsd": gross_loss,
+            "profitFactor": profit_factor,
+            "avgWinUsd": avg_win,
+            "avgLossUsd": avg_loss,
+            "payoffRatio": payoff_ratio,
+            "expectancyUsd": expectancy_usd,
+            "expectancyRatio": expectancy_ratio,
+            "breakEvenWinRate": be_win_rate,
+            "edgePct": edge_pct,
+            "sharpeRatio": sharpe_ratio,
+            "sortinoRatio": sortino_ratio,
+            "maxDrawdownUsd": max_dd_usd,
+            "maxDrawdownPct": max_dd_pct,
+            "currentDrawdownUsd": current_dd_usd,
+            "currentDrawdownPct": current_dd_pct,
+            "currentStreak": current_streak,
+            "maxWinStreak": max_win_streak,
+            "maxLossStreak": max_loss_streak,
+            "upWindows": len(up_windows),
+            "downWindows": len(down_windows),
+            "upNetUsd": up_net,
+            "downNetUsd": down_net,
+            "upWinRate": up_win_rate,
+            "downWinRate": down_win_rate,
         },
         "targets": {
             "windows": C.NUM_WINDOWS_24H,
