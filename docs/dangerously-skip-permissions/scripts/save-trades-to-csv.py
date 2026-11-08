@@ -455,6 +455,8 @@ def fetch_activity(
     records = []
     cursor = None
     seen_cursors = set()
+    page_number = 0
+    fetched_count = 0
 
     while True:
         params = {
@@ -520,6 +522,14 @@ def fetch_activity(
                     "timestamp": timestamp,
                 }
             )
+
+        page_number += 1
+        fetched_count += len(page)
+        print(
+            f"Page {page_number}: {len(page)} records; "
+            f"{fetched_count} total",
+            flush=True,
+        )
 
         next_cursor = pagination["next_cursor"]
         if next_cursor is None:

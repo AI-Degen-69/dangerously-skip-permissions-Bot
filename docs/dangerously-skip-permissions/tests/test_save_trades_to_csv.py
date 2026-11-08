@@ -1,5 +1,6 @@
 import csv
 import datetime
+import io
 import importlib.util
 import pathlib
 import sys
@@ -39,6 +40,49 @@ class FakeResponse:
 
 
 class SaveTradesToCsvTests(unittest.TestCase):
+    def test_streams_progress_for_each_activity_page(self):
+        page_one = {
+            "data": [{"timestamp": 1794074400}],
+            "pagination": {"next_cursor": "next-page"},
+        }
+        page_two = {
+            "data": [{"timestamp": 1794074399}, {"timestamp": 1794074398}],
+            "pagination": {"next_cursor": None},
+        }
+
+        class FlushTrackingStream(io.StringIO):
+            def __init__(self):
+                super().__init__()
+                self.flush_count = 0
+
+            def flush(self):
+                self.flush_count += 1
+                super().flush()
+
+        stream = FlushTrackingStream()
+        target = datetime.datetime(2026, 11, 7, 18, 0, tzinfo=datetime.timezone.utc)
+
+        with patch("sys.stdout", stream), patch.object(
+            SCRIPT.requests,
+            "get",
+            side_effect=[FakeResponse(page_one), FakeResponse(page_two)],
+        ):
+            SCRIPT.fetch_activity(
+                now=target,
+                window_days=7,
+                snap_to_window=False,
+                cut_tails=False,
+            )
+
+        progress_lines = [
+            line for line in stream.getvalue().splitlines() if line.startswith("Page ")
+        ]
+        self.assertEqual(
+            progress_lines,
+            ["Page 1: 1 records; 1 total", "Page 2: 2 records; 3 total"],
+        )
+        self.assertEqual(stream.flush_count, 2)
+
     def test_fetches_all_activity_pages_with_fixed_24_hour_bounds(self):
         now = datetime.datetime(2026, 11, 7, 18, 0, tzinfo=datetime.timezone.utc)
         first_page = {
