@@ -77,7 +77,14 @@ if ($targetPids.Count -gt 0) {
 
 # 3. Start a new background instance in the current repository
 Write-Host "Starting bot/api.py in background from $ProjectRoot..."
-Start-Process -FilePath $PythonExe -ArgumentList 'bot/api.py' -WorkingDirectory $ProjectRoot -WindowStyle Hidden
+$spawnCmd = "`"$PythonExe`" bot/api.py"
+$wmiResult = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+    CommandLine = $spawnCmd
+    CurrentDirectory = $ProjectRoot
+}
+if ($wmiResult.ReturnValue -ne 0) {
+    Start-Process -FilePath $PythonExe -ArgumentList 'bot/api.py' -WorkingDirectory $ProjectRoot -WindowStyle Hidden
+}
 
 # 4. Verification loop: ensure the new instance has bound the port and is responding
 $verifyStart = Get-Date
