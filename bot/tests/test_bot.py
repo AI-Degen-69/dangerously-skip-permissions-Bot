@@ -514,6 +514,99 @@ class TradesViewLiveTests(unittest.TestCase):
         self.assertIsNone(pos["mark"])
         self.assertIsNone(pos["unrealizedPnlUsd"])
 
+    def test_snapshot_position_active_when_get_window_fails(self):
+        import time
+        import bot.api as api
+
+        now_ms = int(time.time() * 1000)
+        st = {
+            "slug": "btc-updown-5m-123",
+            "endMs": now_ms + 60_000,
+            "startedAtMs": now_ms - 240_000,
+            "fills": [
+                {"outcome": "Up", "shares": 320.88, "usd": 137.98},
+            ],
+        }
+
+        with patch.object(api, "state", return_value=st), \
+             patch("bot.discovery.get_window", side_effect=RuntimeError("Gamma down")), \
+             patch.object(api, "is_view_only", return_value=False), \
+             patch.object(api, "live_markets", return_value=[]):
+            snap = api.snapshot()
+
+        positions = snap["positions"]
+        self.assertEqual(len(positions), 1)
+        pos = positions[0]
+        self.assertEqual(pos["side"], "Up")
+        self.assertFalse(pos["resolving"])
+        self.assertGreater(pos["secondsLeft"], 0)
+        self.assertEqual(pos["mark"], 0.0)
+        self.assertEqual(pos["unrealizedPnlUsd"], -137.98)
+
+    def test_snapshot_position_uses_ws_orderbook(self):
+        import time
+        import bot.api as api
+
+        now_ms = int(time.time() * 1000)
+        st = {
+            "slug": "btc-updown-5m-123",
+            "endMs": now_ms + 60_000,
+            "startedAtMs": now_ms - 240_000,
+            "fills": [
+                {"outcome": "Up", "shares": 100, "usd": 40.0},
+            ],
+            "ws": {
+                "up_book": {"best_bid": 0.25, "best_ask": 0.26, "midpoint": 0.255},
+            },
+        }
+
+        with patch.object(api, "state", return_value=st), \
+             patch.object(api, "is_view_only", return_value=False), \
+             patch.object(api, "live_markets", return_value=[]):
+            snap = api.snapshot()
+
+        positions = snap["positions"]
+        self.assertEqual(len(positions), 1)
+        pos = positions[0]
+        self.assertEqual(pos["side"], "Up")
+        self.assertFalse(pos["resolving"])
+        self.assertEqual(pos["mark"], 0.25)
+        self.assertEqual(pos["unrealizedPnlUsd"], -15.0)
+
+    def test_snapshot_position_uses_live_markets_quotes(self):
+        import time
+        import bot.api as api
+
+        now_ms = int(time.time() * 1000)
+        slug = "btc-updown-5m-123"
+        st = {
+            "slug": slug,
+            "endMs": now_ms + 60_000,
+            "startedAtMs": now_ms - 240_000,
+            "fills": [
+                {"outcome": "Down", "shares": 100, "usd": 50.0},
+            ],
+        }
+        markets = [{
+            "slug": slug,
+            "quotes": {
+                "Down": {"bid": 0.85, "ask": 0.86},
+            },
+        }]
+
+        with patch.object(api, "state", return_value=st), \
+             patch.object(api, "is_view_only", return_value=False), \
+             patch.object(api, "live_markets", return_value=markets):
+            snap = api.snapshot()
+
+        positions = snap["positions"]
+        self.assertEqual(len(positions), 1)
+        pos = positions[0]
+        self.assertEqual(pos["side"], "Down")
+        self.assertFalse(pos["resolving"])
+        self.assertEqual(pos["mark"], 0.85)
+        self.assertEqual(pos["unrealizedPnlUsd"], 35.0)
+
 
 if __name__ == "__main__":
     unittest.main()
