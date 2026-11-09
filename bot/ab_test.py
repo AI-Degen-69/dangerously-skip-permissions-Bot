@@ -222,7 +222,12 @@ def get_ab_test_data() -> dict[str, Any]:
             ar = json.loads(active_meta_path.read_text(encoding="utf-8"))
             act_id = ar.get("activeRunId")
             if act_id and act_id != baseline_id:
-                candidate_id = act_id
+                meta_p = RUNS_DIR / act_id / "run_meta.json"
+                if meta_p.exists():
+                    m = json.loads(meta_p.read_text(encoding="utf-8"))
+                    strat_id = m.get("configSnapshot", {}).get("strategy", {}).get("id", "")
+                    if "v2.2" in strat_id or strat_id.endswith("v2.2"):
+                        candidate_id = act_id
         except Exception:
             pass
 
@@ -280,7 +285,7 @@ def get_ab_test_data() -> dict[str, Any]:
     elif n_b < 30:
         verdict = f"Data Gathering ({n_b}/{TARGET_SAMPLE_SIZE})"
         verdict_tone = "info"
-    elif significant:
+    elif significant and n_b >= TARGET_SAMPLE_SIZE:
         verdict = f"Statistically Significant Alpha (Reject H0, p={p_value:.3f})"
         verdict_tone = "success"
     elif mu_b > mu_a:

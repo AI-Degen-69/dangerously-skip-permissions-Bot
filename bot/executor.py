@@ -161,7 +161,7 @@ def evaluate_microstructure_ladder(
     is_dsp = strategy_id.startswith("dangerously-skip-permissions")
     is_v22 = strategy_id.endswith("v2.2")
     # v2.2: hard cap on unhedged lead = 20 sh (2 micro-clips). v2.1 = 30 sh. Baseline = 45 sh.
-    lead_cap = 20.0 if is_v22 else (30.0 if strategy_id.endswith("v2.1") else max_share_lead)
+    lead_cap = min(max_share_lead, 20.0) if is_v22 else (min(max_share_lead, 30.0) if strategy_id.endswith("v2.1") else max_share_lead)
     rescue_cap = rescue_max_pair_cost if (is_dsp or in_sweep_phase) else max_pair_cost
 
     # 1. Phase 3: Resolution Certainty Snipe in Minute 4 [0.90, 0.975]
@@ -348,7 +348,7 @@ def evaluate_microstructure_ladder(
             est_usd, _ = compute_fill_usd(shares, px, role=role, include_fee=(role == "TAKER"))
             proj_pc = _projected_pair_cost(inv, side, shares, est_usd)
             # Strict hard ceiling on one-sided lead: NEVER exceed max_share_lead.
-            if lead >= lead_cap or (lead + shares > lead_cap + 5.0):
+            if not is_atomic and (lead >= lead_cap or (lead + shares > lead_cap + 5.0)):
                 saw_pair_cap = True
                 continue
             # Sub-$1.00 pair-cost gate: <= max_pair_cost when closing deficit, <= bench_pc otherwise

@@ -108,11 +108,11 @@ Sizing adapts dynamically to the certainty of the trade:
 
 ## 5. Code Implementations & Symbol Links
 
-- **Decision Engine:** [`bot/executor.py`](file:///C:/Users/Tiger/Agents/Projects/AI%20Trading/dangerously-skip-permissions-bot/bot/executor.py#L117) (`evaluate_microstructure_ladder`)
-- **Confidence Sizing Logic:** [`bot/executor.py`](file:///C:/Users/Tiger/Agents/Projects/AI%20Trading/dangerously-skip-permissions-bot/bot/executor.py#L47) (`select_ladder_clip`)
-- **Clamping Safety:** [`bot/risk.py`](file:///C:/Users/Tiger/Agents/Projects/AI%20Trading/dangerously-skip-permissions-bot/bot/risk.py#L40) (`clip_shares`)
-- **Strategy Constants & Preset:** [`bot/constants.py`](file:///C:/Users/Tiger/Agents/Projects/AI%20Trading/dangerously-skip-permissions-bot/bot/constants.py#L115) (`STRATEGY_PRESETS["dangerously-skip-permissions-v2.2"]`)
-- **Frontend Preset Registry:** [`src/app/botDefaults.ts`](file:///C:/Users/Tiger/Agents/Projects/AI%20Trading/dangerously-skip-permissions-bot/src/app/botDefaults.ts#L125)
+- **Decision Engine:** [`bot/executor.py`](../../bot/executor.py#L117) (`evaluate_microstructure_ladder`)
+- **Confidence Sizing Logic:** [`bot/executor.py`](../../bot/executor.py#L47) (`select_ladder_clip`)
+- **Clamping Safety:** [`bot/risk.py`](../../bot/risk.py#L40) (`clip_shares`)
+- **Strategy Constants & Setup:** [`bot/constants.py`](../../bot/constants.py#L115) (`STRATEGY_SETUPS["dangerously-skip-permissions-v2.2"]`)
+- **Frontend Preset Registry:** [`src/app/botDefaults.ts`](../../src/app/botDefaults.ts#L125)
 
 ---
 

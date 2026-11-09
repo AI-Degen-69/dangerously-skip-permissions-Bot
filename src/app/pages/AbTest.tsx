@@ -76,7 +76,11 @@ export function AbTest() {
   const toast = useToast()
   const [selectedBin, setSelectedBin] = useState<string | null>(null)
 
-  const isLoopRunning = control.data?.running ?? false
+  const isCandidateRunning = Boolean(
+    control.data?.running &&
+    ((control.data?.activeRunId && data?.candidate?.runId && control.data.activeRunId === data.candidate.runId) ||
+     (control.data?.strategy?.id && control.data.strategy.id.endsWith('v2.2')))
+  )
 
   const handleStart = async () => {
     try {
@@ -120,7 +124,7 @@ export function AbTest() {
     <div className="space-y-6 pb-12">
       <PageHeader
         title="A/B Hypothesis Lab & Statistical Gate"
-        subtitle="Rigorous empirical testing of Baseline (DSP v2.0) vs Candidate (DSP v2.1 Unified Triad) at 95% confidence."
+        subtitle="Rigorous empirical testing of Baseline (DSP v2.0) vs Candidate (DSP v2.2 Confidence Sizing) at 95% confidence."
         actions={
           <div className="flex items-center gap-2.5">
             <Button
@@ -132,7 +136,7 @@ export function AbTest() {
               <RefreshCw className="size-3.5" />
               Refresh Data
             </Button>
-            {isLoopRunning ? (
+            {isCandidateRunning ? (
               <Button
                 variant="danger"
                 size="sm"
@@ -365,8 +369,8 @@ export function AbTest() {
                 <h3 className="mt-1 text-[16px] font-semibold text-fg">{candidate?.name ?? 'DSP v2.2 (Confidence Sizing)'}</h3>
                 <p className="text-[12px] text-muted">{candidate?.description}</p>
               </div>
-              <Badge tone={isLoopRunning ? 'success' : 'accent'}>
-                {isLoopRunning ? 'Live Sampling' : 'Ready'}
+              <Badge tone={isCandidateRunning ? 'success' : 'accent'}>
+                {isCandidateRunning ? 'Live Sampling' : 'Ready'}
               </Badge>
             </div>
 
@@ -493,9 +497,9 @@ export function AbTest() {
 
                   <div className="flex h-full items-end justify-center gap-1 px-0.5">
                     {/* Baseline Bar */}
-                    <div className={cx('w-1/2 rounded-t-[2px] bg-muted/40 transition-all duration-300', !showA && 'opacity-0')} style={{ height: showA ? `${Math.max(4, hA)}%` : '0%' }} />
+                    <div className={cx('w-1/2 rounded-t-[2px] bg-muted/40 transition-all duration-300', !showA && 'opacity-0')} style={{ height: showA && bin.baselineCount > 0 ? `${Math.max(4, hA)}%` : '0%' }} />
                     {/* Candidate Bar */}
-                    <div className={cx('w-1/2 rounded-t-[2px] transition-all duration-300', isPositive ? 'bg-success' : 'bg-accent', !showB && 'opacity-0')} style={{ height: showB ? `${Math.max(4, hB)}%` : '0%' }} />
+                    <div className={cx('w-1/2 rounded-t-[2px] transition-all duration-300', isPositive ? 'bg-success' : 'bg-accent', !showB && 'opacity-0')} style={{ height: showB && bin.candidateCount > 0 ? `${Math.max(4, hB)}%` : '0%' }} />
                   </div>
                 </div>
               )
@@ -584,7 +588,7 @@ export function AbTest() {
             <FlaskConical className="size-8 text-faint" />
             <p className="mt-2 text-[14px] font-medium text-fg">No candidate samples gathered yet</p>
             <p className="mt-1 text-[12px] text-muted">
-              Click "Launch Candidate Run (B)" above to start the live paper trading loop under the Unified Triad configuration.
+              Click "Launch Candidate Run (B)" above to start the live paper trading loop under the DSP v2.2 (Confidence Sizing) configuration.
             </p>
           </div>
         )}

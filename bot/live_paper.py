@@ -480,7 +480,7 @@ def trade_window(
 
             outcome = decision.outcome
             px = decision.price
-            shares = min(clip_shares(decision.shares), max_shares)
+            shares = min(clip_shares(decision.shares, max_shares), max_shares)
             role = decision.role
 
             # Anti-runaway dynamic pacing (relaxed in sweep phase to guarantee deficit close)
