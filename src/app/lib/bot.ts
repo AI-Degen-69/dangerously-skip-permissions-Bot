@@ -108,6 +108,31 @@ export interface StrategyInfo {
   cutoffSec?: number
 }
 
+export interface StrategySetup {
+  id: string
+  symbol: string
+  name: string
+  signature: string
+  description: string
+  entry: {
+    clipSharesDefault: number
+    maxShares: number
+    minFillPrice: number
+    maxFillPrice: number
+    benchmarkPairCost: number
+    targetPairCost: number
+    maxPairCost: number
+    maxShareLead: number
+    startAfterOpenSec: number
+    stopBeforeCloseSec: number
+    minSpacingMoveSec: number
+    minSpacingStaticSec: number
+    includeTakerFee: boolean
+    wholeLadderClips: boolean
+  }
+  isActive?: boolean
+}
+
 export interface BotSnapshot {
   version: 1
   mode: 'paper' | 'live'
@@ -550,4 +575,17 @@ export const useRedeemBot = () =>
       payoutUsd: number
       redeemedAt: string
     }>('/redeem', 'POST'),
+  )
+
+export const useStrategySetups = () =>
+  useQuery({
+    queryKey: ['bot', 'strategy-setups'],
+    queryFn: () => getJson<{ activeSetupId: string; setups: StrategySetup[] }>('/strategy-setups'),
+    refetchInterval: 5_000,
+    retry: false,
+  })
+
+export const useSelectStrategySetup = () =>
+  useBotMutation((setupId: string) =>
+    send<{ ok: boolean; activeSetupId: string; setup: StrategySetup; config: BotConfigView }>('/strategy-setup', 'POST', { setupId }),
   )

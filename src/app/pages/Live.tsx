@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { Activity, Play, Radio, ShieldAlert, Target, Zap } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Activity, CheckCircle2, Play, Radio, ShieldAlert, Target, Zap } from 'lucide-react'
 
 import { PolymarketLiveChart } from '../components/PolymarketEmbed'
 import { eventMetrics, KIND_TONE, reasonLabel as label } from '../lib/labels'
@@ -15,6 +15,8 @@ import {
   useResumeRun,
   useStartBot,
   useBotWsTicks,
+  useStrategySetups,
+  useSelectStrategySetup,
   type WsStatus,
   type WsTick,
   type BotEvent,
@@ -23,6 +25,7 @@ import {
   type MarketView,
   type PositionView,
 } from '../lib/bot'
+import { STRATEGY_PRESETS } from '../botDefaults'
 import { cx } from '../lib/cx'
 import { relativeTime } from '../lib/format'
 
@@ -97,17 +100,40 @@ export function Live() {
       onError: (error: Error) => toast(error.message, 'danger'),
     })
 
-  const strategySymbol = data?.strategy?.symbol ?? control.data?.strategy?.symbol ?? '🎯 HAPCS-v1'
+  const setupsQuery = useStrategySetups()
+  const selectSetupMutation = useSelectStrategySetup()
+
+  const activeStrategyId = data?.strategy?.id ?? control.data?.strategy?.id ?? setupsQuery.data?.activeSetupId ?? 'hapcs-v1'
+  const [selectedSetupTab, setSelectedSetupTab] = useState<string>(activeStrategyId)
+
+  useEffect(() => {
+    if (activeStrategyId) {
+      setSelectedSetupTab(activeStrategyId)
+    }
+  }, [activeStrategyId])
+
+  const setups = setupsQuery.data?.setups ?? [
+    STRATEGY_PRESETS['hapcs-v1'],
+    STRATEGY_PRESETS['dangerously-skip-permissions'],
+  ]
+  const currentSetup = setups.find((s) => s.id === selectedSetupTab) ?? setups[0]
+  const isSelectedActive = selectedSetupTab === activeStrategyId
+
+  const strategySymbol = data?.strategy?.symbol ?? control.data?.strategy?.symbol ?? currentSetup.symbol
   const strategyName =
     data?.strategy?.name ??
     control.data?.strategy?.name ??
-    'Hybrid Arbitrage Pairing & Certainty Sniping v1'
+    currentSetup.name
 
   return (
     <div className="mx-auto max-w-[1200px] p-5 sm:p-8">
       <PageHeader
-        title="Live bot · 🎯 HAPCS-v1"
-        subtitle="Maker Dip Grid [7¢–50¢] & Dynamic Arbitrage Pairing + Resolution Snipe [up to 97.5¢] — live fills."
+        title={`Live bot · ${strategySymbol}`}
+        subtitle={
+          activeStrategyId === 'dangerously-skip-permissions'
+            ? 'Deep Dip Grid [7¢–45¢] · Tiered Rescue Pairing (≤$0.985) · Early Exit (SBC 75s) · Strict 45-Share Lead Ceiling.'
+            : 'Maker Dip Grid [7¢–50¢] & Dynamic Arbitrage Pairing + Resolution Snipe [up to 97.5¢] — live fills.'
+        }
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <span title={strategyName}>
@@ -182,6 +208,146 @@ export function Live() {
           </div>
         }
       />
+
+      {/* Sub-Tab Strategy Setup Switcher */}
+      <div className="mt-6 overflow-hidden rounded-tile border border-line bg-surface shadow-xs">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-surface-2/40 px-4 py-3 sm:px-6">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span className="font-mono text-[11px] font-bold uppercase tracking-wider text-muted">
+              Strategy Setup:
+            </span>
+            <div className="flex items-center gap-1 rounded-control bg-raised/70 p-1 border border-line/60">
+              <button
+                type="button"
+                onClick={() => setSelectedSetupTab('hapcs-v1')}
+                className={cx(
+                  'flex items-center gap-2 rounded-[7px] px-3.5 py-1.5 text-[12.5px] font-semibold transition-all',
+                  selectedSetupTab === 'hapcs-v1'
+                    ? 'bg-surface text-fg shadow-card'
+                    : 'text-muted hover:text-fg hover:bg-raised/40',
+                )}
+              >
+                <span>🎯 HAPCS - v1</span>
+                {activeStrategyId === 'hapcs-v1' && (
+                  <span className="inline-flex items-center gap-1 rounded-pill bg-success-soft px-1.5 py-0.5 font-mono text-[9.5px] font-bold uppercase text-success">
+                    <span className="size-1 rounded-full bg-success animate-pulse" />
+                    ACTIVE
+                  </span>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSelectedSetupTab('dangerously-skip-permissions')}
+                className={cx(
+                  'flex items-center gap-2 rounded-[7px] px-3.5 py-1.5 text-[12.5px] font-semibold transition-all',
+                  selectedSetupTab === 'dangerously-skip-permissions'
+                    ? 'bg-surface text-fg shadow-card'
+                    : 'text-muted hover:text-fg hover:bg-raised/40',
+                )}
+              >
+                <span>⚡ dangerously-skip-permissions</span>
+                {activeStrategyId === 'dangerously-skip-permissions' && (
+                  <span className="inline-flex items-center gap-1 rounded-pill bg-success-soft px-1.5 py-0.5 font-mono text-[9.5px] font-bold uppercase text-success">
+                    <span className="size-1 rounded-full bg-success animate-pulse" />
+                    ACTIVE
+                  </span>
+                )}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {!isSelectedActive ? (
+              <Button
+                variant="primary"
+                size="sm"
+                loading={selectSetupMutation.isPending}
+                onClick={() => {
+                  selectSetupMutation.mutate(selectedSetupTab, {
+                    onSuccess: () => {
+                      toast(
+                        `Engine successfully switched to ${
+                          selectedSetupTab === 'dangerously-skip-permissions'
+                            ? '⚡ dangerously-skip-permissions'
+                            : '🎯 HAPCS-v1'
+                        }`,
+                        'success',
+                      )
+                    },
+                    onError: (err: Error) => toast(err.message, 'danger'),
+                  })
+                }}
+                className="text-[12px] font-semibold shadow-xs"
+              >
+                <Zap className="size-3.5" />
+                Switch to {selectedSetupTab === 'dangerously-skip-permissions' ? 'dangerously-skip-permissions' : 'HAPCS - v1'}
+              </Button>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 rounded-pill bg-success-soft px-3 py-1 font-mono text-[11px] font-bold text-success border border-success/20">
+                <CheckCircle2 className="size-3.5 text-success" />
+                Active in Engine
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Selected Setup Details Drawer */}
+        <div className="p-4 sm:p-5">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-mono text-[14px] font-bold text-fg">
+                  {currentSetup.symbol}
+                </span>
+                <span className="text-[12.5px] text-muted font-medium">
+                  — {currentSetup.name}
+                </span>
+              </div>
+              <p className="mt-1.5 text-[12px] leading-relaxed text-muted">
+                {currentSetup.description}
+              </p>
+            </div>
+
+            {/* Quick Microstructure Parameter Metrics */}
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <div className="rounded-[8px] border border-line bg-surface-2/60 px-3 py-1.5 text-center min-w-[85px]">
+                <div className="font-mono text-[10px] uppercase font-bold text-faint">Target Pair</div>
+                <div className="font-mono text-[13px] font-semibold text-fg">
+                  ${Number(currentSetup.entry.targetPairCost).toFixed(3)}
+                </div>
+              </div>
+              <div
+                className="rounded-[8px] border border-accent/25 bg-accent-soft/30 px-3 py-1.5 text-center min-w-[85px]"
+                title="Rescue Pair Cap: Allows deficit-closing hedges up to this cap to avoid being left with unhedged losses"
+              >
+                <div className="font-mono text-[10px] uppercase font-bold text-accent">Rescue Cap</div>
+                <div className="font-mono text-[13px] font-bold text-accent">
+                  ${Number(currentSetup.entry.maxPairCost).toFixed(3)}
+                </div>
+              </div>
+              <div className="rounded-[8px] border border-line bg-surface-2/60 px-3 py-1.5 text-center min-w-[85px]">
+                <div className="font-mono text-[10px] uppercase font-bold text-faint">Max Buy Px</div>
+                <div className="font-mono text-[13px] font-semibold text-fg">
+                  {Math.round(Number(currentSetup.entry.maxFillPrice) * 100)}¢
+                </div>
+              </div>
+              <div className="rounded-[8px] border border-line bg-surface-2/60 px-3 py-1.5 text-center min-w-[85px]">
+                <div className="font-mono text-[10px] uppercase font-bold text-faint">Cutoff SBC</div>
+                <div className="font-mono text-[13px] font-semibold text-fg">
+                  {currentSetup.entry.stopBeforeCloseSec}s
+                </div>
+              </div>
+              <div className="rounded-[8px] border border-line bg-surface-2/60 px-3 py-1.5 text-center min-w-[85px]">
+                <div className="font-mono text-[10px] uppercase font-bold text-faint">Max Lead</div>
+                <div className="font-mono text-[13px] font-semibold text-fg">
+                  {currentSetup.entry.maxShareLead} sh
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {snapshot.isLoading || control.isLoading ? (
         <Skeleton className="mt-6 h-[260px] rounded-card" />
