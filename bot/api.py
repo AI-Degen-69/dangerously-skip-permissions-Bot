@@ -1664,7 +1664,7 @@ class QuietThreadingHTTPServer(ThreadingHTTPServer):
 def main() -> None:
     """Run loopback desk API server."""
     ap = argparse.ArgumentParser(description="Paper desk API (loopback only)")
-    ap.add_argument("--port", type=int, default=8799)
+    ap.add_argument("--port", type=int, default=8789)
     args = ap.parse_args()
     try:
         server = QuietThreadingHTTPServer(("127.0.0.1", args.port), Handler)

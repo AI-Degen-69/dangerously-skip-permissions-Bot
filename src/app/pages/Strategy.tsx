@@ -788,12 +788,12 @@ export function Strategy() {
                   <div className="flex items-center gap-2">
                     <Activity className="size-4 text-accent" />
                     <h4 className="text-[14px] font-semibold text-fg">
-                      Isolated Desk API &amp; Telemetry (<code className="font-mono text-[12.5px]">:5180 → :8799</code>)
+                      Desk API &amp; Telemetry (<code className="font-mono text-[12.5px]">:5173 → :8789</code>)
                     </h4>
                   </div>
                   <p className="mt-2 text-[12.5px] leading-relaxed text-muted">
-                    This worktree serves its own UI on port <code className="font-mono">5180</code> and its own{' '}
-                    <code className="font-mono">bot/api.py</code> on <code className="font-mono">127.0.0.1:8799</code>.
+                    This desk serves the UI on port <code className="font-mono">5173</code> and{' '}
+                    <code className="font-mono">bot/api.py</code> on <code className="font-mono">127.0.0.1:8789</code>.
                     Every fill event streams <code className="font-mono">role</code> (<code className="font-mono">MAKER</code>{' '}
                     vs <code className="font-mono">TAKER</code>), <code className="font-mono">subReason</code> (
                     <code className="font-mono">maker-dip-ladder</code> vs <code className="font-mono">hedge-equalizer</code>),{' '}
@@ -940,7 +940,7 @@ export function Strategy() {
               ⚡ MSR-v2 — Reconstructed from 27,091 On-Chain Fills (Nov 6–8, 2026)
             </p>
             <p className="text-[12.5px] text-muted">
-              Running live on isolated port 5180 → {BOT_ORIGIN}. Every constant and regime rule is backed by raw fill
+              Running live on port 5173 → {BOT_ORIGIN}. Every constant and regime rule is backed by raw fill
               evidence.
             </p>
           </div>

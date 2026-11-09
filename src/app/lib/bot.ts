@@ -396,7 +396,7 @@ export interface BotConfigView {
  * directly rather than through the app's worker (which never reaches the
  * machine). Its CORS policy accepts loopback origins only.
  */
-export const BOT_ORIGIN = import.meta.env.VITE_BOT_ORIGIN ?? 'http://127.0.0.1:8799'
+export const BOT_ORIGIN = import.meta.env.VITE_BOT_ORIGIN ?? 'http://127.0.0.1:8789'
 const botUrl = (path: string) => `${BOT_ORIGIN}/api/bot${path}`
 
 async function getJson<T>(path: string): Promise<T> {

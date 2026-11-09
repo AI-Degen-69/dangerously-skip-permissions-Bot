@@ -13,7 +13,7 @@ Simulates the 4-phase microstructure lifecycle:
 Usage:
   python bot/live_paper.py --once        # trade current/next live window, then exit
   python bot/live_paper.py --loop        # trade every window continuously
-  python bot/api.py                      # desk API on 127.0.0.1:8799
+  python bot/api.py                      # desk API on 127.0.0.1:8789
 """
 
 import argparse

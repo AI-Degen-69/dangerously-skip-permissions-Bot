@@ -53,7 +53,7 @@ export function Shell() {
               🎯 HAPCS-v1
             </span>
           </div>
-          <p className="truncate font-mono text-[10.5px] text-faint">Hybrid Arb · Port 5180→8799</p>
+          <p className="truncate font-mono text-[10.5px] text-faint">Hybrid Arb · Port 5173→8789</p>
         </div>
       </div>
 
