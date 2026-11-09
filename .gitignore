@@ -20,3 +20,4 @@ bot/state.json
 bot/events.jsonl
 bot/loop.pid
 bot/kill
+bot/ab_test_state.json

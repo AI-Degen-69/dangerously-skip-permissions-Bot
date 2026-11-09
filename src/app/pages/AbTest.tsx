@@ -1,36 +1,22 @@
 import { useMemo, useState } from 'react'
 import {
-  Activity,
   AlertCircle,
-  ArrowRight,
   BarChart3,
-  CheckCircle2,
-  ChevronRight,
-  Clock,
-  Database,
   FlaskConical,
-  Gauge,
-  Percent,
   Play,
   RefreshCw,
   Scale,
-  ShieldAlert,
   Sparkles,
   Square,
-  TrendingDown,
-  TrendingUp,
 } from 'lucide-react'
 
 import {
   useAbTestData,
   useStartAbCandidate,
   useStopAbCandidate,
-  useBotSnapshot,
   useBotControl,
-  type AbTestHistogramBin,
-  type AbTestWindow,
 } from '../lib/bot'
-import { Badge, Button, Card, PageHeader, Skeleton, useToast } from '../components/ui'
+import { Badge, Button, Card, PageHeader, useToast } from '../components/ui'
 import { cx } from '../lib/cx'
 
 const money = (val: number | null | undefined, digits = 2) =>
@@ -83,8 +69,7 @@ function Rich({ text }: { text: string }) {
 }
 
 export function AbTest() {
-  const { data, isLoading, refetch } = useAbTestData()
-  const snapshot = useBotSnapshot()
+  const { data, refetch } = useAbTestData()
   const control = useBotControl()
   const startCandidate = useStartAbCandidate()
   const stopCandidate = useStopAbCandidate()
@@ -92,7 +77,6 @@ export function AbTest() {
   const [selectedBin, setSelectedBin] = useState<string | null>(null)
 
   const isLoopRunning = control.data?.running ?? false
-  const activeRunId = control.data?.activeRunId
 
   const handleStart = async () => {
     try {

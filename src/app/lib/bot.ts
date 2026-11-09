@@ -222,6 +222,8 @@ export interface RunItem {
   isActive?: boolean
   windowsCount?: number
   summary?: Record<string, unknown>
+  /** Config captured when the run was opened; `strategy.id` ties the session to a strategy setup. */
+  configSnapshot?: { strategy?: { id?: string; symbol?: string; name?: string } } & Record<string, unknown>
 }
 
 export interface BotControl {
@@ -402,9 +404,6 @@ export interface BotConfigView {
     maxTradesPerDay: number
     maxConsecutiveLosses: number
     dailyLossLimitPct: number
-    dailyLossCapUsd?: number
-    maxUsdPerWindow?: number
-    maxFillsPerWindow?: number
     maxDrawdownPct: number
     cooldownAfterLossSec: number
     [key: string]: unknown
@@ -549,8 +548,12 @@ export const useResumeBot = () =>
   useBotMutation(() => send<{ ok: boolean; killSwitch: boolean }>('/resume', 'POST'))
 
 export const useStartBot = () =>
-  useBotMutation((runId?: string | null) =>
-    send<{ running: boolean; pid: number | null; reason?: string; runId?: string }>('/start', 'POST', runId ? { runId } : {}),
+  useBotMutation((opts?: { runId?: string | null; newSession?: boolean }) =>
+    send<{ running: boolean; pid: number | null; reason?: string; runId?: string }>(
+      '/start',
+      'POST',
+      opts?.newSession ? { newSession: true } : opts?.runId ? { runId: opts.runId } : {},
+    ),
   )
 
 export const useResumeRun = () =>

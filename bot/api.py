@@ -78,6 +78,14 @@ def set_selected_run_id(run_id: str | None) -> None:
     SELECTED_RUN_ID = run_id
 
 
+def session_label(cfg: dict) -> str:
+    """Run-id label for a new session, from the active strategy symbol ('⚡ DSP-v2.2' -> 'dsp_v2_2')."""
+    strat = cfg.get("strategy") or {}
+    raw = str(strat.get("symbol") or strat.get("id") or "")
+    clean = "_".join("".join(c.lower() if c.isalnum() else " " for c in raw).split())
+    return clean or "default"
+
+
 def is_view_only() -> bool:
     """Returns True if user has selected a historical run or explicit view-only mode."""
     sel = get_selected_run_id()
@@ -1382,8 +1390,13 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/bot/start":
                 req_run_id = body.get("runId")
                 resume_requested = body.get("resume", False)
-                if req_run_id or resume_requested:
-                    if req_run_id:
+                # newSession: open a brand-new run (0 windows) under the active strategy.
+                new_session = bool(body.get("newSession", False))
+                label = session_label(load_config()) if new_session else "default"
+                if req_run_id or resume_requested or new_session:
+                    if new_session:
+                        resolved_id = make_run_id(mode="paper", label=label)
+                    elif req_run_id:
                         resolved_id = find_run_id(str(req_run_id))
                         if not resolved_id:
                             self._send(404, {"error": f"Run not found: {req_run_id}"})
@@ -1409,7 +1422,7 @@ class Handler(BaseHTTPRequestHandler):
                             set_active_run_id(resolved_id)
                             set_selected_run_id(None)
                             ws = RunWorkspace(resolved_id)
-                            ws.init_workspace(config=load_config(), mode="paper")
+                            ws.init_workspace(config=load_config(), mode="paper", label=label)
                             ws.sync_to_paper_runs(RUNS_DIR)
                             try:
                                 ws.settle_pending_windows(RUNS_DIR, max_windows=15)

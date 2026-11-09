@@ -3,12 +3,8 @@ import {
   AlertTriangle,
   BarChart3,
   CheckCircle2,
-  History,
   Info,
-  Pause,
   Percent,
-  Play,
-  RotateCcw,
   Scale,
   Target,
   TrendingUp,
@@ -16,20 +12,10 @@ import {
 import { Link } from 'react-router'
 import { useId, useState } from 'react'
 
-import { Badge, Button, Card, ConfirmDialog, EmptyState, PageHeader, Skeleton, useToast } from '../components/ui'
+import { Badge, Button, Card, EmptyState, PageHeader, Skeleton, useToast } from '../components/ui'
+import { BotControlTile } from '../components/BotControlTile'
 import { InteractivePnlChart } from '../components/InteractivePnlChart'
-import {
-  BOT_ORIGIN,
-  useBotControl,
-  useBotPerf,
-  useBotRuns,
-  useRedeemBot,
-  useResetBot,
-  useResumeRun,
-  useSelectRun,
-  useStartBot,
-  useStopBot,
-} from '../lib/bot'
+import { BOT_ORIGIN, useBotControl, useBotPerf, useRedeemBot } from '../lib/bot'
 import type { BotPerf, PerfGate, PerfNote, PerfWindow } from '../lib/bot'
 import { computeKpiStats } from '../lib/kpiStats'
 import { cx } from '../lib/cx'
@@ -69,21 +55,12 @@ const NOTE_TONE: Record<PerfNote['tone'], string> = {
 export function Dashboard() {
   const perf = useBotPerf()
   const control = useBotControl()
-  const runsQuery = useBotRuns()
-  const selectRun = useSelectRun()
-  const start = useStartBot()
-  const resumeRun = useResumeRun()
-  const stop = useStopBot()
-  const reset = useResetBot()
   const redeem = useRedeemBot()
   const toast = useToast()
-  const [confirmReset, setConfirmReset] = useState(false)
   const [hoveredSlug, setHoveredSlug] = useState<string | null>(null)
 
   const isViewOnly = control.data?.isViewOnly ?? false
   const running = (control.data?.running ?? false) && !isViewOnly
-  const selectedRunId = control.data?.selectedRunId ?? runsQuery.data?.selectedRunId ?? null
-  const availableRuns = runsQuery.data?.runs ?? []
 
   const data = perf.data
   const summary = data?.summary
@@ -100,10 +77,6 @@ export function Dashboard() {
     data?.strategy?.name ??
     control.data?.strategy?.name ??
     'Hybrid Arbitrage Pairing & Certainty Sniping v1'
-  const strategySignature =
-    data?.strategy?.signature ??
-    control.data?.strategy?.signature ??
-    'Maker Dip Grid [7¢–50¢] (0% fee) · Dynamic Pairing Arbitrage · Resolution Certainty Snipe [up to 97.5¢] · Pair Cost Benchmark $0.965 (cap ≤$0.990)'
 
   return (
     <div className="mx-auto max-w-[1200px] p-5 sm:p-8">
@@ -117,33 +90,6 @@ export function Dashboard() {
                 {strategySymbol} · Recovery Engine
               </Badge>
             </span>
-            {availableRuns.length > 0 && (
-              <div className="flex items-center gap-1.5 rounded-pill border border-subtle bg-subtle px-2.5 py-1 text-[12px]">
-                <History className="size-3.5 text-muted" />
-                <label htmlFor="dashboard-session" className="text-muted font-medium cursor-pointer">Session:</label>
-                <select
-                  id="dashboard-session"
-                  aria-label="Paper trading session"
-                  value={selectedRunId ?? ''}
-                  onChange={(e) => {
-                    const val = e.target.value || null
-                    selectRun.mutate(val, {
-                      onSuccess: (res) => {
-                        toast(res.isViewOnly ? `Loaded past run (View-Only)` : 'Switched to live session')
-                      },
-                    })
-                  }}
-                  className="bg-transparent font-mono text-[11.5px] font-semibold text-fg outline-none cursor-pointer"
-                >
-                  <option value="">Live session</option>
-                  {availableRuns.map((r) => (
-                    <option key={r.runId} value={r.runId}>
-                      {r.runId} ({r.windowsCount ?? 0}w{r.status ? ` - ${r.status}` : ''})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
 
             {isViewOnly ? (
               <Badge tone="warning" dot>
@@ -155,127 +101,11 @@ export function Dashboard() {
               </Badge>
             )}
             <Badge tone="warning">Paper only</Badge>
-
-            {!isViewOnly ? (
-              <>
-                <Button
-                  variant={running ? 'secondary' : 'primary'}
-                  size="sm"
-                  loading={start.isPending || stop.isPending}
-                  onClick={() =>
-                    running
-                      ? stop.mutate(undefined, { onSuccess: () => toast('Bot stopped') })
-                      : start.mutate(undefined, {
-                          onSuccess: (result) =>
-                            toast(result.reason === 'already-running' ? 'Bot already running' : 'Paper bot started'),
-                        })
-                  }
-                >
-                  {running ? <Pause /> : <Play />}
-                  {running ? 'Stop bot' : 'Start bot'}
-                </Button>
-                <Button variant="ghost" size="icon-sm" aria-label="Reset bot" onClick={() => setConfirmReset(true)}>
-                  <RotateCcw />
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  loading={resumeRun.isPending}
-                  onClick={() =>
-                    resumeRun.mutate(selectedRunId, {
-                      onSuccess: (res) => toast(`Resumed run ${res.runId} on existing database`),
-                      onError: (err) => toast(`Failed to resume: ${(err as Error).message}`),
-                    })
-                  }
-                >
-                  <Play />
-                  Resume run
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() =>
-                    selectRun.mutate(null, {
-                      onSuccess: () => toast('Returned to live session'),
-                    })
-                  }
-                >
-                  Return to Live
-                </Button>
-              </>
-            )}
           </div>
         }
       />
 
-      <Card className="mt-4 border-accent/40 bg-accent-soft/20 px-4 py-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <span className="grid size-8 shrink-0 place-items-center rounded-tile bg-accent text-white font-bold shadow-xs">
-              ⚡
-            </span>
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[13.5px] font-semibold text-fg">{strategyName}</span>
-                <Badge tone="info" className="font-mono text-[10.5px]">
-                  Isolated Desk · {BOT_ORIGIN}
-                </Badge>
-              </div>
-              <p className="mt-0.5 font-mono text-[11.5px] text-muted">{strategySignature}</p>
-            </div>
-          </div>
-        </div>
-      </Card>
-
-      {isViewOnly && (
-        <Card className="mt-4 border-warning/40 bg-warning-soft/30 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-start gap-3">
-              <span className="grid size-9 shrink-0 place-items-center rounded-tile bg-warning-soft text-warning">
-                <History className="size-4.5" />
-              </span>
-              <div>
-                <p className="text-[13.5px] font-semibold text-warning-strong">
-                  Viewing Historical Run: <code className="font-mono">{selectedRunId}</code>
-                </p>
-                <p className="text-[12.5px] text-muted">
-                  Inspecting past run telemetry and database. Click &ldquo;Resume run&rdquo; to restart the bot on this database and continue from where it stopped.
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="primary"
-                loading={resumeRun.isPending}
-                onClick={() =>
-                  resumeRun.mutate(selectedRunId, {
-                    onSuccess: (res) => toast(`Resumed run ${res.runId} on existing database`),
-                    onError: (err) => toast(`Failed to resume: ${(err as Error).message}`),
-                  })
-                }
-              >
-                <Play className="size-3.5" />
-                Resume run
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() =>
-                  selectRun.mutate(null, {
-                    onSuccess: () => toast('Returned to live session'),
-                  })
-                }
-              >
-                Back to Live Run
-              </Button>
-            </div>
-          </div>
-        </Card>
-      )}
+      <BotControlTile />
 
       {perf.isError && (
         <Card className="mt-4 p-5">
@@ -291,28 +121,6 @@ export function Dashboard() {
               </p>
             </div>
           </div>
-        </Card>
-      )}
-
-      {!running && !perf.isError && (
-        <Card className="mt-4 flex flex-wrap items-center justify-between gap-3 p-4">
-          <div className="flex items-start gap-3">
-            <span className="grid size-9 shrink-0 place-items-center rounded-tile bg-warning-soft text-warning">
-              <Activity className="size-4.5" />
-            </span>
-            <div>
-              <p className="text-[13.5px] font-medium">The loop is not running</p>
-              <p className="text-[12.5px] text-muted">
-                No new windows are being taken.
-                {health?.snapshotAgeSec != null && (
-                  <> Last heartbeat {relativeTime(Date.now() - health.snapshotAgeSec * 1000)}.</>
-                )}
-              </p>
-            </div>
-          </div>
-          <Button size="sm" loading={start.isPending} onClick={() => start.mutate(undefined, { onSuccess: () => toast('Paper bot started') })}>
-            <Play /> Start paper bot
-          </Button>
         </Card>
       )}
 
@@ -867,22 +675,6 @@ export function Dashboard() {
         )}
       </Card>
 
-      <ConfirmDialog
-        open={confirmReset}
-        onClose={() => setConfirmReset(false)}
-        loading={reset.isPending}
-        title="Reset the paper bot?"
-        description="This wipes every paper window, fill and risk counter and restarts from the configured bankroll. It cannot be undone."
-        confirmLabel="Reset to clean state"
-        onConfirm={() =>
-          reset.mutate(undefined, {
-            onSuccess: (result) => {
-              setConfirmReset(false)
-              toast(`Bot reset to ${usd(result.bankrollUsd)} — window history wiped`)
-            },
-          })
-        }
-      />
     </div>
   )
 }
