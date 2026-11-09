@@ -13,6 +13,7 @@ __pycache__/
 .pytest_cache/
 
 # Runtime bot state & session runs
+scratch/
 bot/runs/
 bot/paper_runs/
 bot/state.json

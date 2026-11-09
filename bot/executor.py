@@ -52,6 +52,7 @@ def select_ladder_clip(
     default_clip: float = C.CLIP_SHARES_DEFAULT,
     max_clip: float = C.MAX_SHARES,
     whole_ladder: bool = True,
+    current_lead: float = 0.0,
     **kwargs,  # absorbs legacy unused kwargs
 ) -> float:
     """Select clip size. When hedging an existing deficit, snap directly to deficit!"""
@@ -59,6 +60,12 @@ def select_ladder_clip(
         # Snap directly to the deficit capped at max_clip so we don't overshoot
         # or leave residual unhedged dust!
         return min(clip_shares(deficit), max_clip)
+    # Tweak 2: De-escalating clip sizes when leading side accumulates dips
+    # Prevents huge runaway deficits from forming during early trending moves
+    if current_lead >= 10.0:
+        return min(clip_shares(10.0), max_clip)
+    if current_lead >= 5.0:
+        return min(clip_shares(20.0), max_clip)
     # Standard 30-share ladder clip on opening, deep dips (<=35c), or alternate fills
     if fill_idx % 2 == 0 or price <= 0.35:
         return min(clip_shares(default_clip), max_clip)
@@ -209,8 +216,13 @@ def evaluate_microstructure_ladder(
             max_clip=max_clip,
             whole_ladder=whole_ladder,
         )
-        role = "MAKER" if (bid is not None and ask is not None and round(ask - bid, 4) <= 0.01) else "TAKER"
-        exec_px = bid if role == "MAKER" and bid is not None else px
+        # Tweak 3: Prioritize 0% maker fills during sweep equalization to eliminate adverse fee drag
+        if in_sweep_phase and bid is not None:
+            role = "MAKER"
+            exec_px = bid
+        else:
+            role = "MAKER" if (bid is not None and ask is not None and round(ask - bid, 4) <= 0.01) else "TAKER"
+            exec_px = bid if role == "MAKER" and bid is not None else px
         est_usd, _ = compute_fill_usd(shares, exec_px, role=role, include_fee=(role == "TAKER"))
         proj_pc = _projected_pair_cost(inv, side, shares, est_usd)
 
@@ -298,6 +310,7 @@ def evaluate_microstructure_ladder(
                 default_clip=default_clip,
                 max_clip=max_clip,
                 whole_ladder=whole_ladder,
+                current_lead=lead,
             )
             est_usd, _ = compute_fill_usd(shares, px, role=role, include_fee=(role == "TAKER"))
             proj_pc = _projected_pair_cost(inv, side, shares, est_usd)

@@ -82,6 +82,39 @@ STRATEGY_SETUPS = {
             "wholeLadderClips": True,
         },
     },
+    "dangerously-skip-permissions-v2.1": {
+        "id": "dangerously-skip-permissions-v2.1",
+        "symbol": "⚡ DSP-v2.1",
+        "name": "Dangerously Skip Permissions v2.1 (Unified Triad)",
+        "signature": (
+            "De-escalating Dip Clips (30→20→10) · Passive Maker Sweep (T-75s..15s) · "
+            "Strict Sub-$1.00 Pair Cap (≤$0.995) · Certainty Rescue (≤98.5¢)"
+        ),
+        "description": (
+            "Unified candidate setup: Prevents runaway deficits via de-escalating dip clips, "
+            "executes 0% fee maker equalization between T-75s and T-15s, and hard-caps pair cost at ≤$0.995 "
+            "so every merged pair redeems with guaranteed positive return."
+        ),
+        "entry": {
+            "startAfterOpenSec": 4,
+            "stopBeforeCloseSec": 75,
+            "clipSharesDefault": 30.0,
+            "maxShares": 50.0,
+            "minFillPrice": 0.07,
+            "maxFillPrice": 0.880,
+            "benchmarkPairCost": 0.965,
+            "targetPairCost": 0.965,
+            "maxPairCost": 0.985,
+            "maxShareLead": 45.0,
+            "freezeLead": 15.0,
+            "rescuePairCostMax": 0.995,
+            "rescueCeilingPrice": 0.985,
+            "minSpacingMoveSec": 0.5,
+            "minSpacingStaticSec": 2.5,
+            "includeTakerFee": True,
+            "wholeLadderClips": True,
+        },
+    },
 }
 
 # Timing Parameters (seconds countdown SBC: seconds before close)

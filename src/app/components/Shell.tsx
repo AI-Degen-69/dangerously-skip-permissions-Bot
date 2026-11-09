@@ -1,4 +1,4 @@
-import { Activity, BookOpen, LayoutDashboard, Menu as MenuIcon, Moon, Settings, SlidersHorizontal, Sun, X } from 'lucide-react'
+import { Activity, BookOpen, FlaskConical, LayoutDashboard, Menu as MenuIcon, Moon, Settings, SlidersHorizontal, Sun, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router'
 
@@ -9,6 +9,7 @@ import { Avatar } from './ui'
 const links = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/live', label: 'Live bot', icon: Activity },
+  { to: '/ab-test', label: 'A/B Testing', icon: FlaskConical },
   { to: '/config', label: 'Configuration', icon: SlidersHorizontal },
   { to: '/strategy', label: 'Strategy', icon: BookOpen },
 ]

@@ -589,3 +589,100 @@ export const useSelectStrategySetup = () =>
   useBotMutation((setupId: string) =>
     send<{ ok: boolean; activeSetupId: string; setup: StrategySetup; config: BotConfigView }>('/strategy-setup', 'POST', { setupId }),
   )
+
+export interface AbTestWindow {
+  slug: string
+  epoch: number
+  net: number
+  payout: number
+  cost: number
+  pairCost: number | null
+  imbalance: number
+  fills: number
+  upShares: number
+  downShares: number
+  winner: string | null
+}
+
+export interface AbTestDistributionStats {
+  runId: string | null
+  name: string
+  description?: string
+  configHighlights?: Record<string, string>
+  samples: number
+  targetSamples?: number
+  progressPct?: number
+  wins: number
+  losses: number
+  scratches: number
+  winRate: number
+  lossRate: number
+  netPnl: number
+  meanPnl: number
+  stdPnl: number
+  variance: number
+  medianPnl: number
+  minPnl: number
+  maxPnl: number
+  meanPairCost: number
+  zeroImbalancePct: number
+  pnlList: number[]
+  windows: AbTestWindow[]
+}
+
+export interface AbTestHistogramBin {
+  label: string
+  range: [number, number]
+  baselineCount: number
+  baselinePct: number
+  candidateCount: number
+  candidatePct: number
+}
+
+export interface AbTestStatistics {
+  targetSampleSize: number
+  alpha: number
+  confidenceLevel: string
+  power: string
+  tStatistic: number
+  tCritical: number
+  pValue: number
+  degreesOfFreedom: number
+  cohenD: number
+  meanDiff: number
+  ci95: [number, number]
+  significant: boolean
+  verdict: string
+  verdictTone: 'neutral' | 'info' | 'accent' | 'success' | 'danger'
+}
+
+export interface AbTestHypotheses {
+  nullHypothesis: string
+  altHypothesis: string
+  decisionRule: string
+}
+
+export interface AbTestData {
+  status: string
+  updatedAt: string
+  baseline: AbTestDistributionStats
+  candidate: AbTestDistributionStats
+  statistics: AbTestStatistics
+  hypotheses: AbTestHypotheses
+  histogram: AbTestHistogramBin[]
+}
+
+export const useAbTestData = () =>
+  useQuery({
+    queryKey: ['bot', 'ab-test'],
+    queryFn: () => getJson<AbTestData>('/ab-test'),
+    refetchInterval: 3_000,
+    retry: false,
+  })
+
+export const useStartAbCandidate = () =>
+  useBotMutation(() => send<{ ok: boolean; candidateRunId: string; data: AbTestData }>('/ab-test/start', 'POST'))
+
+export const useStopAbCandidate = () =>
+  useBotMutation(() => send<{ ok: boolean; data: AbTestData }>('/ab-test/stop', 'POST'))
+

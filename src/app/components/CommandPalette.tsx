@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { Activity, BookOpen, LayoutDashboard, Search, Settings, SlidersHorizontal } from 'lucide-react'
+import { Activity, BookOpen, FlaskConical, LayoutDashboard, Search, Settings, SlidersHorizontal } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 
@@ -10,6 +10,7 @@ type Item = { key: string; label: string; to: string; icon: React.ReactNode }
 const shortcuts: Item[] = [
   { key: 's-dashboard', label: 'Go to Dashboard', to: '/', icon: <LayoutDashboard className="size-4 text-muted" /> },
   { key: 's-live', label: 'Go to Live bot', to: '/live', icon: <Activity className="size-4 text-muted" /> },
+  { key: 's-ab-test', label: 'Go to A/B Testing Lab', to: '/ab-test', icon: <FlaskConical className="size-4 text-muted" /> },
   { key: 's-config', label: 'Go to Configuration', to: '/config', icon: <SlidersHorizontal className="size-4 text-muted" /> },
   { key: 's-strategy', label: 'Go to Strategy', to: '/strategy', icon: <BookOpen className="size-4 text-muted" /> },
   { key: 's-settings', label: 'Go to Settings', to: '/settings', icon: <Settings className="size-4 text-muted" /> },

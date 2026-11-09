@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
 import { Shell } from './components/Shell'
 import { Spinner, ToastProvider } from './components/ui'
 import { ApiError, useMe } from './lib/api'
+import { AbTest } from './pages/AbTest'
 import { Config } from './pages/Config'
 import { Dashboard } from './pages/Dashboard'
 import { Live } from './pages/Live'
@@ -34,6 +35,7 @@ function Gate() {
       <Route element={<Shell />}>
         <Route index element={<Dashboard />} />
         <Route path="live" element={<Live />} />
+        <Route path="ab-test" element={<AbTest />} />
         <Route path="config" element={<Config />} />
         <Route path="strategy" element={<Strategy />} />
         <Route path="settings" element={<Settings />} />

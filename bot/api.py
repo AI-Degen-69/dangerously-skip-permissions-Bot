@@ -1363,6 +1363,9 @@ class Handler(BaseHTTPRequestHandler):
                 })
             elif url.path == "/api/bot/config":
                 self._send(200, {"config": self._config_view(), "configFile": str(CONFIG_PATH)})
+            elif url.path == "/api/bot/ab-test":
+                from bot.ab_test import get_ab_test_data
+                self._send(200, get_ab_test_data())
             else:
                 self._send(404, {"error": "not found"})
         except (ConnectionError, BrokenPipeError):
@@ -1636,6 +1639,14 @@ class Handler(BaseHTTPRequestHandler):
                     "setup": setup,
                     "config": self._config_view(),
                 })
+            elif self.path == "/api/bot/ab-test/start":
+                from bot.ab_test import start_candidate_test
+                res = start_candidate_test()
+                self._send(200, res)
+            elif self.path == "/api/bot/ab-test/stop":
+                from bot.ab_test import stop_candidate_test
+                res = stop_candidate_test()
+                self._send(200, res)
             else:
                 self._send(404, {"error": "not found"})
         except (ConnectionError, BrokenPipeError):
