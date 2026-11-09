@@ -193,7 +193,8 @@ def evaluate_microstructure_ladder(
         if px < min_fill:
             saw_dust = True
             continue
-        # In rescue/hedging mode, allow up to rescue_ceiling (0.92) to prevent naked leg wipeouts
+        # In rescue/hedging mode (deficit > 0), allow up to rescue_ceiling (0.985)
+        # to ensure open deficit-closing hedges are executed rather than facing 100% loss at resolution.
         effective_ceiling = rescue_ceiling if (strategy_id == "dangerously-skip-permissions" or in_sweep_phase) else max_fill
         if px > effective_ceiling:
             saw_ceiling = True
@@ -214,8 +215,8 @@ def evaluate_microstructure_ladder(
         proj_pc = _projected_pair_cost(inv, side, shares, est_usd)
 
         # Tiered Rescue Hedging:
-        # Standard: proj_pc <= max_pair_cost (0.985 / 0.990) -> sub-$1.00 profitable pairing arbitrage.
-        # Rescue: when holding a deficit, accepting proj_pc up to rescue_max_pair_cost (1.025)
+        # Standard: proj_pc <= max_pair_cost -> sub-$1.00 profitable pairing arbitrage.
+        # Rescue: when holding a deficit in DSP or sweep phase, accepting proj_pc up to rescue_max_pair_cost (1.080)
         # locks in capital redemption, preventing a 100% loss ($0.00 redemption) on the naked leg.
         rescue_cap = rescue_max_pair_cost if (strategy_id == "dangerously-skip-permissions" or in_sweep_phase) else max_pair_cost
         is_rescue = (proj_pc is not None and proj_pc > max_pair_cost)

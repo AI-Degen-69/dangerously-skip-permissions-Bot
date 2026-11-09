@@ -258,5 +258,53 @@ class TestStrategySetups(unittest.TestCase):
         finally:
             CONFIG_PATH.write_text(orig_content, encoding="utf-8")
 
+    def test_deficit_rescue_allows_up_to_985_odds(self):
+        """Verify that when an open share deficit exists, odds up to 98.5¢ are accepted to rescue/close the deficit."""
+        inv = {
+            "Up": {"shares": 50.0, "cost": 4.00},   # avg 0.08
+            "Down": {"shares": 20.0, "cost": 10.00}, # avg 0.50, deficit = 30 Down needed
+        }
+        quotes = {
+            "Up": {"bid": 0.01, "ask": 0.02},
+            "Down": {"bid": 0.95, "ask": 0.98},  # spread > 0.01 -> TAKER fill at 0.98
+        }
+        dec = evaluate_microstructure_ladder(
+            quotes=quotes,
+            inv=inv,
+            fill_idx=5,
+            minute=3,
+            strategy_id="dangerously-skip-permissions",
+            max_fill=0.880,  # Standard max fill is 0.880
+            rescue_ceiling=0.985,  # Rescue ceiling allows up to 0.985
+            rescue_max_pair_cost=1.080,
+        )
+        self.assertEqual(dec.action, "fill")
+        self.assertEqual(dec.outcome, "Down")
+        self.assertEqual(dec.shares, 30.0)
+        self.assertEqual(dec.price, 0.98)
+
+    def test_balanced_inventory_strictly_rejects_98_odds(self):
+        """Verify that when inventory is balanced (deficit=0), 98¢ certainty quotes are strictly skipped."""
+        inv = {
+            "Up": {"shares": 50.0, "cost": 20.00},
+            "Down": {"shares": 50.0, "cost": 20.00},
+        }
+        quotes = {
+            "Up": {"bid": 0.01, "ask": 0.02},
+            "Down": {"bid": 0.97, "ask": 0.98},
+        }
+        dec = evaluate_microstructure_ladder(
+            quotes=quotes,
+            inv=inv,
+            fill_idx=5,
+            minute=4,
+            strategy_id="dangerously-skip-permissions",
+            max_fill=0.880,
+            rescue_ceiling=0.985,
+        )
+        self.assertEqual(dec.action, "skip")
+        self.assertEqual(dec.reason, "extreme-price-skip")
+        self.assertEqual(dec.sub_reason, "ceiling-price-skip")
+
 if __name__ == '__main__':
     unittest.main()

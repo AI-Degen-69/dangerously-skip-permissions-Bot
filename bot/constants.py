@@ -40,8 +40,8 @@ STRATEGY_SETUPS = {
             "maxPairCost": 0.990,
             "maxShareLead": 90.0,
             "freezeLead": 25.0,
-            "rescuePairCostMax": 1.050,
-            "rescueCeilingPrice": 0.950,
+            "rescuePairCostMax": 1.080,
+            "rescueCeilingPrice": 0.985,
             "minSpacingMoveSec": 0.5,
             "minSpacingStaticSec": 2.5,
             "includeTakerFee": True,
@@ -74,8 +74,8 @@ STRATEGY_SETUPS = {
             "maxPairCost": 0.985,
             "maxShareLead": 45.0,
             "freezeLead": 15.0,
-            "rescuePairCostMax": 1.050,
-            "rescueCeilingPrice": 0.920,
+            "rescuePairCostMax": 1.080,
+            "rescueCeilingPrice": 0.985,
             "minSpacingMoveSec": 0.5,
             "minSpacingStaticSec": 2.5,
             "includeTakerFee": True,
@@ -105,7 +105,7 @@ DIP_LADDER_MAX = 0.50          # Upper bound of passive Maker Dip Grid [7¢–50
 RESOLUTION_SNIPE_BAND = (0.90, 0.975)  # Minute 4 resolution certainty snipe band (up to 97.5¢)
 PRICE_FLOOR = 0.07             # Hard lower cutoff (<7¢ lottery tail strictly skipped)
 PRICE_CEILING = 0.975          # Hard upper cutoff (>97.5¢ extreme certainty strictly skipped)
-RESCUE_CEILING_PRICE = 0.920   # Hard ceiling for deficit rescue pairing fills
+RESCUE_CEILING_PRICE = 0.985   # Hard ceiling for deficit rescue pairing fills (up to 98.5¢ when deficit exists)
 
 # Mathematical Sub-$1.00 Pair Cost Constraints & Benchmarks
 BENCHMARK_PAIR_COST = 0.965    # Measured historical tape benchmark ($0.9654 on tape, +3.5% margin)
@@ -113,7 +113,7 @@ PAIR_COST_BENCHMARK = BENCHMARK_PAIR_COST
 TARGET_PAIR_COST = BENCHMARK_PAIR_COST  # backward-compat alias
 PAIR_COST_TARGET = BENCHMARK_PAIR_COST  # backward-compat alias
 PAIR_COST_MAX = 0.990          # Hard sub-$1.00 ceiling (never enters pair ≥ $1.00)
-RESCUE_PAIR_COST_MAX = 1.050   # Cap for deficit rescue pairing (sacrifices 1-2% spread to prevent 100% loss)
+RESCUE_PAIR_COST_MAX = 1.080   # Cap for deficit rescue pairing (sacrifices modest spread to prevent 100% loss)
 MEAN_PAIR_COST = 0.9462        # Measured mean pair cost on tape
 
 # Exchange Fee Model

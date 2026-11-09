@@ -336,6 +336,9 @@ def trade_window(
     target_pair_cost = float(entry.get("targetPairCost", C.TARGET_PAIR_COST))
     max_pair_cost = float(entry.get("maxPairCost", C.PAIR_COST_MAX))
     max_share_lead = float(entry.get("maxShareLead", C.MAX_SHARE_LEAD))
+    freeze_lead = float(entry.get("freezeLead", C.FREEZE_LEAD))
+    rescue_ceiling = float(entry.get("rescueCeilingPrice", C.RESCUE_CEILING_PRICE))
+    rescue_max_pair_cost = float(entry.get("rescuePairCostMax", C.RESCUE_PAIR_COST_MAX))
 
     # Pacing parameters
     min_spacing_move = float(entry.get("minSpacingMoveSec", 0.5))
@@ -451,6 +454,9 @@ def trade_window(
                 max_pair_cost=max_pair_cost,
                 max_share_lead=max_share_lead,
                 in_sweep_phase=in_sweep_phase,
+                freeze_lead=freeze_lead,
+                rescue_ceiling=rescue_ceiling,
+                rescue_max_pair_cost=rescue_max_pair_cost,
             )
 
             if decision.action == "skip" or decision.outcome is None or decision.price is None:
