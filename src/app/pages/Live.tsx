@@ -531,7 +531,7 @@ function EventTitle({ event }: { event: BotEvent }) {
     )
   }
 
-  return <span className="truncate text-[13px]">{label(event.reason)}</span>
+  return <span className="truncate text-[13px]">{label(event.reason, event.detail)}</span>
 }
 
 function EventRow({ event }: { event: BotEvent }) {
