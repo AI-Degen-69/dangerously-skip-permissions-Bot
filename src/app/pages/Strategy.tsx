@@ -24,7 +24,8 @@ import { Badge, Button, Card, PageHeader } from '../components/ui'
 import { BOT_ORIGIN } from '../lib/bot'
 
 // ----------------------------------------------------------------------
-// MSR-v2 Strategy Documentation:
+// 🎯 HAPCS-v1 Strategy Documentation:
+// Hybrid Arbitrage Pairing & Certainty Sniping v1
 // Reconstructed quantitatively from 27,091 on-chain fills across two consecutive
 // 24-hour ledgers (Nov 6–7: 17,416 rows; Nov 7–8: 10,748 rows) of wallet
 // 0xc53375ff94e96100f2b30a4b5775db35218d69a9 on Polymarket 5m BTC Up/Down.
@@ -33,9 +34,9 @@ import { BOT_ORIGIN } from '../lib/bot'
 const CONSTANTS_TABLE = [
   {
     name: 'STRATEGY_ID / SYMBOL',
-    value: 'msr-v2-maker-straddle · ⚡ MSR-v2',
+    value: 'hapcs-v1 · 🎯 HAPCS-v1',
     location: 'bot/constants.py',
-    meaning: 'Identifies the reconstructed Hybrid Maker/Taker Straddle & Lagging-Leg Equalizer across API and UI.',
+    meaning: 'Identifies the reconstructed Hybrid Arbitrage Pairing & Certainty Sniping v1 engine across API and UI.',
   },
   {
     name: 'STRADDLE_BAND',
@@ -53,25 +54,31 @@ const CONSTANTS_TABLE = [
     name: 'DIP_LADDER_MAX',
     value: '0.50 (50¢)',
     location: 'bot/constants.py',
-    meaning: 'Upper bound of Regime 2 (Passive Maker Dip Ladder). 67.5% of fills in [7¢, 50¢] accumulate the cheaper leg at 0% fee.',
+    meaning: 'Upper bound of passive Maker Dip Grid [7¢–50¢]. 67.5% of fills accumulate the cheaper leg at 0% fee with resting limit bids.',
   },
   {
     name: 'DEAD_ZONE_BAND',
     value: '(0.50, 0.75) (50¢ – 75¢)',
     location: 'bot/constants.py',
-    meaning: 'Mid-band dead zone (only 14.4% of tape fills). Skipped unless equalizing a share deficit at pair cost ≤ $0.965; pivots to the opposite token’s [25¢, 50¢] dip instead.',
+    meaning: 'Mid-band dead zone (only 14.4% of tape fills). Skipped unless equalizing a share deficit at pair cost ≤ $0.965; pivots to opposite token dip instead.',
   },
   {
     name: 'HEDGE_FAV_BAND',
     value: '[0.75, 0.95] (75¢ – 95¢)',
     location: 'bot/constants.py',
-    meaning: 'Regime 1 (Lagging-Leg Share Equalizer). 68.3% of fills here buy the lagging share side to lock in matched pairs (+5.7% to +11.5% ROI/$).',
+    meaning: 'Dynamic Arbitrage Pairing (Lagging-Leg Equalizer). Fills here aggressively buy the lagging share side to lock in matched pairs (+5.7% to +11.5% ROI/$).',
+  },
+  {
+    name: 'RESOLUTION_SNIPE_BAND',
+    value: '[0.90, 0.975] (90¢ – 97.5¢)',
+    location: 'bot/constants.py · executor.py',
+    meaning: 'Minute 4 (T-60s) resolution certainty snipe window. Captures high-certainty winner resolution up to 97.5¢ subject to pair cost cap.',
   },
   {
     name: 'PRICE_CEILING (maxFillPrice)',
-    value: '0.95 (95¢)',
+    value: '0.975 (97.5¢)',
     location: 'bot/constants.py · config.json',
-    meaning: 'Hard upper price cap (99.96% of tape fills ≤ 95¢). Fills > 95¢ lost −20.73% per dollar and are strictly refused.',
+    meaning: 'Hard upper price cap (up to 97.5¢ for Minute 4 certainty sniping). Fills > 97.5¢ are strictly refused.',
   },
   {
     name: 'HARD_CUTOFF_SBC (stopBeforeCloseSec)',
@@ -80,16 +87,22 @@ const CONSTANTS_TABLE = [
     meaning: '99.83% of all on-chain fills occur ≥ 12s before expiry; the final 11 seconds have zero fills across 24 hours.',
   },
   {
+    name: 'PRE_OPEN_PIPELINE_S',
+    value: '10s (T-310s to T-300s)',
+    location: 'bot/constants.py · live_paper.py',
+    meaning: 'Phase 0 pre-open discovery, book initialization & resting limit order placement before window start.',
+  },
+  {
     name: 'TAKER_FEE_COEFF',
     value: '0.07 → fee = 0.07 · p · (1 − p)',
     location: 'bot/constants.py · executor.py',
     meaning: 'Exact Polymarket parabolic taker fee formula (peaks at 1.75¢/share at p = 0.50; 0¢ on passive Maker fills).',
   },
   {
-    name: 'PAIR_COST_TARGET / MEAN / MAX',
-    value: '$0.965 target (median $0.9654) · $0.9462 mean · ≤ $0.990 hard max',
+    name: 'PAIR_COST_BENCHMARK / MEAN / MAX',
+    value: '$0.965 benchmark (median $0.9654) · $0.9462 mean · ≤ $0.990 hard max',
     location: 'bot/constants.py · executor.py',
-    meaning: 'Measured median combined cost (avg_Up + avg_Down) across 256 dual-sided windows is $0.9654 ($0.965 target), and mean is $0.9462. Hard ceiling is strictly capped at ≤ $0.990 (< $1.00 bound); any pair cost > $1.00 is a guaranteed losing pair.',
+    meaning: 'Measured median combined cost (avg_Up + avg_Down) across 256 dual-sided windows is $0.9654 ($0.965 benchmark), and mean is $0.9462. Hard ceiling is strictly capped at ≤ $0.990 (< $1.00 bound); any pair cost > $1.00 is a guaranteed losing pair.',
   },
   {
     name: 'MAX_SHARE_LEAD',
@@ -148,7 +161,7 @@ const CALIBRATION_SUMMARY = [
   },
   {
     band: '0.75 – 0.95',
-    role: 'Regime 1: Lagging-Leg Equalizer',
+    role: 'Regime 1: Dynamic Pairing Equalizer',
     fills: '1,706 (16.7%)',
     implied: '83.1%',
     actualWin: '90.1%',
@@ -157,13 +170,23 @@ const CALIBRATION_SUMMARY = [
     tone: 'accent' as const,
   },
   {
-    band: '0.95 – 1.00',
+    band: '0.90 – 0.975',
+    role: 'Phase 3: Minute 4 Certainty Snipe',
+    fills: 'Tape tail',
+    implied: '93.5%',
+    actualWin: '98.2%',
+    roiPct: '+4.8%',
+    verdict: 'Certainty snipe & deficit close in final minute',
+    tone: 'info' as const,
+  },
+  {
+    band: '0.975 – 1.00',
     role: 'Refused (Ceiling Tail)',
     fills: '4 (0.04%)',
-    implied: '96.2%',
+    implied: '98.5%',
     actualWin: '75.0%',
     roiPct: '−20.7%',
-    verdict: 'Blocked by PRICE_CEILING = 0.95',
+    verdict: 'Blocked by PRICE_CEILING = 0.975',
     tone: 'danger' as const,
   },
 ]
@@ -451,12 +474,12 @@ export function Strategy() {
                   <div className="rounded-tile border border-line bg-surface-2/40 p-4">
                     <div className="flex items-center gap-2">
                       <ShieldCheck className="size-4 text-warning" />
-                      <span className="text-[13.5px] font-semibold text-fg">4. Strict Tail Truncation (&lt;7¢ &amp; &gt;95¢)</span>
+                      <span className="text-[13.5px] font-semibold text-fg">4. Strict Tail Truncation (&lt;7¢ &amp; &gt;97.5¢)</span>
                     </div>
                     <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted">
                       On-chain calibration proves two negative-EV traps: lottery tickets <code className="font-mono">&lt;7¢</code>{' '}
-                      (0.6% win rate, −89.8% ROI) and overpriced favorites <code className="font-mono">&gt;95¢</code>{' '}
-                      (75% win rate vs 96.2% price, −20.7% ROI). MSR-v2 blocks both tails.
+                      (0.6% win rate, −89.8% ROI) and extreme certainty tail <code className="font-mono">&gt;97.5¢</code>{' '}
+                      where downside asymmetry destroys edge. 🎯 HAPCS-v1 blocks both tails while capturing high-certainty snipes up to 97.5¢ in Minute 4.
                     </p>
                   </div>
                 </div>
@@ -469,7 +492,7 @@ export function Strategy() {
                 <div>
                   <h3 className="text-[15.5px] font-semibold text-fg">Empirical Calibration across Price Regimes</h3>
                   <p className="text-[12.5px] text-muted">
-                    Measured across 10,007 settled fills (Nov 7–8 ledger) — why MSR-v2 trades bimodal bands
+                    Measured across 10,007 settled fills (Nov 7–8 ledger) — why 🎯 HAPCS-v1 trades bimodal bands
                   </p>
                 </div>
                 <Badge tone="info">10,007 Settled Fills</Badge>
@@ -480,7 +503,7 @@ export function Strategy() {
                   <thead className="border-b border-line text-[11px] font-semibold uppercase tracking-wider text-faint">
                     <tr>
                       <th className="py-2 px-2.5">Price Band</th>
-                      <th className="py-2 px-2.5">MSR-v2 Regime</th>
+                      <th className="py-2 px-2.5">🎯 HAPCS-v1 Regime</th>
                       <th className="py-2 px-2.5 text-right">Fills</th>
                       <th className="py-2 px-2.5 text-right">Price Paid</th>
                       <th className="py-2 px-2.5 text-right">Actual Win</th>
@@ -543,7 +566,7 @@ export function Strategy() {
                   <div className="col-span-1 flex items-center justify-center bg-danger/85 px-1 text-center" title="0¢–7¢ Refused">
                     &lt;7¢
                   </div>
-                  <div className="col-span-5 flex items-center justify-center bg-success/85 px-2 text-center" title="7¢–50¢ Maker Dip Ladder">
+                  <div className="col-span-5 flex items-center justify-center bg-success/85 px-2 text-center" title="7¢–50¢ Maker Dip Grid">
                     Regime 2: Maker Dip [7¢–50¢]
                   </div>
                   <div className="col-span-3 flex items-center justify-center bg-warning/80 px-2 text-center" title="50¢–75¢ Dead Zone">
@@ -552,16 +575,16 @@ export function Strategy() {
                   <div className="col-span-2 flex items-center justify-center bg-info/85 px-1.5 text-center" title="75¢–95¢ Lagging Equalizer">
                     Regime 1: [75–95¢]
                   </div>
-                  <div className="col-span-1 flex items-center justify-center bg-danger/85 px-1 text-center" title=">95¢ Refused">
-                    &gt;95¢
+                  <div className="col-span-1 flex items-center justify-center bg-accent/90 px-1 text-center" title="90¢–97.5¢ Minute 4 Certainty Snipe">
+                    M4 Snipe
                   </div>
                 </div>
                 <div className="mt-2 grid grid-cols-12 font-mono text-[10.5px] text-faint">
                   <div className="col-span-1">0¢</div>
                   <div className="col-span-5">7¢ (Floor) → 50¢ (67.2% of fills)</div>
                   <div className="col-span-3">50¢ → 75¢ (Skip / Pivot)</div>
-                  <div className="col-span-2">75¢ → 95¢ (Hedge)</div>
-                  <div className="col-span-1 text-right">100¢</div>
+                  <div className="col-span-2">75¢ → 95¢ (Pair Arbitrage)</div>
+                  <div className="col-span-1 text-right">97.5¢ (Ceil)</div>
                 </div>
               </div>
 
@@ -569,21 +592,20 @@ export function Strategy() {
               <div id="three-regimes" className="mt-6 grid scroll-mt-16 gap-4 sm:grid-cols-3">
                 <div className="rounded-tile border border-info/30 bg-info-soft/20 p-4">
                   <div className="flex items-center justify-between">
-                    <span className="font-mono text-[11px] font-bold uppercase text-info">Priority 1 · [75¢, 95¢]</span>
-                    <Badge tone="info">Equalizer</Badge>
+                    <span className="font-mono text-[11px] font-bold uppercase text-info">Dynamic Pairing &amp; M4 Snipe</span>
+                    <Badge tone="info">Pair Arbitrage</Badge>
                   </div>
-                  <h4 className="mt-1.5 text-[14px] font-semibold text-fg">Regime 1: Lagging-Leg Hedge</h4>
+                  <h4 className="mt-1.5 text-[14px] font-semibold text-fg">Regime 1 &amp; M4: Dynamic Equalizer &amp; Snipe</h4>
                   <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted">
-                    Checks if either side is in <code className="font-mono">[0.75, 0.95]</code>{' '}
-                    <strong>AND holds fewer shares</strong> than the opposite side (<code className="font-mono">deficit = shares_opp − shares_side &gt; 0</code>).
-                    If projected <code className="font-mono">pair_cost ≤ $0.990</code> (strictly &lt; $1.00 bound), it lifts up to 50 shares (Taker
-                    or tight-spread Maker) to equalize share counts before close.
+                    Checks any side with a share deficit (<code className="font-mono">deficit = shares_opp − shares_side &gt; 0</code>).
+                    Buys the lagging leg at any price in <code className="font-mono">[7¢, 97.5¢]</code> as long as projected{' '}
+                    <code className="font-mono">pair_cost ≤ $0.990</code> (strictly &lt; $1.00 bound). In Minute 4 (T-60s), executes resolution certainty snipes up to <code className="font-mono">97.5¢</code>.
                   </p>
                 </div>
 
                 <div className="rounded-tile border border-success/30 bg-success-soft/20 p-4">
                   <div className="flex items-center justify-between">
-                    <span className="font-mono text-[11px] font-bold uppercase text-success">Priority 2 · [7¢, 50¢]</span>
+                    <span className="font-mono text-[11px] font-bold uppercase text-success">Passive Grid · [7¢, 50¢]</span>
                     <Badge tone="success">0% Maker</Badge>
                   </div>
                   <h4 className="mt-1.5 text-[14px] font-semibold text-fg">Regime 2: Passive Maker Dip Grid</h4>
@@ -598,7 +620,7 @@ export function Strategy() {
 
                 <div className="rounded-tile border border-warning/30 bg-warning-soft/20 p-4">
                   <div className="flex items-center justify-between">
-                    <span className="font-mono text-[11px] font-bold uppercase text-warning">Priority 3 · (50¢, 75¢)</span>
+                    <span className="font-mono text-[11px] font-bold uppercase text-warning">Mid-Band · (50¢, 75¢)</span>
                     <Badge tone="warning">Dead Zone</Badge>
                   </div>
                   <h4 className="mt-1.5 text-[14px] font-semibold text-fg">Regime 3: Complement Pivot / Skip</h4>
@@ -643,7 +665,7 @@ export function Strategy() {
                   <p className="text-[12.5px] text-muted">
                     Every candidate fill is simulated against current window inventory <code className="font-mono">inv[&quot;Up&quot;]</code>{' '}
                     and <code className="font-mono">inv[&quot;Down&quot;]</code> before execution. Because a binary token resolves to $1.00,
-                    any matched pair with <code className="font-mono">pair_cost &gt; $1.00</code> is a guaranteed loss. MSR-v2 strictly
+                    any matched pair with <code className="font-mono">pair_cost &gt; $1.00</code> is a guaranteed loss. 🎯 HAPCS-v1 strictly
                     enforces a hard ceiling of <code className="font-mono">≤ $0.990</code> (locking in ≥ +1.0¢/share arbitrage profit).
                   </p>
                 </div>
@@ -694,7 +716,7 @@ export function Strategy() {
                       <th className="py-2 px-2.5">Constant / Key</th>
                       <th className="py-2 px-2.5">Measured Value</th>
                       <th className="py-2 px-2.5">Source File</th>
-                      <th className="py-2 px-2.5">Role in MSR-v2</th>
+                      <th className="py-2 px-2.5">Role in 🎯 HAPCS-v1</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-line">
@@ -731,13 +753,20 @@ export function Strategy() {
                 <Badge tone="accent">Event-Driven ≤250ms Wake</Badge>
               </div>
 
-              <div className="mt-5 grid gap-3 sm:grid-cols-4">
+              <div className="mt-5 grid gap-3 sm:grid-cols-5">
+                <div className="rounded-tile border border-line bg-surface-2/40 p-3.5">
+                  <span className="font-mono text-[11px] font-bold uppercase text-info">0. T-310s (Pre-Open)</span>
+                  <p className="mt-1 text-[13.5px] font-semibold text-fg">Phase 0 Pipeline</p>
+                  <p className="mt-1 text-[12px] leading-relaxed text-muted">
+                    Pre-open discovery &amp; WebSocket book initialization 10s before window open.
+                  </p>
+                </div>
+
                 <div className="rounded-tile border border-line bg-surface-2/40 p-3.5">
                   <span className="font-mono text-[11px] font-bold uppercase text-danger">1. T+0s – T+4s (sbc 296–300)</span>
                   <p className="mt-1 text-[13.5px] font-semibold text-fg">Opening Buffer</p>
                   <p className="mt-1 text-[12px] leading-relaxed text-muted">
-                    Connects <code className="font-mono">LiveBookStreamer</code> to Polymarket CLOB WebSocket and
-                    observes opening book liquidity. Strictly 0 fills occur in the first 4s (sbc 296–300).
+                    Observes opening book liquidity. Strictly 0 fills occur in the first 4s (sbc 296–300).
                   </p>
                 </div>
 
@@ -745,23 +774,23 @@ export function Strategy() {
                   <span className="font-mono text-[11px] font-bold uppercase text-accent">2. T+4s First Touch</span>
                   <p className="mt-1 text-[13.5px] font-semibold text-fg">Opening Straddle Leg</p>
                   <p className="mt-1 text-[12px] leading-relaxed text-muted">
-                    Opens on the cheaper token inside <code className="font-mono">[34¢, 55¢]</code> (preferring <code className="font-mono">best_bid</code> as Maker at 0% fee), immediately priming the counter hedge.
+                    Opens on cheaper token in <code className="font-mono">[34¢, 55¢]</code> (preferring Maker at 0% fee), priming the hedge.
                   </p>
                 </div>
 
                 <div className="rounded-tile border border-line bg-surface-2/40 p-3.5">
-                  <span className="font-mono text-[11px] font-bold uppercase text-success">3. T+4s – T+288s (sbc 12–296)</span>
-                  <p className="mt-1 text-[13.5px] font-semibold text-fg">Continuous 3-Regime Grid</p>
+                  <span className="font-mono text-[11px] font-bold uppercase text-success">3. M0–M4 Trading</span>
+                  <p className="mt-1 text-[13.5px] font-semibold text-fg">Dynamic Grid &amp; Snipe</p>
                   <p className="mt-1 text-[12px] leading-relaxed text-muted">
-                    Continuous event-driven trading across M0–M4. Accumulates maker dips [7¢–50¢], equalizes lagging legs [75¢–95¢], and executes M4 snipes in Minute 4 without artificial fill caps.
+                    Maker dip grid [7¢–50¢], dynamic pairing equalizer, and Minute 4 certainty snipes up to 97.5¢.
                   </p>
                 </div>
 
                 <div className="rounded-tile border border-line bg-surface-2/40 p-3.5">
-                  <span className="font-mono text-[11px] font-bold uppercase text-info">4. T+288s (sbc 0–12)</span>
+                  <span className="font-mono text-[11px] font-bold uppercase text-warning">4. T+288s (sbc 0–12)</span>
                   <p className="mt-1 text-[13.5px] font-semibold text-fg">Cutoff &amp; Async Settle</p>
                   <p className="mt-1 text-[12px] leading-relaxed text-muted">
-                    Strictly 0 fills in final 12s. Holds inventory to binary resolution, redeems winning token at $1.00, and rolls cleanly to the next slot.
+                    Strictly 0 fills in final 12s. Holds inventory to binary resolution and redeems winning token at $1.00.
                   </p>
                 </div>
               </div>
@@ -788,12 +817,12 @@ export function Strategy() {
                   <div className="flex items-center gap-2">
                     <Activity className="size-4 text-accent" />
                     <h4 className="text-[14px] font-semibold text-fg">
-                      Isolated Desk API &amp; Telemetry (<code className="font-mono text-[12.5px]">:5180 → :8799</code>)
+                      Desk API &amp; Telemetry (<code className="font-mono text-[12.5px]">:5173 → :8789</code>)
                     </h4>
                   </div>
                   <p className="mt-2 text-[12.5px] leading-relaxed text-muted">
-                    This worktree serves its own UI on port <code className="font-mono">5180</code> and its own{' '}
-                    <code className="font-mono">bot/api.py</code> on <code className="font-mono">127.0.0.1:8799</code>.
+                    This desk serves the UI on port <code className="font-mono">5173</code> and{' '}
+                    <code className="font-mono">bot/api.py</code> on <code className="font-mono">127.0.0.1:8789</code>.
                     Every fill event streams <code className="font-mono">role</code> (<code className="font-mono">MAKER</code>{' '}
                     vs <code className="font-mono">TAKER</code>), <code className="font-mono">subReason</code> (
                     <code className="font-mono">maker-dip-ladder</code> vs <code className="font-mono">hedge-equalizer</code>),{' '}
@@ -814,7 +843,7 @@ export function Strategy() {
                 <div>
                   <h3 className="text-[16px] font-semibold text-fg">5. Risks, Failure Modes &amp; What Worth Knowing</h3>
                   <p className="text-[13px] text-muted">
-                    When MSR-v2 loses money on a window and how the risk manager bounds drawdowns
+                    When 🎯 HAPCS-v1 loses money on a window and how the risk manager bounds drawdowns
                   </p>
                 </div>
                 <Badge tone="warning">Max DD $957.99 on $127k Vol</Badge>
@@ -831,7 +860,7 @@ export function Strategy() {
                   <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted">
                     If BTC drops early in the window, the bot accumulates heavy <code className="font-mono">Down</code>{' '}
                     shares on the dip ladder (e.g., 910 Down shares at 39¢). If BTC suddenly V-reverses upward in M3–M4
-                    and rockets past 95¢ before the bot can equalize <code className="font-mono">Up</code> shares,{' '}
+                    and rockets past 97.5¢ before the bot can equalize <code className="font-mono">Up</code> shares,{' '}
                     <code className="font-mono">Up</code> wins while the bot holds fewer <code className="font-mono">Up</code>{' '}
                     shares than total dollars spent (worst single-window loss in the 24h ledger: <strong>−$207.88</strong>).
                   </p>
@@ -846,7 +875,7 @@ export function Strategy() {
                   </div>
                   <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted">
                     When BTC trends straight up or down from <code className="font-mono">T+0s</code> without a single
-                    pullback, the favorite immediately breaches the <code className="font-mono">95¢</code> ceiling while
+                    pullback, the favorite immediately breaches the <code className="font-mono">97.5¢</code> ceiling while
                     the underdog falls below the <code className="font-mono">7¢</code> floor, leaving the opening leg
                     unhedged.
                   </p>
@@ -937,11 +966,10 @@ export function Strategy() {
           </span>
           <div>
             <p className="text-[13.5px] font-medium text-fg">
-              ⚡ MSR-v2 — Reconstructed from 27,091 On-Chain Fills (Nov 6–8, 2026)
+              🎯 HAPCS-v1 — Hybrid Arbitrage Pairing &amp; Certainty Sniping v1
             </p>
             <p className="text-[12.5px] text-muted">
-              Running live on isolated port 5180 → {BOT_ORIGIN}. Every constant and regime rule is backed by raw fill
-              evidence.
+              Reconstructed from 27,091 on-chain fills (Nov 6–8, 2026). Running on port 5173 → {BOT_ORIGIN}.
             </p>
           </div>
         </div>

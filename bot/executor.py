@@ -52,23 +52,35 @@ def select_ladder_clip(
     default_clip: float = C.CLIP_SHARES_DEFAULT,
     max_clip: float = C.MAX_SHARES,
     whole_ladder: bool = True,
+    current_lead: float = 0.0,
+    is_v22: bool = False,
+    atomic_arb: bool = False,
     **kwargs,  # absorbs legacy unused kwargs
 ) -> float:
-    """Select standard whole-number ladder clip (30 default, 50 max, or deficit catch-up)."""
-    # Large share deficit or deep pair-cost arbitrage -> step up to max_clip (50)
-    if deficit >= max_clip and (pair_cost is None or pair_cost <= 0.96):
-        return min(clip_shares(max_clip), max_clip)
+    """Select clip size. In v2.2, employs Confidence Sizing (Heavy on atomic/deficit, Micro on dips)."""
     if deficit > 0:
-        # Snap deficit to nearest standard whole ladder clip
-        for rung in (50.0, 30.0, 25.0, 20.0, 15.0, 10.0, 5.0):
-            if rung <= max_clip and deficit >= rung * 0.8:
-                return min(clip_shares(rung), max_clip)
+        # Snap directly to the deficit capped at max_clip so we don't overshoot
+        # or leave residual unhedged dust!
+        return min(clip_shares(deficit, max_clip), max_clip)
+    # DSP v2.2 Confidence-Based Sizing:
+    # 1. Atomic Arb (High Confidence, Risk-Free): Size heavy (up to max_clip = 60 sh)
+    if is_v22 and atomic_arb:
+        return min(clip_shares(max_clip, max_clip), max_clip)
+    # 2. Speculative Dip Intake (Low Confidence, Directional Risk): Size micro (10 sh)
+    if is_v22:
+        return min(clip_shares(10.0, max_clip), max_clip)
+    # Tweak 2: De-escalating clip sizes when leading side accumulates dips
+    # Prevents huge runaway deficits from forming during early trending moves
+    if current_lead >= 10.0:
+        return min(clip_shares(10.0, max_clip), max_clip)
+    if current_lead >= 5.0:
+        return min(clip_shares(20.0, max_clip), max_clip)
     # Standard 30-share ladder clip on opening, deep dips (<=35c), or alternate fills
     if fill_idx % 2 == 0 or price <= 0.35:
-        return min(clip_shares(default_clip), max_clip)
+        return min(clip_shares(default_clip, max_clip), max_clip)
     rungs = [r for r in (25.0, 20.0, 15.0, 10.0) if r <= max_clip]
     chosen = rungs[fill_idx % len(rungs)] if rungs else default_clip
-    return min(clip_shares(chosen), max_clip)
+    return min(clip_shares(chosen, max_clip), max_clip)
 
 
 @dataclass
@@ -107,6 +119,7 @@ def evaluate_microstructure_ladder(
     inv: dict[str, dict[str, float]],
     fill_idx: int,
     minute: int,
+    strategy_id: str = C.STRATEGY_ID,
     min_fill: float = C.PRICE_FLOOR,
     max_fill: float = C.PRICE_CEILING,
     default_clip: float = C.CLIP_SHARES_DEFAULT,
@@ -116,22 +129,20 @@ def evaluate_microstructure_ladder(
     max_pair_cost: float = C.PAIR_COST_MAX,
     max_share_lead: float = C.MAX_SHARE_LEAD,
     target_pair_cost: float | None = None,  # backward compat
+    in_sweep_phase: bool = False,
+    freeze_lead: float = C.FREEZE_LEAD,
+    rescue_max_pair_cost: float = C.RESCUE_PAIR_COST_MAX,
+    rescue_ceiling: float = C.RESCUE_CEILING_PRICE,
     **kwargs,  # absorbs legacy kwargs
 ) -> MicrostructureDecision:
     """Decision Engine for Hybrid Arbitrage Pairing & Certainty Sniping.
 
-    1. Phase 3 Resolution Certainty Snipe in Minute 4 [up to 97.5¢]:
-       When a side trades in [0.90, 0.975] near resolution:
-       - If closing a deficit: execute catch-up clip up to max_clip (50) provided proj_pc <= max_pair_cost.
-       - If no deficit: execute certainty snipe up to default_clip (30) provided proj_pc <= max_pair_cost.
-    2. Dynamic Arbitrage Pairing (Lagging-Leg Equalizer):
-       Whenever one side holds fewer shares than the opposite leg (deficit > 0),
-       buy the lagging leg at ANY price in [min_fill, max_fill] as long as
-       projected pair cost <= max_pair_cost (0.990). No artificial 0.75 barrier.
-    3. Passive Maker Dip Grid in [min_fill, 0.50]:
-       Accumulate the dipping leg at resting bid (0% maker fee), respecting
-       the strict 90-share unhedged lead ceiling.
-    4. Opening Straddle Leg 1 inside STRADDLE_BAND [0.34, 0.55] when both sides are empty.
+    Supports both setups:
+    - 'hapcs-v1': Aggressive dual-regime with M4 certainty sniping up to 97.5¢ and 12s cutoff.
+    - 'dangerously-skip-permissions': Reconstructed from wallet 0xc533…69a9 ($1.42M vol/wk).
+      Focuses on deep dips [7¢–45¢], 75s early cutoff, strict 15-share lead freeze,
+      and Tiered Rescue Pairing up to $1.025 so 80¢–92¢ deficit-closing hedges
+      are executed rather than left unhedged to face 100% loss at resolution.
     """
     bench_pc = target_pair_cost if target_pair_cost is not None else benchmark_pair_cost
 
@@ -143,8 +154,20 @@ def evaluate_microstructure_ladder(
         valid_ask = ask if (ask is not None and 0.0 < ask < 1.0) else None
         return valid_bid, valid_ask
 
+    saw_ceiling = False
+    saw_dust = False
+    saw_pair_cap = False
+    # DSP family (v2.0, v2.1, v2.2, ...) shares the same recovery-engine rules.
+    is_dsp = strategy_id.startswith("dangerously-skip-permissions")
+    is_v22 = strategy_id.endswith("v2.2")
+    # v2.2: hard cap on unhedged lead = 20 sh (2 micro-clips). v2.1 = 30 sh. Baseline = 45 sh.
+    lead_cap = min(max_share_lead, 20.0) if is_v22 else (min(max_share_lead, 30.0) if strategy_id.endswith("v2.1") else max_share_lead)
+    rescue_cap = rescue_max_pair_cost if (is_dsp or in_sweep_phase) else max_pair_cost
+
     # 1. Phase 3: Resolution Certainty Snipe in Minute 4 [0.90, 0.975]
-    if minute == 4:
+    # Enabled exclusively for 'hapcs-v1'. Disabled for 'dangerously-skip-permissions'
+    # to avoid 95¢–99¢ reversal wipeouts, and disabled in sweep phase.
+    if minute == 4 and strategy_id == "hapcs-v1" and not in_sweep_phase:
         for side in ("Up", "Down"):
             opp = "Down" if side == "Up" else "Up"
             deficit = round(inv[opp]["shares"] - inv[side]["shares"], 2)
@@ -178,9 +201,8 @@ def evaluate_microstructure_ladder(
                         share_deficit=deficit,
                     )
 
-    # 2. Dynamic Arbitrage Pairing (Equalizer): Check any side with a share deficit!
-    # No artificial minimum price barrier: if Down is at 20c and Up is at 60c, 70c, or 80c,
-    # pairing it locks in sub-$1.00 pair cost and guaranteed arbitrage!
+    # 2. Dynamic Arbitrage Pairing (Equalizer & Rescue Deficit Hedging)
+    # Check any side with a share deficit!
     for side in ("Up", "Down"):
         opp = "Down" if side == "Up" else "Up"
         deficit = round(inv[opp]["shares"] - inv[side]["shares"], 2)
@@ -188,8 +210,18 @@ def evaluate_microstructure_ladder(
             continue
         bid, ask = _side_prices(side)
         px = ask if ask is not None else bid
-        if px is None or px > max_fill or px < min_fill:
+        if px is None:
             continue
+        if px < min_fill:
+            saw_dust = True
+            continue
+        # In rescue/hedging mode (deficit > 0), allow up to rescue_ceiling (0.985)
+        # to ensure open deficit-closing hedges are executed rather than facing 100% loss at resolution.
+        effective_ceiling = rescue_ceiling if (is_dsp or in_sweep_phase) else max_fill
+        if px > effective_ceiling:
+            saw_ceiling = True
+            continue
+
         shares = select_ladder_clip(
             deficit=deficit,
             price=px,
@@ -198,34 +230,59 @@ def evaluate_microstructure_ladder(
             default_clip=default_clip,
             max_clip=max_clip,
             whole_ladder=whole_ladder,
+            is_v22=is_v22,
         )
-        role = "MAKER" if (bid is not None and ask is not None and (ask - bid) <= 0.01) else "TAKER"
-        exec_px = bid if role == "MAKER" and bid is not None else px
+        # Tweak 3: Prioritize 0% maker fills during sweep equalization to eliminate adverse fee drag
+        if in_sweep_phase and bid is not None:
+            role = "MAKER"
+            exec_px = bid
+        else:
+            role = "MAKER" if (bid is not None and ask is not None and round(ask - bid, 4) <= 0.01) else "TAKER"
+            exec_px = bid if role == "MAKER" and bid is not None else px
         est_usd, _ = compute_fill_usd(shares, exec_px, role=role, include_fee=(role == "TAKER"))
         proj_pc = _projected_pair_cost(inv, side, shares, est_usd)
-        if proj_pc is None or proj_pc <= max_pair_cost:
+
+        # Tiered Rescue Hedging:
+        # Standard: proj_pc <= max_pair_cost -> sub-$1.00 profitable pairing arbitrage.
+        # Rescue: when holding a deficit in DSP or sweep phase, accepting proj_pc up to rescue_max_pair_cost (1.080)
+        # locks in capital redemption, preventing a 100% loss ($0.00 redemption) on the naked leg.
+        rescue_cap = rescue_max_pair_cost if (is_dsp or in_sweep_phase) else max_pair_cost
+        is_rescue = (proj_pc is not None and proj_pc > max_pair_cost)
+        if proj_pc is None or proj_pc <= max_pair_cost or (proj_pc <= rescue_cap and exec_px <= effective_ceiling):
             return MicrostructureDecision(
                 action="fill",
                 outcome=side,
                 price=round(exec_px, 4),
                 shares=shares,
                 role=role,
-                reason="m4-snipe" if minute == 4 else "clip-fill",
-                sub_reason="hedge-equalizer",
+                reason="rescue-hedge" if is_rescue else ("m4-snipe" if minute == 4 else "clip-fill"),
+                sub_reason="rescue-equalizer" if is_rescue else "hedge-equalizer",
                 projected_pair_cost=proj_pc,
                 share_deficit=deficit,
             )
+        saw_pair_cap = True
 
     # 3. Passive Maker Dip Grid in [min_fill, 0.50]
     up_def = round(inv["Down"]["shares"] - inv["Up"]["shares"], 2)
     down_def = round(inv["Up"]["shares"] - inv["Down"]["shares"], 2)
 
-    # Anti-Runaway Deficit Lock: If one side leads by >= max_share_lead (90 shares / 3 clips),
-    # strictly freeze accumulation of the leading side!
-    if up_def >= max_share_lead:
-        candidates = ("Up",)
-    elif down_def >= max_share_lead:
-        candidates = ("Down",)
+    # If in sweep phase, do NOT take any speculative dip fills!
+    if in_sweep_phase:
+        preferred = "Up" if up_def > 0 else "Down"
+        if saw_ceiling:
+            return MicrostructureDecision(action="skip", outcome=preferred, reason="extreme-price-skip", sub_reason="ceiling-price-skip")
+        if saw_pair_cap:
+            return MicrostructureDecision(action="skip", outcome=preferred, reason="extreme-price-skip", sub_reason="pair-cost-cap")
+        return MicrostructureDecision(action="skip", outcome=preferred, reason="sweep-balanced", sub_reason="sweep-balanced")
+
+    # Anti-Runaway Deficit Lock & Strict Leading-Side Freeze:
+    # If one side leads by >= freeze_lead (15.0 shares in DSP), STRICTLY FREEZE buying the leading side!
+    # Candidates must ONLY be the lagging side until balance is restored.
+    fl = freeze_lead if is_dsp else max_share_lead
+    if up_def >= fl:
+        candidates = ("Up",)   # Down leads -> ONLY Up allowed!
+    elif down_def >= fl:
+        candidates = ("Down",) # Up leads -> ONLY Down allowed!
     elif up_def > 0:
         candidates = ("Up", "Down")
     elif down_def > 0:
@@ -244,15 +301,13 @@ def evaluate_microstructure_ladder(
 
     preferred = candidates[0]
 
-    saw_ceiling = False
-    saw_dust = False
-    saw_pair_cap = False
-
     for side in candidates:
         opp = "Down" if side == "Up" else "Up"
         deficit = max(0.0, round(inv[opp]["shares"] - inv[side]["shares"], 2))
         lead = max(0.0, round(inv[side]["shares"] - inv[opp]["shares"], 2))
         bid, ask = _side_prices(side)
+        opp_bid, opp_ask = _side_prices(opp)
+        opp_ref = opp_ask if opp_ask is not None else opp_bid
         px = bid if (bid is not None and bid >= min_fill) else ask
         if px is None:
             continue
@@ -262,7 +317,21 @@ def evaluate_microstructure_ladder(
         if px > max_fill:
             saw_ceiling = True
             continue
-        if px <= C.DIP_LADDER_MAX:
+        dip_max = 0.45 if is_dsp else C.DIP_LADDER_MAX
+        if px <= dip_max:
+            # Pre-Flight Hedge Gate (v2.2+):
+            # Before taking an unhedged speculative dip fill, verify that the opposite side
+            # allows a hedge under rescue_cap (0.995). If the opposite side is already too expensive,
+            # refuse immediately so we NEVER enter a position where a sub-$1.00 hedge is impossible!
+            if is_v22 and deficit <= 0 and opp_ref is not None:
+                if px + opp_ref > rescue_cap:
+                    saw_pair_cap = True
+                    continue
+
+            # High-Confidence Atomic Arb Detection:
+            # If both sides can be filled immediately with sum <= 0.990, flag atomic_arb = True!
+            is_atomic = bool(is_v22 and opp_ref is not None and (px + opp_ref <= 0.990))
+
             role = "MAKER" if ((bid is not None and px == bid) or bid is None) else "TAKER"
             shares = select_ladder_clip(
                 deficit=deficit,
@@ -272,11 +341,14 @@ def evaluate_microstructure_ladder(
                 default_clip=default_clip,
                 max_clip=max_clip,
                 whole_ladder=whole_ladder,
+                current_lead=lead,
+                is_v22=is_v22,
+                atomic_arb=is_atomic,
             )
             est_usd, _ = compute_fill_usd(shares, px, role=role, include_fee=(role == "TAKER"))
             proj_pc = _projected_pair_cost(inv, side, shares, est_usd)
             # Strict hard ceiling on one-sided lead: NEVER exceed max_share_lead.
-            if lead >= max_share_lead or (lead + shares > max_share_lead + 5.0):
+            if not is_atomic and (lead >= lead_cap or (lead + shares > lead_cap + 5.0)):
                 saw_pair_cap = True
                 continue
             # Sub-$1.00 pair-cost gate: <= max_pair_cost when closing deficit, <= bench_pc otherwise
@@ -296,6 +368,12 @@ def evaluate_microstructure_ladder(
             saw_pair_cap = True
         elif px <= C.STRADDLE_BAND[1] and inv["Up"]["shares"] == 0 and inv["Down"]["shares"] == 0:
             # Opening Straddle Leg 1 in (0.50, 0.55]
+            if is_v22 and opp_ref is not None:
+                if px + opp_ref > rescue_cap:
+                    saw_pair_cap = True
+                    continue
+
+            is_atomic = bool(is_v22 and opp_ref is not None and (px + opp_ref <= 0.990))
             role = "MAKER" if ((bid is not None and px == bid) or bid is None) else "TAKER"
             shares = select_ladder_clip(
                 deficit=0.0,
@@ -305,6 +383,8 @@ def evaluate_microstructure_ladder(
                 default_clip=default_clip,
                 max_clip=max_clip,
                 whole_ladder=whole_ladder,
+                is_v22=is_v22,
+                atomic_arb=is_atomic,
             )
             return MicrostructureDecision(
                 action="fill",

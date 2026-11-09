@@ -13,7 +13,7 @@ Simulates the 4-phase microstructure lifecycle:
 Usage:
   python bot/live_paper.py --once        # trade current/next live window, then exit
   python bot/live_paper.py --loop        # trade every window continuously
-  python bot/api.py                      # desk API on 127.0.0.1:8799
+  python bot/api.py                      # desk API on 127.0.0.1:8789
 """
 
 import argparse
@@ -22,6 +22,19 @@ import os
 import re
 import shutil
 import sys
+
+# Ensure UTF-8 output encoding across all operating systems / Windows cp1252 consoles
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import threading
 import time
 import urllib.request
@@ -239,6 +252,8 @@ def write_state(
     recent_ticks: list[dict] | None = None,
 ) -> None:
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    cfg = load_cfg()
+    strat = cfg.get("strategy", {})
     payload = {
         "runId": CURRENT_WORKSPACE.run_id if CURRENT_WORKSPACE else None,
         "slug": slug,
@@ -246,9 +261,9 @@ def write_state(
         "startedAtMs": started_ms,
         "updatedAtMs": int(time.time() * 1000),
         "fills": fills,
-        "strategy": C.STRATEGY_ID,
-        "strategySymbol": C.STRATEGY_SYMBOL,
-        "strategyName": C.STRATEGY_NAME,
+        "strategy": strat.get("id", C.STRATEGY_ID),
+        "strategySymbol": strat.get("symbol", C.STRATEGY_SYMBOL),
+        "strategyName": strat.get("name", C.STRATEGY_NAME),
     }
     if ws_status is not None:
         payload["ws"] = ws_status
@@ -301,7 +316,12 @@ def trade_window(
     slug = f"btc-updown-5m-{slot}"
     assert_single_window(slug)
     spec = get_window(c, slug)
-    entry = load_cfg().get("entry", {})
+    cfg = load_cfg()
+    entry = cfg.get("entry", {})
+    strat = cfg.get("strategy", {})
+    strat_id = strat.get("id", C.STRATEGY_ID)
+    strat_sym = strat.get("symbol", C.STRATEGY_SYMBOL)
+    strat_name = strat.get("name", C.STRATEGY_NAME)
 
     # Timing parameters
     start_after_open = float(entry.get("startAfterOpenSec", entry.get("openDelaySec", C.WINDOW_OPEN_BUFFER_S)))
@@ -316,6 +336,9 @@ def trade_window(
     target_pair_cost = float(entry.get("targetPairCost", C.TARGET_PAIR_COST))
     max_pair_cost = float(entry.get("maxPairCost", C.PAIR_COST_MAX))
     max_share_lead = float(entry.get("maxShareLead", C.MAX_SHARE_LEAD))
+    freeze_lead = float(entry.get("freezeLead", C.FREEZE_LEAD))
+    rescue_ceiling = float(entry.get("rescueCeilingPrice", C.RESCUE_CEILING_PRICE))
+    rescue_max_pair_cost = float(entry.get("rescuePairCostMax", C.RESCUE_PAIR_COST_MAX))
 
     # Pacing parameters
     min_spacing_move = float(entry.get("minSpacingMoveSec", 0.5))
@@ -358,9 +381,11 @@ def trade_window(
                             st["updatedAtMs"] = int(time.time() * 1000)
                             st["ws"] = streamer.get_status()
                             st["recentTicks"] = streamer.get_recent_ticks(30)
-                            st["strategy"] = C.STRATEGY_ID
-                            st["strategySymbol"] = C.STRATEGY_SYMBOL
-                            st["strategyName"] = C.STRATEGY_NAME
+                            cfg = load_cfg()
+                            strat = cfg.get("strategy", {})
+                            st["strategy"] = strat.get("id", C.STRATEGY_ID)
+                            st["strategySymbol"] = strat.get("symbol", C.STRATEGY_SYMBOL)
+                            st["strategyName"] = strat.get("name", C.STRATEGY_NAME)
                             _atomic_write_json(STATE_PATH, st)
             except (OSError, json.JSONDecodeError, TypeError):
                 pass
@@ -379,7 +404,9 @@ def trade_window(
         return None
 
     try:
-        end = int(slot + WINDOW_S - stop_before)  # Phase 4 cutoff at T-12s
+        cutoff_sbc = min(stop_before, C.HARD_CUTOFF_SBC)
+        end = int(slot + WINDOW_S - stop_before)  # Strategy early exit countdown (e.g. T-75s)
+        sweep_end = int(slot + WINDOW_S - cutoff_sbc)  # Phase 4 hard settlement cutoff (e.g. T-12s)
         last_fill_ts = 0.0
         last_fill_px: float | None = None
         last_extreme_skip_ts: float = 0.0
@@ -387,13 +414,17 @@ def trade_window(
 
         while True:
             now = int(time.time())
-            if now >= end:
+            imbalance = abs(inv["Up"]["shares"] - inv["Down"]["shares"])
+            in_sweep_phase = (now >= end and now < sweep_end and imbalance > 0.0)
+
+            if now >= sweep_end or (now >= end and imbalance <= 0.0):
                 up_sh = sum(f["shares"] for f in fills if f["outcome"] == "Up")
                 down_sh = sum(f["shares"] for f in fills if f["outcome"] == "Down")
                 log_event("done", "holding-to-resolution", slug,
                           detail={"fills": len(fills), "cost": round(cost, 2),
                                   "upShares": round(up_sh, 1), "downShares": round(down_sh, 1),
-                                  "pairCost": _live_pair_cost(), "strategy": C.STRATEGY_SYMBOL})
+                                  "pairCost": _live_pair_cost(), "strategy": strat_sym,
+                                  "imbalance": round(imbalance, 1)})
                 break
             state.daily_loss_usd = _current_daily_pnl(day_start)
             if reason := check_window(len(fills), cost, state, KILL_PATH):
@@ -402,7 +433,7 @@ def trade_window(
                 break
 
             if test_max_fills and len(fills) >= test_max_fills:
-                time.sleep(max(0, end - now))
+                time.sleep(max(0, sweep_end - now))
                 continue
 
             minute = min(max((now - slot) // 60, 0), 4)
@@ -413,6 +444,7 @@ def trade_window(
                 inv=inv,
                 fill_idx=len(fills),
                 minute=minute,
+                strategy_id=strat_id,
                 min_fill=min_fill,
                 max_fill=max_fill,
                 default_clip=clip_default,
@@ -421,6 +453,10 @@ def trade_window(
                 target_pair_cost=target_pair_cost,
                 max_pair_cost=max_pair_cost,
                 max_share_lead=max_share_lead,
+                in_sweep_phase=in_sweep_phase,
+                freeze_lead=freeze_lead,
+                rescue_ceiling=rescue_ceiling,
+                rescue_max_pair_cost=rescue_max_pair_cost,
             )
 
             if decision.action == "skip" or decision.outcome is None or decision.price is None:
@@ -444,13 +480,13 @@ def trade_window(
 
             outcome = decision.outcome
             px = decision.price
-            shares = min(clip_shares(decision.shares), max_shares)
+            shares = min(clip_shares(decision.shares, max_shares), max_shares)
             role = decision.role
 
-            # Anti-runaway dynamic pacing
+            # Anti-runaway dynamic pacing (relaxed in sweep phase to guarantee deficit close)
             time_since_fill = time.time() - last_fill_ts
             is_price_move = (last_fill_px is not None and abs(px - last_fill_px) >= 0.001)
-            required_spacing = min_spacing_move if is_price_move else min_spacing_static
+            required_spacing = 0.5 if in_sweep_phase else (min_spacing_move if is_price_move else min_spacing_static)
             if time_since_fill < required_spacing:
                 streamer.wait_for_tick(timeout=0.25)
                 continue
@@ -473,7 +509,11 @@ def trade_window(
                 trade_reason = "hedge-leg"
                 event_reason = "hedge-leg"
                 fill_kind = "entry"
-            elif minute == 4:
+            elif decision.sub_reason == "rescue-equalizer":
+                trade_reason = "rescue-hedge"
+                event_reason = "clip-fill"
+                fill_kind = "hedge"
+            elif minute == 4 and decision.reason == "m4-snipe":
                 trade_reason = "m4-snipe"
                 event_reason = "m4-snipe"
                 fill_kind = "snipe"
@@ -505,7 +545,7 @@ def trade_window(
                     "feeUsd": fee_usd,
                     "pairCost": pair_cost,
                     "deficit": decision.share_deficit,
-                    "strategy": C.STRATEGY_ID,
+                    "strategy": strat_id,
                 },
             })
 
@@ -516,7 +556,7 @@ def trade_window(
                               "upShares": round(inv["Up"]["shares"], 1),
                               "downShares": round(inv["Down"]["shares"], 1),
                               "fills": len(fills), "cost": round(cost, 2),
-                              "strategy": C.STRATEGY_SYMBOL})
+                              "strategy": strat_sym})
             log(f"M{minute} {outcome} {shares:.1f} @ {px:.3f} [{role} · {trade_reason}] (pair={pair_cost})")
             write_state(slug, end_ms, started_ms, fills,
                         ws_status=streamer.get_status(), recent_ticks=streamer.get_recent_ticks(30))
@@ -539,8 +579,8 @@ def trade_window(
         "winner": None,
         "pending": True,
         "fills": fills,
-        "strategy": C.STRATEGY_ID,
-        "strategy_symbol": C.STRATEGY_SYMBOL,
+        "strategy": strat_id,
+        "strategy_symbol": strat_sym,
         "maker_fills": maker_count,
         "taker_fills": taker_count,
         "fees_usd": round(total_fees_usd, 2),
@@ -680,7 +720,11 @@ def main() -> None:
     c = PublicClient()
 
     ws = init_run_session(run_id=args.run_id, label=args.label)
-    print(f"session initialized: {ws.run_id} ({C.STRATEGY_SYMBOL} · {C.STRATEGY_NAME})", flush=True)
+    cfg = load_cfg()
+    strat = cfg.get("strategy", {})
+    strat_sym = strat.get("symbol", C.STRATEGY_SYMBOL)
+    strat_name = strat.get("name", C.STRATEGY_NAME)
+    print(f"session initialized: {ws.run_id} ({strat_sym} · {strat_name})", flush=True)
     try:
         (Path(__file__).resolve().parent / "loop.pid").write_text(str(os.getpid()))
     except Exception:

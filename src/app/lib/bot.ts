@@ -108,6 +108,31 @@ export interface StrategyInfo {
   cutoffSec?: number
 }
 
+export interface StrategySetup {
+  id: string
+  symbol: string
+  name: string
+  signature: string
+  description: string
+  entry: {
+    clipSharesDefault: number
+    maxShares: number
+    minFillPrice: number
+    maxFillPrice: number
+    benchmarkPairCost: number
+    targetPairCost: number
+    maxPairCost: number
+    maxShareLead: number
+    startAfterOpenSec: number
+    stopBeforeCloseSec: number
+    minSpacingMoveSec: number
+    minSpacingStaticSec: number
+    includeTakerFee: boolean
+    wholeLadderClips: boolean
+  }
+  isActive?: boolean
+}
+
 export interface BotSnapshot {
   version: 1
   mode: 'paper' | 'live'
@@ -197,6 +222,8 @@ export interface RunItem {
   isActive?: boolean
   windowsCount?: number
   summary?: Record<string, unknown>
+  /** Config captured when the run was opened; `strategy.id` ties the session to a strategy setup. */
+  configSnapshot?: { strategy?: { id?: string; symbol?: string; name?: string } } & Record<string, unknown>
 }
 
 export interface BotControl {
@@ -377,9 +404,6 @@ export interface BotConfigView {
     maxTradesPerDay: number
     maxConsecutiveLosses: number
     dailyLossLimitPct: number
-    dailyLossCapUsd?: number
-    maxUsdPerWindow?: number
-    maxFillsPerWindow?: number
     maxDrawdownPct: number
     cooldownAfterLossSec: number
     [key: string]: unknown
@@ -396,7 +420,7 @@ export interface BotConfigView {
  * directly rather than through the app's worker (which never reaches the
  * machine). Its CORS policy accepts loopback origins only.
  */
-export const BOT_ORIGIN = import.meta.env.VITE_BOT_ORIGIN ?? 'http://127.0.0.1:8799'
+export const BOT_ORIGIN = import.meta.env.VITE_BOT_ORIGIN ?? 'http://127.0.0.1:8789'
 const botUrl = (path: string) => `${BOT_ORIGIN}/api/bot${path}`
 
 async function getJson<T>(path: string): Promise<T> {
@@ -524,8 +548,12 @@ export const useResumeBot = () =>
   useBotMutation(() => send<{ ok: boolean; killSwitch: boolean }>('/resume', 'POST'))
 
 export const useStartBot = () =>
-  useBotMutation((runId?: string | null) =>
-    send<{ running: boolean; pid: number | null; reason?: string; runId?: string }>('/start', 'POST', runId ? { runId } : {}),
+  useBotMutation((opts?: { runId?: string | null; newSession?: boolean }) =>
+    send<{ running: boolean; pid: number | null; reason?: string; runId?: string }>(
+      '/start',
+      'POST',
+      opts?.newSession ? { newSession: true } : opts?.runId ? { runId: opts.runId } : {},
+    ),
   )
 
 export const useResumeRun = () =>
@@ -551,3 +579,113 @@ export const useRedeemBot = () =>
       redeemedAt: string
     }>('/redeem', 'POST'),
   )
+
+export const useStrategySetups = () =>
+  useQuery({
+    queryKey: ['bot', 'strategy-setups'],
+    queryFn: () => getJson<{ activeSetupId: string; setups: StrategySetup[] }>('/strategy-setups'),
+    refetchInterval: 5_000,
+    retry: false,
+  })
+
+export const useSelectStrategySetup = () =>
+  useBotMutation((setupId: string) =>
+    send<{ ok: boolean; activeSetupId: string; setup: StrategySetup; config: BotConfigView }>('/strategy-setup', 'POST', { setupId }),
+  )
+
+export interface AbTestWindow {
+  slug: string
+  epoch: number
+  net: number
+  payout: number
+  cost: number
+  pairCost: number | null
+  imbalance: number
+  fills: number
+  upShares: number
+  downShares: number
+  winner: string | null
+}
+
+export interface AbTestDistributionStats {
+  runId: string | null
+  name: string
+  description?: string
+  configHighlights?: Record<string, string>
+  samples: number
+  targetSamples?: number
+  progressPct?: number
+  wins: number
+  losses: number
+  scratches: number
+  winRate: number
+  lossRate: number
+  netPnl: number
+  meanPnl: number
+  stdPnl: number
+  variance: number
+  medianPnl: number
+  minPnl: number
+  maxPnl: number
+  meanPairCost: number
+  zeroImbalancePct: number
+  pnlList: number[]
+  windows: AbTestWindow[]
+}
+
+export interface AbTestHistogramBin {
+  label: string
+  range: [number, number]
+  baselineCount: number
+  baselinePct: number
+  candidateCount: number
+  candidatePct: number
+}
+
+export interface AbTestStatistics {
+  targetSampleSize: number
+  alpha: number
+  confidenceLevel: string
+  power: string
+  tStatistic: number
+  tCritical: number
+  pValue: number
+  degreesOfFreedom: number
+  cohenD: number
+  meanDiff: number
+  ci95: [number, number]
+  significant: boolean
+  verdict: string
+  verdictTone: 'neutral' | 'info' | 'accent' | 'success' | 'danger'
+}
+
+export interface AbTestHypotheses {
+  nullHypothesis: string
+  altHypothesis: string
+  decisionRule: string
+}
+
+export interface AbTestData {
+  status: string
+  updatedAt: string
+  baseline: AbTestDistributionStats
+  candidate: AbTestDistributionStats
+  statistics: AbTestStatistics
+  hypotheses: AbTestHypotheses
+  histogram: AbTestHistogramBin[]
+}
+
+export const useAbTestData = () =>
+  useQuery({
+    queryKey: ['bot', 'ab-test'],
+    queryFn: () => getJson<AbTestData>('/ab-test'),
+    refetchInterval: 3_000,
+    retry: false,
+  })
+
+export const useStartAbCandidate = () =>
+  useBotMutation(() => send<{ ok: boolean; candidateRunId: string; data: AbTestData }>('/ab-test/start', 'POST'))
+
+export const useStopAbCandidate = () =>
+  useBotMutation(() => send<{ ok: boolean; data: AbTestData }>('/ab-test/stop', 'POST'))
+

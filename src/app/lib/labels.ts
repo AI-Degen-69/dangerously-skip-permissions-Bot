@@ -30,8 +30,9 @@ export const LABELS: Record<string, string> = {
   'holding-to-resolution': 'Window trading done — holding to resolution',
 
   // Refusals: Conditions Refused
-  'extreme-price-skip': 'Price outside active bands [7¢–50¢] / [75¢–95¢]',
-  'pair-cost-cap': 'Refused — projected pair cost exceeds $0.99 cap',
+  'extreme-price-skip': 'Price outside active trading range',
+  'ceiling-price-skip': 'Price exceeds maximum ceiling cap',
+  'pair-cost-cap': 'Refused — projected pair cost exceeds cap',
   'share-lead-cap': 'Refused — share lead exceeds 90-share limit',
   'dust-quote': 'Dust quote refused (<1¢)',
   'no-liquidity': 'Quotes refused — no liquidity on this side',
@@ -86,8 +87,19 @@ export const KIND_TONE: Record<string, 'neutral' | 'accent' | 'success' | 'warni
   error: 'danger',
 }
 
-export const reasonLabel = (reason: string | null | undefined) =>
-  !reason ? '—' : (LABELS[reason] ?? reason.replace(/[:-]/g, ' ').replace(/\s+/g, ' ').trim())
+export const reasonLabel = (
+  reason: string | null | undefined,
+  detail?: Record<string, unknown> | null,
+) => {
+  if (!reason) return '—'
+  if (reason === 'extreme-price-skip') {
+    const sub = detail?.subReason as string | undefined
+    if (sub === 'ceiling-price-skip') return 'Price exceeds ceiling cap'
+    if (sub === 'pair-cost-cap') return 'Refused — pair cost exceeds cap'
+    return 'Price outside active trading range'
+  }
+  return LABELS[reason] ?? reason.replace(/[:-]/g, ' ').replace(/\s+/g, ' ').trim()
+}
 
 export type MetricUnit = 'ratio' | 'pct' | 'cents' | 'price' | 'sec' | 'usd' | 'count'
 

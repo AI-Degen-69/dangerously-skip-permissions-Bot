@@ -14,6 +14,142 @@ STRATEGY_SIGNATURE = (
     "Resolution Certainty Snipe [up to 97.5¢] · Pair Cost Benchmark $0.965 (cap ≤$0.990)"
 )
 
+# Multi-Setup Strategy Registry
+STRATEGY_SETUPS = {
+    "hapcs-v1": {
+        "id": "hapcs-v1",
+        "symbol": "🎯 HAPCS-v1",
+        "name": "Hybrid Arbitrage Pairing & Certainty Sniping v1",
+        "signature": (
+            "Maker Dip Grid [7¢–50¢] · Dynamic Pairing Equalizer · "
+            "M4 Certainty Sniping [up to 97.5¢] · Pair Cost Benchmark $0.965 (cap ≤$0.990)"
+        ),
+        "description": (
+            "Dual-regime setup combining passive dip grid accumulation with Minute 4 "
+            "certainty sniping up to 97.5¢ and late 12s cutoff."
+        ),
+        "entry": {
+            "startAfterOpenSec": 4,
+            "stopBeforeCloseSec": 12,
+            "clipSharesDefault": 30.0,
+            "maxShares": 50.0,
+            "minFillPrice": 0.07,
+            "maxFillPrice": 0.975,
+            "benchmarkPairCost": 0.965,
+            "targetPairCost": 0.965,
+            "maxPairCost": 0.990,
+            "maxShareLead": 90.0,
+            "freezeLead": 25.0,
+            "rescuePairCostMax": 1.080,
+            "rescueCeilingPrice": 0.985,
+            "minSpacingMoveSec": 0.5,
+            "minSpacingStaticSec": 2.5,
+            "includeTakerFee": True,
+            "wholeLadderClips": True,
+        },
+    },
+    "dangerously-skip-permissions": {
+        "id": "dangerously-skip-permissions",
+        "symbol": "⚡ dangerously-skip-permissions",
+        "name": "Dangerously Skip Permissions (Obsidian Tier Reconstructed)",
+        "signature": (
+            "Deep Dip Grid [7¢–45¢] · Tiered Rescue Pairing (Target ≤$0.965, Rescue ≤$1.025) · "
+            "Early Exit (SBC 75s) · Strict Lead Cap (45 sh) · Freeze Lead (15 sh)"
+        ),
+        "description": (
+            "Empirically reconstructed from 174,019 on-chain fills of wallet 0xc533…69a9 "
+            "($1.42M vol/wk, +$16.8K/wk rebates). Re-anchors into deep dips [7¢–45¢], 75s early cutoff, "
+            "strict 15-share lead freeze, and Tiered Rescue Pairing up to $1.025 to ensure 80¢–92¢ "
+            "deficit-closing hedges are executed rather than left unhedged."
+        ),
+        "entry": {
+            "startAfterOpenSec": 4,
+            "stopBeforeCloseSec": 75,
+            "clipSharesDefault": 30.0,
+            "maxShares": 50.0,
+            "minFillPrice": 0.07,
+            "maxFillPrice": 0.880,
+            "benchmarkPairCost": 0.965,
+            "targetPairCost": 0.965,
+            "maxPairCost": 0.985,
+            "maxShareLead": 45.0,
+            "freezeLead": 15.0,
+            "rescuePairCostMax": 1.080,
+            "rescueCeilingPrice": 0.985,
+            "minSpacingMoveSec": 0.5,
+            "minSpacingStaticSec": 2.5,
+            "includeTakerFee": True,
+            "wholeLadderClips": True,
+        },
+    },
+    "dangerously-skip-permissions-v2.1": {
+        "id": "dangerously-skip-permissions-v2.1",
+        "symbol": "⚡ DSP-v2.1",
+        "name": "Dangerously Skip Permissions v2.1 (Unified Triad)",
+        "signature": (
+            "De-escalating Dip Clips (30→20→10) · Passive Maker Sweep (T-75s..15s) · "
+            "Strict Sub-$1.00 Pair Cap (≤$0.995) · Certainty Rescue (≤98.5¢)"
+        ),
+        "description": (
+            "Unified candidate setup: Prevents runaway deficits via de-escalating dip clips, "
+            "executes 0% fee maker equalization between T-75s and T-15s, and hard-caps pair cost at ≤$0.995 "
+            "so every merged pair redeems with guaranteed positive return."
+        ),
+        "entry": {
+            "startAfterOpenSec": 4,
+            "stopBeforeCloseSec": 75,
+            "clipSharesDefault": 30.0,
+            "maxShares": 50.0,
+            "minFillPrice": 0.07,
+            "maxFillPrice": 0.880,
+            "benchmarkPairCost": 0.965,
+            "targetPairCost": 0.965,
+            "maxPairCost": 0.985,
+            "maxShareLead": 45.0,
+            "freezeLead": 15.0,
+            "rescuePairCostMax": 0.995,
+            "rescueCeilingPrice": 0.985,
+            "minSpacingMoveSec": 0.5,
+            "minSpacingStaticSec": 2.5,
+            "includeTakerFee": True,
+            "wholeLadderClips": True,
+        },
+    },
+    "dangerously-skip-permissions-v2.2": {
+        "id": "dangerously-skip-permissions-v2.2",
+        "symbol": "⚡ DSP-v2.2",
+        "name": "Dangerously Skip Permissions v2.2 (Confidence Sizing)",
+        "signature": (
+            "Confidence Sizing (60 sh Atomic / 10 sh Micro) · Pre-Flight Arb Gate (≤$0.995) · "
+            "Passive Maker Sweep (T-75s..15s) · Strict Sub-$1.00 Pair Cap"
+        ),
+        "description": (
+            "Confidence-based sizing candidate: Maximizes profit by heavy sizing (60 shares) on 100% risk-free "
+            "atomic pairings and deficit equalizations, while minimizing risk via 10-share micro clips on speculative "
+            "dips and enforcing a pre-flight hedge gate to prevent entering unhedgeable positions."
+        ),
+        "entry": {
+            "startAfterOpenSec": 4,
+            "stopBeforeCloseSec": 75,
+            "clipSharesDefault": 10.0,
+            "maxShares": 60.0,
+            "minFillPrice": 0.07,
+            "maxFillPrice": 0.880,
+            "benchmarkPairCost": 0.965,
+            "targetPairCost": 0.965,
+            "maxPairCost": 0.985,
+            "maxShareLead": 30.0,
+            "freezeLead": 15.0,
+            "rescuePairCostMax": 0.995,
+            "rescueCeilingPrice": 0.985,
+            "minSpacingMoveSec": 0.5,
+            "minSpacingStaticSec": 2.5,
+            "includeTakerFee": True,
+            "wholeLadderClips": True,
+        },
+    },
+}
+
 # Timing Parameters (seconds countdown SBC: seconds before close)
 WINDOW_S = 300                 # 5 minutes per market window
 PRE_OPEN_PIPELINE_S = 10       # T-310s: Pre-open discovery, book initialization & resting order placement
@@ -26,6 +162,7 @@ ACTIVE_WINDOW_SBC = (HARD_CUTOFF_SBC, WINDOW_S + PRE_OPEN_PIPELINE_S)
 CLIP_SHARES_DEFAULT = 30.0     # 30.0 shares = dominant order signature (31.0% of tape)
 MAX_SHARES = 50.0              # 50.0 shares = deficit catch-up cap
 MAX_SHARE_LEAD = 90.0          # 90.0 shares = hard ceiling on unhedged lead (3 clips max)
+FREEZE_LEAD = 15.0             # 15.0 shares = strict accumulation freeze on leading side
 
 # Microstructure Price Bands ($)
 STRADDLE_BAND = (0.34, 0.55)   # Opening straddle band [34¢–55¢] (median 43¢)
@@ -34,6 +171,7 @@ DIP_LADDER_MAX = 0.50          # Upper bound of passive Maker Dip Grid [7¢–50
 RESOLUTION_SNIPE_BAND = (0.90, 0.975)  # Minute 4 resolution certainty snipe band (up to 97.5¢)
 PRICE_FLOOR = 0.07             # Hard lower cutoff (<7¢ lottery tail strictly skipped)
 PRICE_CEILING = 0.975          # Hard upper cutoff (>97.5¢ extreme certainty strictly skipped)
+RESCUE_CEILING_PRICE = 0.985   # Hard ceiling for deficit rescue pairing fills (up to 98.5¢ when deficit exists)
 
 # Mathematical Sub-$1.00 Pair Cost Constraints & Benchmarks
 BENCHMARK_PAIR_COST = 0.965    # Measured historical tape benchmark ($0.9654 on tape, +3.5% margin)
@@ -41,6 +179,7 @@ PAIR_COST_BENCHMARK = BENCHMARK_PAIR_COST
 TARGET_PAIR_COST = BENCHMARK_PAIR_COST  # backward-compat alias
 PAIR_COST_TARGET = BENCHMARK_PAIR_COST  # backward-compat alias
 PAIR_COST_MAX = 0.990          # Hard sub-$1.00 ceiling (never enters pair ≥ $1.00)
+RESCUE_PAIR_COST_MAX = 1.080   # Cap for deficit rescue pairing (sacrifices modest spread to prevent 100% loss)
 MEAN_PAIR_COST = 0.9462        # Measured mean pair cost on tape
 
 # Exchange Fee Model

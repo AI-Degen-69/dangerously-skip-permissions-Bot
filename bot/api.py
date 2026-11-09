@@ -78,6 +78,14 @@ def set_selected_run_id(run_id: str | None) -> None:
     SELECTED_RUN_ID = run_id
 
 
+def session_label(cfg: dict) -> str:
+    """Run-id label for a new session, from the active strategy symbol ('⚡ DSP-v2.2' -> 'dsp_v2_2')."""
+    strat = cfg.get("strategy") or {}
+    raw = str(strat.get("symbol") or strat.get("id") or "")
+    clean = "_".join("".join(c.lower() if c.isalnum() else " " for c in raw).split())
+    return clean or "default"
+
+
 def is_view_only() -> bool:
     """Returns True if user has selected a historical run or explicit view-only mode."""
     sel = get_selected_run_id()
@@ -275,9 +283,13 @@ def start_loop_process(run_id: str | None = None) -> int:
         cmd = [sys.executable, "bot/live_paper.py", "--loop"]
         if run_id:
             cmd.extend(["--run-id", run_id])
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
         proc = subprocess.Popen(
             cmd,
             cwd=str(ROOT), stdout=logf, stderr=subprocess.STDOUT,
+            env=env,
             start_new_session=True)
         PID_PATH.write_text(str(proc.pid))
         if run_id:
@@ -616,13 +628,19 @@ def snapshot() -> dict:
     except Exception:
         markets = []
     from bot import constants as C
+    strat = cfg.get("strategy", {})
+    strat_id = strat.get("id", C.STRATEGY_ID)
+    strat_sym = strat.get("symbol", C.STRATEGY_SYMBOL)
+    strat_name = strat.get("name", C.STRATEGY_NAME)
+    setup_info = C.STRATEGY_SETUPS.get(strat_id, {})
+    strat_sig = setup_info.get("signature", C.STRATEGY_SIGNATURE)
     return {
         "version": 1, "mode": "paper", "asset": cfg.get("asset", "BTC"),
         "strategy": {
-            "id": C.STRATEGY_ID,
-            "symbol": C.STRATEGY_SYMBOL,
-            "name": C.STRATEGY_NAME,
-            "signature": C.STRATEGY_SIGNATURE,
+            "id": strat_id,
+            "symbol": strat_sym,
+            "name": strat_name,
+            "signature": strat_sig,
         },
         "updatedAt": utc_now_iso(), "equityUsd": equity, "bankrollUsd": bankroll,
         "exposureUsd": round(exposure, 2), "cashUsd": round(equity - exposure, 2),
@@ -920,6 +938,7 @@ def perf() -> dict:
     severity = {"danger": 0, "warning": 1, "info": 2, "success": 3}
     notes.sort(key=lambda n: severity.get(n["tone"], 9))
 
+    cfg = None
     cfg_bankroll = None
     sel = get_selected_run_id()
     if sel:
@@ -927,11 +946,14 @@ def perf() -> dict:
         if ws:
             meta = ws.read_meta()
             if meta and meta.config_snapshot:
-                cfg_bankroll = meta.config_snapshot.get("bankrollUsd")
-    if cfg_bankroll is None:
+                cfg = meta.config_snapshot
+                cfg_bankroll = cfg.get("bankrollUsd")
+    if cfg is None:
         cfg = load_config()
-        if isinstance(cfg, dict):
-            cfg_bankroll = cfg.get("bankrollUsd")
+    if not isinstance(cfg, dict):
+        cfg = {}
+    if cfg_bankroll is None:
+        cfg_bankroll = cfg.get("bankrollUsd")
     bankroll = _num(cfg_bankroll, default=float(BANKROLL_DEFAULT))
 
     wins = [n for n in nets if n > 0]
@@ -1012,17 +1034,25 @@ def perf() -> dict:
     up_win_rate = round(up_wins / len(up_windows), 4) if up_windows else 0.0
     down_win_rate = round(down_wins / len(down_windows), 4) if down_windows else 0.0
 
+    strat = cfg.get("strategy", {})
+    strat_id = strat.get("id", C.STRATEGY_ID)
+    strat_sym = strat.get("symbol", C.STRATEGY_SYMBOL)
+    strat_name = strat.get("name", C.STRATEGY_NAME)
+    setup_info = C.STRATEGY_SETUPS.get(strat_id, {})
+    strat_sig = setup_info.get("signature", C.STRATEGY_SIGNATURE)
+    entry_cfg = cfg.get("entry", {})
+
     return {
         "strategy": {
-            "id": C.STRATEGY_ID,
-            "symbol": C.STRATEGY_SYMBOL,
-            "name": C.STRATEGY_NAME,
-            "signature": C.STRATEGY_SIGNATURE,
+            "id": strat_id,
+            "symbol": strat_sym,
+            "name": strat_name,
+            "signature": strat_sig,
             "makerShareTarget": C.MAKER_SHARE_TARGET,
-            "pairCostTarget": C.PAIR_COST_TARGET,
-            "priceFloor": C.PRICE_FLOOR,
-            "priceCeiling": C.PRICE_CEILING,
-            "cutoffSec": C.HARD_CUTOFF_SBC,
+            "pairCostTarget": entry_cfg.get("targetPairCost", C.PAIR_COST_TARGET),
+            "priceFloor": entry_cfg.get("minFillPrice", C.PRICE_FLOOR),
+            "priceCeiling": entry_cfg.get("maxFillPrice", C.PRICE_CEILING),
+            "cutoffSec": entry_cfg.get("stopBeforeCloseSec", C.HARD_CUTOFF_SBC),
         },
         "summary": {
             "bankrollUsd": bankroll,
@@ -1173,8 +1203,11 @@ EDITABLE = {
     "entry.targetPairCost": [0.80, 0.99],
     "entry.maxPairCost": [0.90, 0.999],
     "entry.maxShareLead": [10, 300],
+    "entry.freezeLead": [5, 100],
+    "entry.rescuePairCostMax": [0.95, 1.05],
+    "entry.rescueCeilingPrice": [0.70, 0.99],
     "entry.startAfterOpenSec": [0, 30],
-    "entry.stopBeforeCloseSec": [5, 60],
+    "entry.stopBeforeCloseSec": [5, 180],
     "entry.minSpacingMoveSec": [0.1, 5.0],
     "entry.minSpacingStaticSec": [0.5, 10.0],
     "risk.maxUsdPerWindow": [500, 20000],
@@ -1294,6 +1327,13 @@ class Handler(BaseHTTPRequestHandler):
                 sel_id = get_selected_run_id() or active_id
                 view_only = is_view_only()
                 from bot import constants as C
+                cfg = load_config()
+                strat = cfg.get("strategy", {})
+                strat_id = strat.get("id", C.STRATEGY_ID)
+                strat_sym = strat.get("symbol", C.STRATEGY_SYMBOL)
+                strat_name = strat.get("name", C.STRATEGY_NAME)
+                setup_info = C.STRATEGY_SETUPS.get(strat_id, {})
+                strat_sig = setup_info.get("signature", C.STRATEGY_SIGNATURE)
                 self._send(200, {
                     "running": pid is not None and not view_only,
                     "pid": pid if not view_only else None,
@@ -1304,11 +1344,24 @@ class Handler(BaseHTTPRequestHandler):
                     "selectedRunId": sel_id,
                     "isViewOnly": view_only,
                     "strategy": {
-                        "id": C.STRATEGY_ID,
-                        "symbol": C.STRATEGY_SYMBOL,
-                        "name": C.STRATEGY_NAME,
-                        "signature": C.STRATEGY_SIGNATURE,
+                        "id": strat_id,
+                        "symbol": strat_sym,
+                        "name": strat_name,
+                        "signature": strat_sig,
                     },
+                })
+            elif url.path == "/api/bot/strategy-setups":
+                from bot import constants as C
+                cfg = load_config()
+                active_id = cfg.get("strategy", {}).get("id", C.STRATEGY_ID)
+                setups_list = []
+                for sid, sdata in C.STRATEGY_SETUPS.items():
+                    item = dict(sdata)
+                    item["isActive"] = (sid == active_id)
+                    setups_list.append(item)
+                self._send(200, {
+                    "activeSetupId": active_id,
+                    "setups": setups_list,
                 })
             elif url.path == "/api/bot/runs":
                 all_r = list_all_runs()
@@ -1322,6 +1375,9 @@ class Handler(BaseHTTPRequestHandler):
                 })
             elif url.path == "/api/bot/config":
                 self._send(200, {"config": self._config_view(), "configFile": str(CONFIG_PATH)})
+            elif url.path == "/api/bot/ab-test":
+                from bot.ab_test import get_ab_test_data
+                self._send(200, get_ab_test_data())
             else:
                 self._send(404, {"error": "not found"})
         except (ConnectionError, BrokenPipeError):
@@ -1338,8 +1394,13 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/bot/start":
                 req_run_id = body.get("runId")
                 resume_requested = body.get("resume", False)
-                if req_run_id or resume_requested:
-                    if req_run_id:
+                # newSession: open a brand-new run (0 windows) under the active strategy.
+                new_session = bool(body.get("newSession", False))
+                label = session_label(load_config()) if new_session else "default"
+                if req_run_id or resume_requested or new_session:
+                    if new_session:
+                        resolved_id = make_run_id(mode="paper", label=label)
+                    elif req_run_id:
                         resolved_id = find_run_id(str(req_run_id))
                         if not resolved_id:
                             self._send(404, {"error": f"Run not found: {req_run_id}"})
@@ -1365,7 +1426,7 @@ class Handler(BaseHTTPRequestHandler):
                             set_active_run_id(resolved_id)
                             set_selected_run_id(None)
                             ws = RunWorkspace(resolved_id)
-                            ws.init_workspace(config=load_config(), mode="paper")
+                            ws.init_workspace(config=load_config(), mode="paper", label=label)
                             ws.sync_to_paper_runs(RUNS_DIR)
                             try:
                                 ws.settle_pending_windows(RUNS_DIR, max_windows=15)
@@ -1557,6 +1618,52 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, res)
                 except ValueError as err:
                     self._send(400, {"error": str(err)})
+            elif self.path == "/api/bot/strategy-setup":
+                from bot import constants as C
+                setup_id = body.get("setupId")
+                if setup_id not in C.STRATEGY_SETUPS:
+                    self._send(400, {"error": f"Unknown setupId: {setup_id}. Valid setups: {list(C.STRATEGY_SETUPS.keys())}"})
+                    return
+                setup = C.STRATEGY_SETUPS[setup_id]
+                cfg = load_config()
+                cfg["strategy"] = {
+                    "id": setup["id"],
+                    "symbol": setup["symbol"],
+                    "name": setup["name"],
+                }
+                cfg.setdefault("entry", {}).update(setup["entry"])
+                tmp_cfg = CONFIG_PATH.with_suffix(".tmp")
+                tmp_cfg.write_text(json.dumps(cfg, indent=2))
+                tmp_cfg.replace(CONFIG_PATH)
+
+                # Update state.json if present
+                if STATE_PATH.exists():
+                    try:
+                        with open(STATE_PATH, "r", encoding="utf-8") as sf:
+                            st_data = json.load(sf)
+                        st_data["strategy"] = cfg["strategy"]
+                        tmp_st = STATE_PATH.with_suffix(".tmp")
+                        tmp_st.write_text(json.dumps(st_data, indent=2))
+                        tmp_st.replace(STATE_PATH)
+                    except Exception:
+                        pass
+
+                log_event("info", "strategy-setup-switched",
+                          detail={"setupId": setup_id, "symbol": setup["symbol"], "name": setup["name"]})
+                self._send(200, {
+                    "ok": True,
+                    "activeSetupId": setup_id,
+                    "setup": setup,
+                    "config": self._config_view(),
+                })
+            elif self.path == "/api/bot/ab-test/start":
+                from bot.ab_test import start_candidate_test
+                res = start_candidate_test()
+                self._send(200, res)
+            elif self.path == "/api/bot/ab-test/stop":
+                from bot.ab_test import stop_candidate_test
+                res = stop_candidate_test()
+                self._send(200, res)
             else:
                 self._send(404, {"error": "not found"})
         except (ConnectionError, BrokenPipeError):
@@ -1664,7 +1771,7 @@ class QuietThreadingHTTPServer(ThreadingHTTPServer):
 def main() -> None:
     """Run loopback desk API server."""
     ap = argparse.ArgumentParser(description="Paper desk API (loopback only)")
-    ap.add_argument("--port", type=int, default=8799)
+    ap.add_argument("--port", type=int, default=8789)
     args = ap.parse_args()
     try:
         server = QuietThreadingHTTPServer(("127.0.0.1", args.port), Handler)

@@ -1,14 +1,16 @@
-import { Activity, BookOpen, LayoutDashboard, Menu as MenuIcon, Moon, Settings, SlidersHorizontal, Sun, X } from 'lucide-react'
+import { Activity, BookOpen, FlaskConical, LayoutDashboard, Menu as MenuIcon, Moon, Settings, SlidersHorizontal, Sun, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router'
 
 import { useMe } from '../lib/api'
+import { useBotControl } from '../lib/bot'
 import { cx } from '../lib/cx'
 import { Avatar } from './ui'
 
 const links = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/live', label: 'Live bot', icon: Activity },
+  { to: '/ab-test', label: 'A/B Testing', icon: FlaskConical },
   { to: '/config', label: 'Configuration', icon: SlidersHorizontal },
   { to: '/strategy', label: 'Strategy', icon: BookOpen },
 ]
@@ -22,6 +24,10 @@ function getInitialTheme(): 'dark' | 'light' {
 
 export function Shell() {
   const { data: me } = useMe()
+  const control = useBotControl()
+  const strat = control.data?.strategy
+  const stratSymbol = strat?.symbol ?? '🎯 HAPCS-v1'
+  const stratEmoji = Array.from(stratSymbol)[0] ?? '🎯'
   const [mobileOpen, setMobileOpen] = useState(false)
   const [theme, setTheme] = useState<'dark' | 'light'>(getInitialTheme)
   const location = useLocation()
@@ -43,17 +49,17 @@ export function Shell() {
   const sidebar = (
     <div className="flex h-full flex-col px-3 py-3">
       <div className="flex h-10 items-center gap-2.5 px-2">
-        <span className="grid size-7 place-items-center rounded-[9px] bg-accent text-white shadow-xs" title="🎯 Hybrid Arbitrage Pairing & Certainty Sniping v1">
-          <span className="text-[13px] font-bold leading-none">🎯</span>
+        <span className="grid size-7 place-items-center rounded-[9px] bg-accent text-white shadow-xs" title={strat?.name ?? stratSymbol}>
+          <span className="text-[13px] font-bold leading-none">{stratEmoji}</span>
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <p className="truncate text-[13.5px] font-semibold tracking-tight">Up/Down desk</p>
             <span className="inline-flex items-center rounded-pill bg-accent-soft px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-accent">
-              🎯 HAPCS-v1
+              {stratSymbol}
             </span>
           </div>
-          <p className="truncate font-mono text-[10.5px] text-faint">Hybrid Arb · Port 5180→8799</p>
+          <p className="truncate font-mono text-[10.5px] text-faint">{strat?.name ?? 'Hybrid Arb'} · Port 5173→8789</p>
         </div>
       </div>
 

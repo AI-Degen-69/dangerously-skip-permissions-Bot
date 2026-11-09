@@ -1,20 +1,18 @@
 import { useMemo, useState } from 'react'
-import { Activity, Play, Radio, ShieldAlert, Target, Zap } from 'lucide-react'
+import { Activity, Radio, Target, Zap } from 'lucide-react'
+import { Link } from 'react-router'
 
 import { PolymarketLiveChart } from '../components/PolymarketEmbed'
 import { eventMetrics, KIND_TONE, reasonLabel as label } from '../lib/labels'
-import { Badge, Button, Card, EmptyState, PageHeader, Skeleton, useToast } from '../components/ui'
+import { Badge, Card, EmptyState, PageHeader, Skeleton } from '../components/ui'
 import {
   BOT_ORIGIN,
   useBotControl,
   useBotEvents,
   useBotSnapshot,
   useBotTrades,
-  useSetKillSwitch,
-  useResumeBot,
-  useResumeRun,
-  useStartBot,
   useBotWsTicks,
+  useStrategySetups,
   type WsStatus,
   type WsTick,
   type BotEvent,
@@ -23,6 +21,7 @@ import {
   type MarketView,
   type PositionView,
 } from '../lib/bot'
+import { STRATEGY_PRESETS } from '../botDefaults'
 import { cx } from '../lib/cx'
 import { relativeTime } from '../lib/format'
 
@@ -53,12 +52,9 @@ export function Live() {
   const snapshot = useBotSnapshot()
   const events = useBotEvents()
   const trades = useBotTrades()
-  const killSwitch = useSetKillSwitch()
   const control = useBotControl()
-  const start = useStartBot()
-  const resumeRun = useResumeRun()
   const wsTicks = useBotWsTicks()
-  const toast = useToast()
+  const setupsQuery = useStrategySetups()
 
   const isViewOnly = control.data?.isViewOnly ?? false
   const data = snapshot.data?.snapshot ?? null
@@ -91,23 +87,29 @@ export function Live() {
     }),
     [rawEvents],
   )
-  const startBot = () =>
-    start.mutate(undefined, {
-      onSuccess: (result) => toast(result.reason === 'already-running' ? 'Bot already running' : 'Paper bot started'),
-      onError: (error: Error) => toast(error.message, 'danger'),
-    })
 
-  const strategySymbol = data?.strategy?.symbol ?? control.data?.strategy?.symbol ?? '🎯 HAPCS-v1'
+  const activeStrategyId = data?.strategy?.id ?? control.data?.strategy?.id ?? setupsQuery.data?.activeSetupId ?? 'hapcs-v1'
+  const setups = setupsQuery.data?.setups ?? Object.values(STRATEGY_PRESETS)
+  const currentSetup = setups.find((s) => s.id === activeStrategyId) ?? setups[0]
+
+  const strategySymbol = data?.strategy?.symbol ?? control.data?.strategy?.symbol ?? currentSetup?.symbol ?? '⚡ DSP-v2.2'
   const strategyName =
     data?.strategy?.name ??
     control.data?.strategy?.name ??
-    'Hybrid Arbitrage Pairing & Certainty Sniping v1'
+    currentSetup?.name ??
+    'Dangerously Skip Permissions v2.2 (Confidence Sizing)'
+  const strategySignature =
+    data?.strategy?.signature ??
+    control.data?.strategy?.signature ??
+    currentSetup?.signature ??
+    currentSetup?.description ??
+    'BTC 5-minute windows, held to redeem.'
 
   return (
     <div className="mx-auto max-w-[1200px] p-5 sm:p-8">
       <PageHeader
-        title="Live bot · 🎯 HAPCS-v1"
-        subtitle="Maker Dip Grid [7¢–50¢] & Dynamic Arbitrage Pairing + Resolution Snipe [up to 97.5¢] — live fills."
+        title={`Live bot · ${strategySymbol}`}
+        subtitle={strategySignature}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <span title={strategyName}>
@@ -142,43 +144,14 @@ export function Live() {
             )}
             <Badge tone={data?.mode === 'live' ? 'danger' : 'warning'}>{data?.mode === 'live' ? 'LIVE money' : 'Paper'}</Badge>
             {running && stopped && <Badge tone="warning">Entries paused</Badge>}
-            {isViewOnly ? (
-              <div className="flex items-center gap-2">
-                <Badge tone="warning" dot>
-                  View only
-                </Badge>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  loading={resumeRun.isPending}
-                  onClick={() =>
-                    resumeRun.mutate(control.data?.selectedRunId, {
-                      onSuccess: (res) => toast(`Resumed run ${res.runId} on existing database`),
-                      onError: (err) => toast(`Failed to resume: ${(err as Error).message}`),
-                    })
-                  }
-                >
-                  <Play />
-                  Resume run
-                </Button>
-              </div>
-            ) : (
-              <Button
-                variant={stopped ? 'primary' : 'danger'}
-                size="sm"
-                disabled={!running}
-                loading={killSwitch.isPending}
-                onClick={() => killSwitch.mutate(!stopped)}
-              >
-                {stopped ? <Play /> : <ShieldAlert />}
-                {stopped ? 'Resume entries' : 'Pause entries'}
-              </Button>
+            {isViewOnly && (
+              <Badge tone="warning" dot>
+                View only
+              </Badge>
             )}
-            {!running && !isViewOnly && (
-              <Button variant="primary" size="sm" loading={start.isPending} onClick={startBot}>
-                <Play /> Start bot
-              </Button>
-            )}
+            <Link to="/" className="text-[12.5px] font-medium text-muted hover:text-fg">
+              Controls on Dashboard →
+            </Link>
           </div>
         }
       />
@@ -209,7 +182,7 @@ export function Live() {
               <div>
                 <h2 className="text-[15px] font-semibold">The loop is stopped</h2>
                 <p className="mt-1 max-w-xl text-[13.5px] text-muted">
-                  No windows are being traded, so there is nothing streaming to show. Start it to resume one 5-minute
+                  No windows are being traded, so there is nothing streaming to show. Start it from the Dashboard to resume one 5-minute
                   straddle window at a time.
                   {snapshot.data?.ageMs != null && (
                     <> Last heartbeat {relativeTime(Date.now() - snapshot.data.ageMs)}.</>
@@ -217,9 +190,9 @@ export function Live() {
                 </p>
               </div>
             </div>
-            <Button variant="primary" size="sm" loading={start.isPending} onClick={startBot}>
-              <Play /> Start paper bot
-            </Button>
+            <Link to="/" className="text-[12.5px] font-medium text-muted hover:text-fg">
+              Start it from the Dashboard →
+            </Link>
           </div>
         </Card>
       ) : !online ? (
@@ -365,7 +338,7 @@ function EventTitle({ event }: { event: BotEvent }) {
     )
   }
 
-  return <span className="truncate text-[13px]">{label(event.reason)}</span>
+  return <span className="truncate text-[13px]">{label(event.reason, event.detail)}</span>
 }
 
 function EventRow({ event }: { event: BotEvent }) {
@@ -475,8 +448,6 @@ function PositionRow({ position, markets }: { position: PositionView; markets?: 
 
 function RiskPanel({ data }: { data: BotSnapshot }) {
   const { risk, limits } = data
-  const resume = useResumeBot()
-  const toast = useToast()
   const dayLoss = risk.dailyLossUsd != null ? risk.dailyLossUsd : Math.max(0, risk.dayStartEquityUsd - data.equityUsd)
   const dayLimit = limits.dailyLossCapUsd != null ? limits.dailyLossCapUsd : (risk.dayStartEquityUsd * limits.dailyLossLimitPct) / 100
   const drawdown = Math.max(0, risk.highWaterEquityUsd - data.equityUsd)
@@ -503,19 +474,9 @@ function RiskPanel({ data }: { data: BotSnapshot }) {
       {risk.halted && (
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-tile bg-danger-soft p-2.5 text-[12.5px] text-danger">
           <span>Halted for the day: {label(risk.haltReason)}</span>
-          <Button
-            size="sm"
-            variant="secondary"
-            loading={resume.isPending}
-            onClick={() =>
-              resume.mutate(undefined, {
-                onSuccess: () => toast('Risk halt cleared and entries resumed'),
-                onError: (err: Error) => toast(err.message, 'danger'),
-              })
-            }
-          >
-            Clear halt & resume
-          </Button>
+          <Link to="/" className="text-[12px] font-medium text-danger underline hover:text-fg">
+            Clear on Dashboard →
+          </Link>
         </div>
       )}
       {cooldownLeft > 0 && !risk.halted && (
