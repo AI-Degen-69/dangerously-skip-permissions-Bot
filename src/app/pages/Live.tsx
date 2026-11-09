@@ -94,13 +94,24 @@ export function Live() {
       onError: (error: Error) => toast(error.message, 'danger'),
     })
 
+  const strategySymbol = data?.strategy?.symbol ?? control.data?.strategy?.symbol ?? '🎯 HAPCS-v1'
+  const strategyName =
+    data?.strategy?.name ??
+    control.data?.strategy?.name ??
+    'Hybrid Arbitrage Pairing & Certainty Sniping v1'
+
   return (
     <div className="mx-auto max-w-[1200px] p-5 sm:p-8">
       <PageHeader
-        title="Live bot"
-        subtitle="What it sees right now, why it decides, and every fill it made."
+        title="Live bot · 🎯 HAPCS-v1"
+        subtitle="Maker Dip Grid [7¢–50¢] & Dynamic Arbitrage Pairing + Resolution Snipe [up to 97.5¢] — live fills."
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            <span title={strategyName}>
+              <Badge tone="accent" className="font-mono font-semibold">
+                {strategySymbol} · Recovery Engine
+              </Badge>
+            </span>
             <Badge tone={snapshot.isError && !snapshot.data ? 'neutral' : running ? 'success' : 'neutral'} dot>
               {snapshot.isError && !snapshot.data ? 'No signal' : running ? 'Streaming' : 'Stopped'}
             </Badge>
@@ -555,21 +566,37 @@ function getTradeWhy(trade: BotTrade): WhyInfo {
   const minute = detail?.minute as number | undefined
   const lean = detail?.lean as number | undefined
   const winner = detail?.winner as string | undefined
+  const role = detail?.role as string | undefined
+  const pairCost = typeof detail?.pairCost === 'number' ? detail.pairCost : undefined
 
   switch (reason) {
+    case 'maker-dip-ladder':
+      return {
+        label: 'Maker Dip [7–50¢]',
+        sub: `${role ?? 'MAKER'}${pairCost != null ? ` · pair $${pairCost.toFixed(2)}` : ' · 0% fee'}`,
+        tone: 'success',
+        tip: 'MSR-v2 passive Maker bid fill in the [7¢, 50¢] contrarian dip ladder (0% fee).',
+      }
+    case 'hedge-equalizer':
+      return {
+        label: 'Equalizer [75–95¢]',
+        sub: `${role ?? 'TAKER'}${pairCost != null ? ` · pair $${pairCost.toFixed(2)}` : ' · share catch-up'}`,
+        tone: 'info',
+        tip: 'MSR-v2 lagging-leg share equalizer in [75¢, 95¢] to eliminate directional share deficit.',
+      }
     case 'straddle-open':
       return {
         label: 'Straddle Open',
-        sub: 'T+13s first touch',
+        sub: 'first touch',
         tone: 'accent',
-        tip: 'First touch opening leg executed ~13s into the window to establish straddle base.',
+        tip: 'First touch opening leg executed to establish straddle base.',
       }
     case 'hedge-leg':
       return {
         label: 'Hedge Leg',
-        sub: '+15s opposite leg',
+        sub: 'opposite leg',
         tone: 'info',
-        tip: 'Counter hedge leg filled 15s after open to balance direction exposure.',
+        tip: 'Counter hedge leg filled to balance directional exposure.',
       }
     case 'lean-up':
       return {
@@ -838,6 +865,10 @@ function StraddleDeskStrip({ data, ws }: { data: BotSnapshot; ws?: WsStatus }) {
   const isHedged = upShares > 0 && downShares > 0
   const hasHoldings = upShares > 0 || downShares > 0
 
+  const pairedShares = Math.min(upShares, downShares)
+  const unpairedShares = Math.abs(Math.round(upShares) - Math.round(downShares))
+  const leadingSide = upShares > downShares ? 'Up' : downShares > upShares ? 'Down' : null
+
   let pairCost: number | null = null
   let isIndicative = false
   if (isHedged && upAvg != null && downAvg != null) {
@@ -848,6 +879,7 @@ function StraddleDeskStrip({ data, ws }: { data: BotSnapshot; ws?: WsStatus }) {
   }
 
   const totalCost = (upPos?.costUsd ?? 0) + (downPos?.costUsd ?? 0)
+  const effectiveCost = pairedShares > 0 ? totalCost / pairedShares : null
   const payIfUp = upShares * 1.0 - totalCost
   const payIfDown = downShares * 1.0 - totalCost
   const minFloor = hasHoldings ? Math.min(payIfUp, payIfDown) : 0
@@ -858,7 +890,6 @@ function StraddleDeskStrip({ data, ws }: { data: BotSnapshot; ws?: WsStatus }) {
   const fillsCount =
     Number(activeMarket?.verdict?.detail?.fills) ||
     (positions.length > 0 ? (upShares > 0 ? 1 : 0) + (downShares > 0 ? 1 : 0) : 0)
-  const targetFills = 45
   const windowCap = 4000
 
   return (
@@ -882,13 +913,21 @@ function StraddleDeskStrip({ data, ws }: { data: BotSnapshot; ws?: WsStatus }) {
             </span>
             {pairCost != null && (
               <span className="text-[11.5px] text-muted">
-                {isIndicative ? '/ book' : '/ pair'}
+                {isIndicative ? '/ book' : pairedShares > 0 ? `(${Math.round(pairedShares)} paired)` : '/ pair'}
               </span>
             )}
           </div>
           <p className="mt-0.5 text-[11.5px] text-muted">
             {pairCost == null ? (
               'Awaiting first fill'
+            ) : unpairedShares === 0 && pairCost <= 1.0 ? (
+              <span className="font-medium text-success">
+                +{((1.0 - pairCost) * 100).toFixed(1)}¢ margin · 100% paired
+              </span>
+            ) : effectiveCost != null && effectiveCost > 1.0 ? (
+              <span className="font-medium text-warning" title={`Total spent $${totalCost.toFixed(2)} across ${Math.round(pairedShares)} paired units`}>
+                Eff: ${(effectiveCost).toFixed(2)}/guaranteed $1 ({unpairedShares} {leadingSide} unhedged)
+              </span>
             ) : pairCost <= 1.0 ? (
               <span className="font-medium text-success">
                 +{((1.0 - pairCost) * 100).toFixed(1)}¢ margin{isIndicative ? ' (book)' : ''}
@@ -913,9 +952,13 @@ function StraddleDeskStrip({ data, ws }: { data: BotSnapshot; ws?: WsStatus }) {
             ) : delta === 0 ? (
               <span className="font-medium text-success">Balanced 1:1 (Flat Delta)</span>
             ) : delta > 0 ? (
-              <span className="font-medium text-accent">Net: +{delta} Up bias</span>
+              <span className={cx('font-medium', delta > 30 ? 'text-warning' : 'text-accent')}>
+                Net: +{delta} Up bias ({unpairedShares} unhedged)
+              </span>
             ) : (
-              <span className="font-medium text-warning">Net: +{Math.abs(delta)} Down bias</span>
+              <span className={cx('font-medium', Math.abs(delta) > 30 ? 'text-warning' : 'text-accent')}>
+                Net: +{Math.abs(delta)} Down bias ({unpairedShares} unhedged)
+              </span>
             )}
           </p>
         </div>
@@ -932,7 +975,11 @@ function StraddleDeskStrip({ data, ws }: { data: BotSnapshot; ws?: WsStatus }) {
             >
               {hasHoldings ? `${minFloor >= 0 ? '+' : '−'}$${Math.abs(minFloor).toFixed(2)}` : '—'}
             </span>
-            {hasHoldings && <span className="text-[11px] text-faint">min floor</span>}
+            {hasHoldings && (
+              <span className="text-[11px] text-faint">
+                {minFloor >= 0 ? 'locked floor' : 'min floor'}
+              </span>
+            )}
           </div>
           <p className="mt-0.5 text-[11.5px] text-muted">
             {hasHoldings ? (
@@ -956,7 +1003,7 @@ function StraddleDeskStrip({ data, ws }: { data: BotSnapshot; ws?: WsStatus }) {
           </div>
           <div className="mt-1 flex items-center justify-between text-[11px] text-faint">
             <span className="tabular-nums">
-              {fillsCount}/{targetFills} clips
+              {fillsCount} fills (tape med: 39)
             </span>
             {ws?.state === 'connected' && (
               <span className="tabular-nums opacity-80">

@@ -55,16 +55,38 @@ def kill(state: RiskState, reason: str) -> None:
 # The loop trades one window at a time; a stale state.json from a crashed
 # window must never merge into the next window's fills.
 def assert_single_window(active_slug: str, state_path: Path | str = "bot/state.json") -> None:
-    """Raise if another window still owns the live state file."""
+    """Raise if another live window still owns the state file.
+    
+    If the file belongs to an expired window from the past (endMs <= now)
+    or has a stale heartbeat (> HEARTBEAT_STALE_S), the previous process
+    died/crashed ungracefully. In that case, retire the stale state file
+    so the current window can trade rather than deadlock permanently.
+    """
     p = Path(state_path)
     if not p.exists():
         return
     try:
-        owner = json.loads(p.read_text()).get("slug")
+        data = json.loads(p.read_text())
+        owner = data.get("slug")
+        end_ms = data.get("endMs")
+        updated_at = data.get("updatedAtMs")
     except Exception:
         return  # unreadable state never blocks; loop overwrites it
-    if owner and owner != active_slug:
-        raise RuntimeError(f"single-window violation: {owner} owns state, {active_slug} refused")
+    if not owner or owner == active_slug:
+        return
+
+    now_ms = int(time.time() * 1000)
+    is_expired = bool(end_ms and now_ms >= end_ms)
+    heartbeat_stale = bool(updated_at and (now_ms - updated_at) > (HEARTBEAT_STALE_S * 1000))
+
+    if is_expired or heartbeat_stale:
+        try:
+            p.unlink()
+        except OSError:
+            pass
+        return
+
+    raise RuntimeError(f"single-window violation: {owner} owns state, {active_slug} refused")
 
 
 # --- heartbeats --------------------------------------------------------

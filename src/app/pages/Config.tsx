@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react'
-import { Coins, Filter, RotateCcw, Scale, ShieldAlert, SlidersHorizontal } from 'lucide-react'
+import { Coins, Filter, RotateCcw, Scale, ShieldAlert, Zap } from 'lucide-react'
 
-import { Badge, Button, Card, Field, Input, PageHeader, Select, Skeleton, useToast } from '../components/ui'
+import { Badge, Button, Card, Field, Input, PageHeader, Skeleton, useToast } from '../components/ui'
 import { useBotConfig, useBotControl, useSaveBotConfig, type BotConfigView } from '../lib/bot'
 import { cx } from '../lib/cx'
 import { DEFAULT_CONFIG, EDITABLE } from '../botDefaults'
@@ -44,9 +44,22 @@ function ResetFieldButton({ onReset, label, className }: { onReset: () => void; 
   )
 }
 
-function EdgeTip({ title, gist, lowLabel, lowText, highLabel, highText, foot }: {
-  title: string; gist: string; lowLabel: string; lowText: string;
-  highLabel: string; highText: string; foot: string
+function EdgeTip({
+  title,
+  gist,
+  lowLabel,
+  lowText,
+  highLabel,
+  highText,
+  foot,
+}: {
+  title: string
+  gist: string
+  lowLabel: string
+  lowText: string
+  highLabel: string
+  highText: string
+  foot: string
 }) {
   return (
     <span className="block">
@@ -85,27 +98,196 @@ const GROUPS: { title: string; note?: string; icon: typeof Coins; tone: Tone; fi
     fields: [{ path: 'bankrollUsd', label: 'Bankroll (USD)', step: 10 }],
   },
   {
-    title: 'Execution',
-    note: 'How each 5-minute window is worked: open timing, clips, cadence.',
-    icon: Filter,
-    tone: 'info',
+    title: 'Microstructure & Pair Bounds',
+    note: 'Regime bands and mathematical sub-$1.00 pair-cost arbitrage constraints.',
+    icon: Scale,
+    tone: 'accent',
     fields: [
-      { path: 'entry.clipSharesDefault', label: 'Clip size (shares)', hint: '30 = the target signature', tip: <EdgeTip title="Clip size" gist="Default fill size. Every Nth fill uses the full clip, the rest use the median size — that mix reproduces the 30.4% exact-30s fingerprint." lowLabel="1" lowText="Dust fills — nothing like the target's tape." highLabel="50" highText="Every fill at the cap — overshoots the $316 median window." foot="Default 30 · clamped 1–50" />, step: 1 },
-      { path: 'entry.clipEveryNth', label: 'Full clip every Nth fill', step: 1 },
-      { path: 'entry.medianShares', label: 'Median fill (shares)', hint: '13.86 measured', step: 0.5 },
-      { path: 'entry.maxShares', label: 'Max shares per fill', step: 1 },
-      { path: 'entry.medianFillsTarget', label: 'Fills per window target', hint: '45 measured median', tip: <EdgeTip title="Fills target" gist="Paper fills planned per window, spread over M1–M3 with an M4 snipe. 45 matches the target's median; 58 is its mean (fat tail to 404)." lowLabel="5" lowText="Thin tape — fidelity diff fails on cadence." highLabel="400" highText="Machine-gun tape — trips the window cap." foot="Default 45 · clamped 5–400" />, step: 1 },
-      { path: 'entry.openDelaySec', label: 'First touch delay (s)', hint: '13s median measured', step: 1 },
-      { path: 'entry.hedgeDelaySec', label: 'Hedge leg delay (s)', hint: '15s median measured', step: 1 },
-      { path: 'entry.stopBeforeCloseSec', label: 'Stop before close (s)', step: 1 },
-      { path: 'entry.minFillPrice', label: 'Min fill price', hint: 'skip quotes under 1¢', step: 0.01 },
+      {
+        path: 'entry.targetPairCost',
+        label: 'Target pair cost ($)',
+        hint: 'Measured median: $0.9654',
+        tip: (
+          <EdgeTip
+            title="Target Pair Cost"
+            gist="The target combined price of 1 Up + 1 Down share. Accumulating below this level creates guaranteed spread margin upon redemption."
+            lowLabel="$0.85"
+            lowText="Demands steep dips — fewer dual fills."
+            highLabel="$0.98"
+            highText="More frequent hedges — narrower margin."
+            foot="Default $0.965 · range $0.80–$0.99"
+          />
+        ),
+        step: 0.005,
+      },
+      {
+        path: 'entry.maxPairCost',
+        label: 'Max pair cost cap ($)',
+        hint: 'Strictly < $1.00 (0.990 cap)',
+        tip: (
+          <EdgeTip
+            title="Max Pair Cost Ceiling"
+            gist="Hard ceiling on equalizing hedges. Guarantees the bot NEVER enters an unhedged or losing pair ($1.00+ loses money)."
+            lowLabel="$0.95"
+            lowText="Strict safety — refuses any tight hedge."
+            highLabel="$0.99"
+            highText="Tolerates tighter hedges to avoid unhedged bias."
+            foot="Default $0.990 · range $0.90–$0.999"
+          />
+        ),
+        step: 0.005,
+      },
+      {
+        path: 'entry.minFillPrice',
+        label: 'Price floor (dust cutoff)',
+        hint: '7¢ floor (blocked lottery tail)',
+        tip: (
+          <EdgeTip
+            title="Price Floor"
+            gist="Fills below 7¢ went 1-for-170 (−89.8% ROI) on the tape and are strictly refused."
+            lowLabel="1¢"
+            lowText="Allows dust lottery buys with terrible hit rate."
+            highLabel="15¢"
+            highText="Blocks valuable deep maker dip fills."
+            foot="Default 0.07 (7¢) · range 0.01–0.50"
+          />
+        ),
+        step: 0.01,
+      },
+      {
+        path: 'entry.maxFillPrice',
+        label: 'Price ceiling (favorite cutoff)',
+        hint: '95¢ cap (blocked extreme favorites)',
+        tip: (
+          <EdgeTip
+            title="Price Ceiling"
+            gist="Fills above 95¢ lost −20.73% per dollar on the tape and are strictly refused."
+            lowLabel="85¢"
+            lowText="Limits late-window M4 equalizer hedges."
+            highLabel="98¢"
+            highText="Takes negative-EV extreme favorite lottery bets."
+            foot="Default 0.95 (95¢) · range 0.70–0.99"
+          />
+        ),
+        step: 0.01,
+      },
+      {
+        path: 'entry.maxShareLead',
+        label: 'Max one-sided lead (shares)',
+        hint: '90 shares = 3x 30sh clips',
+        tip: (
+          <EdgeTip
+            title="Max Share Lead"
+            gist="Prevents runaway one-sided accumulation when a dipping token trends down without rebounding."
+            lowLabel="30"
+            lowText="Locks immediately after 1 unhedged clip."
+            highLabel="180"
+            highText="Allows high directional exposure before hedging."
+            foot="Default 90 shares · range 10–300"
+          />
+        ),
+        step: 10,
+      },
     ],
   },
   {
-    title: 'Sizing',
-    icon: Scale,
-    tone: 'accent',
-    fields: [],
+    title: 'Execution Timing & Sizing',
+    note: 'Active trading window (T+4s to T+288s), clip sizing, and anti-runaway pacing.',
+    icon: Filter,
+    tone: 'info',
+    fields: [
+      {
+        path: 'entry.startAfterOpenSec',
+        label: 'Opening buffer (s)',
+        hint: '4s buffer (sbc 296–300)',
+        tip: (
+          <EdgeTip
+            title="Opening Buffer"
+            gist="Strictly 0 fills in first 4s on tape while orderbooks establish initial liquidity."
+            lowLabel="0s"
+            lowText="Acts immediately at T+0s on empty books."
+            highLabel="15s"
+            highText="Delays opening straddle needlessly."
+            foot="Default 4s · range 0–30s"
+          />
+        ),
+        step: 1,
+      },
+      {
+        path: 'entry.stopBeforeCloseSec',
+        label: 'Stop before close (s)',
+        hint: '12s cutoff (sbc 0–12)',
+        tip: (
+          <EdgeTip
+            title="Settlement Cutoff"
+            gist="Strictly 0 fills in final 12s on tape. All trading ceases at T−12s to hold inventory to resolution."
+            lowLabel="5s"
+            lowText="Trades dangerously close to oracle expiry."
+            highLabel="30s"
+            highText="Cuts off M4 snipe window prematurely."
+            foot="Default 12s · range 5–60s"
+          />
+        ),
+        step: 1,
+      },
+      {
+        path: 'entry.clipSharesDefault',
+        label: 'Default clip size (shares)',
+        hint: '30 shares = target signature',
+        tip: (
+          <EdgeTip
+            title="Default Clip Size"
+            gist="Single most common fill size on tape (5,134 fills, 30.4% exact-30s)."
+            lowLabel="10"
+            lowText="Smaller fills, slower grid accumulation."
+            highLabel="50"
+            highText="Every fill at cap — higher capital commitment."
+            foot="Default 30 · range 1–50"
+          />
+        ),
+        step: 1,
+      },
+      {
+        path: 'entry.maxShares',
+        label: 'Max shares per fill',
+        hint: '50 shares = deficit catch-up cap',
+        step: 5,
+      },
+      {
+        path: 'entry.minSpacingMoveSec',
+        label: 'Dynamic spacing on tick (s)',
+        hint: '0.5s on orderbook price move',
+        tip: (
+          <EdgeTip
+            title="Dynamic Spacing on Move"
+            gist="Allows fast reactive execution when prices tick into deep discount."
+            lowLabel="0.1s"
+            lowText="Ultra-fast machine gun execution."
+            highLabel="2.0s"
+            highText="Slow execution, misses transient dips."
+            foot="Default 0.5s · range 0.1–5.0s"
+          />
+        ),
+        step: 0.1,
+      },
+      {
+        path: 'entry.minSpacingStaticSec',
+        label: 'Static replenishment spacing (s)',
+        hint: '2.5s on unchanged quotes',
+        tip: (
+          <EdgeTip
+            title="Static Spacing"
+            gist="Prevents rapid orderbook self-fill runaway on resting static bids."
+            lowLabel="1.0s"
+            lowText="Fast grid fills on unchanged quotes."
+            highLabel="5.0s"
+            highText="Slow grid pacing."
+            foot="Default 2.5s · range 0.5–10.0s"
+          />
+        ),
+        step: 0.5,
+      },
+    ],
   },
   {
     title: 'Risk limits',
@@ -113,10 +295,10 @@ const GROUPS: { title: string; note?: string; icon: typeof Coins; tone: Tone; fi
     icon: ShieldAlert,
     tone: 'danger',
     fields: [
-      { path: 'risk.maxUsdPerWindow', label: 'Max USD per window', hint: '$3,804 max observed', step: 50 },
-      { path: 'risk.maxFillsPerWindow', label: 'Max fills per window', step: 10 },
-      { path: 'risk.dailyLossCapUsd', label: 'Daily loss cap (USD)', tip: <EdgeTip title="Daily loss cap" gist="Paper loop halts for the day once realized paper loss passes this. Approve a value before any live-size conversation." lowLabel="$10" lowText="Hair-trigger — a single bad window halts the day." highLabel="$100k" highText="Effectively off." foot="Default $500 · set with the operator" />, step: 25 },
-      { path: 'risk.maxConcurrentPositions', label: 'Max open positions', step: 1 },
+      { path: 'risk.dailyLossCapUsd', label: 'Daily loss cap (USD)', hint: '$500 daily stop-loss', step: 25 },
+      { path: 'risk.maxUsdPerWindow', label: 'Max USD per window', hint: '$4,000 window ceiling', step: 50 },
+      { path: 'risk.maxFillsPerWindow', label: 'Max fills per window', hint: '500 trade cap', step: 10 },
+      { path: 'risk.maxConcurrentPositions', label: 'Max open windows', hint: '1 active window max', step: 1 },
     ],
   },
 ]
@@ -140,13 +322,11 @@ export function Config() {
   const control = useBotControl()
   const toast = useToast()
   const [draft, setDraft] = useState<Draft | null>(null)
-  const [lean, setLean] = useState<string | null>(null)
 
   const config = query.data?.config ?? null
   const defaultValues = useMemo(() => flatten(DEFAULT_CONFIG as unknown as BotConfigView), [])
   const values = draft ?? (config ? flatten(config) : null)
-  const leanValue = lean ?? ((config?.entry as Record<string, unknown>)?.leanSource as string | undefined) ?? 'microprice'
-  const dirty = draft !== null || lean !== null
+  const dirty = draft !== null
   const hasErrors = values !== null && ALL_PATHS.some((path) => !inRange(path, values[path] ?? 0))
 
   const set = (path: string, raw: string) => {
@@ -157,10 +337,9 @@ export function Config() {
 
   const onSave = () => {
     if (!values) return
-    save.mutate({ ...values, 'entry.leanSource': leanValue }, {
+    save.mutate(values, {
       onSuccess: (result) => {
         setDraft(null)
-        setLean(null)
         const warnings = result.warnings ?? []
         toast(warnings.length ? `Saved with ${warnings.length} adjustment(s)` : 'Configuration saved')
       },
@@ -172,7 +351,7 @@ export function Config() {
     <div className="mx-auto max-w-[1000px] p-5 sm:p-8">
       <PageHeader
         title="Configuration"
-        subtitle="Every knob the paper loop reads. A running loop picks changes up on its next window."
+        subtitle="Every knob the HAPCS-v1 loop reads. A running loop picks changes up on its next window."
         actions={
           <div className="flex items-center gap-2">
             {control.data && (
@@ -180,7 +359,14 @@ export function Config() {
                 {control.data.running ? 'Running' : 'Stopped'}
               </Badge>
             )}
-            <Button variant="primary" size="sm" onClick={onSave} loading={save.isPending} disabled={!dirty || !values || hasErrors} title={hasErrors ? 'Fix the highlighted fields first' : undefined}>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={onSave}
+              loading={save.isPending}
+              disabled={!dirty || !values || hasErrors}
+              title={hasErrors ? 'Fix the highlighted fields first' : undefined}
+            >
               Save changes
             </Button>
           </div>
@@ -191,27 +377,28 @@ export function Config() {
         <Skeleton className="mt-6 h-[420px] rounded-card" />
       ) : (
         <>
-          <Card className="mt-4 flex flex-wrap items-center gap-3 p-5">
+          <Card className="mt-4 flex flex-wrap items-center gap-3 border-accent/30 bg-accent-soft/10 p-5">
             <span className="grid size-9 shrink-0 place-items-center rounded-tile bg-accent-soft text-accent">
-              <SlidersHorizontal className="size-4.5" aria-hidden="true" />
+              <Zap className="size-4.5" aria-hidden="true" />
             </span>
             <div className="min-w-0 flex-1">
-              <h2 className="text-[14px] font-semibold">Lean signal</h2>
-              <p className="mt-0.5 text-[12px] leading-snug text-muted">
-                Microprice tilts each fill toward the book's strong side; dumb runs a neutral straddle for plumbing tests.
+              <div className="flex items-center gap-2">
+                <h2 className="text-[14px] font-semibold text-fg">🎯 HAPCS-v1 Strategy Status</h2>
+                <Badge tone="accent">Hybrid Arbitrage Pairing & Certainty Sniping</Badge>
+                <Badge tone="success">0% Maker Fee</Badge>
+              </div>
+              <p className="mt-1 text-[12.5px] leading-relaxed text-muted">
+                Direction-agnostic volatility harvester. Accumulates both Up and Down into paired bundles below $1.00
+                (benchmark $0.965, hard ceiling ≤ $0.990). Pre-open order placement from T-310s through T-12s cutoff.
               </p>
             </div>
-            <Select value={leanValue} onChange={(e) => setLean(e.target.value)} className="w-[200px]">
-              <option value="microprice">Book microprice</option>
-              <option value="dumb">Dumb (lean = 0)</option>
-            </Select>
           </Card>
 
           <div className="mt-3 grid gap-3 lg:grid-cols-2">
             {GROUPS.filter((g) => g.fields.length > 0).map((group) => {
               const Icon = group.icon
               return (
-                <Card key={group.title} className={cx('p-5', group.fields.length > 6 && 'lg:col-span-2')}>
+                <Card key={group.title} className={cx('p-5', group.fields.length > 4 && 'lg:col-span-2')}>
                   <div className="flex items-center gap-3">
                     <span className={cx('grid size-9 shrink-0 place-items-center rounded-tile', TONES[group.tone])}>
                       <Icon className="size-4.5" aria-hidden="true" />
@@ -236,7 +423,10 @@ export function Config() {
                               invalid={fieldError !== undefined}
                               className="rounded-r-none border-r-0 tabular-nums"
                             />
-                            <ResetFieldButton label={field.label} onReset={() => set(field.path, String(defaultValues[field.path] ?? 0))} />
+                            <ResetFieldButton
+                              label={field.label}
+                              onReset={() => set(field.path, String(defaultValues[field.path] ?? 0))}
+                            />
                           </span>
                         </Field>
                       )
@@ -255,18 +445,25 @@ export function Config() {
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
             <p className="text-[12.5px] text-faint">
-              Saved to <span className="font-mono">bot/config.json</span>. Paper only — there is no live mode in this desk.
+              Saved to <span className="font-mono">bot/config.json</span>. Paper only — changes apply on the next window.
             </p>
             <div className="flex items-center gap-2">
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => { setDraft(null); setLean(null) }}
+                onClick={() => setDraft(null)}
                 disabled={!dirty}
               >
                 <RotateCcw /> Discard
               </Button>
-              <Button variant="primary" size="sm" onClick={onSave} loading={save.isPending} disabled={!dirty || hasErrors} title={hasErrors ? 'Fix the highlighted fields first' : undefined}>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={onSave}
+                loading={save.isPending}
+                disabled={!dirty || hasErrors}
+                title={hasErrors ? 'Fix the highlighted fields first' : undefined}
+              >
                 Save changes
               </Button>
             </div>

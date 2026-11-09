@@ -87,6 +87,29 @@ class RiskTests(unittest.TestCase):
                 assert_single_window("btc-updown-5m-2", p)  # other owner refused
             assert_single_window("btc-updown-5m-9", Path(td) / "missing.json")  # ok
 
+    def test_single_window_retires_expired_window(self):
+        import time
+
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "state.json"
+            past_ms = int((time.time() - 300) * 1000)
+            p.write_text(json.dumps({"slug": "btc-updown-5m-old", "endMs": past_ms}))
+            # Should auto-retire expired state and not raise
+            assert_single_window("btc-updown-5m-new", p)
+            self.assertFalse(p.exists())
+
+    def test_single_window_retires_stale_heartbeat(self):
+        import time
+
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "state.json"
+            stale_ms = int((time.time() - 200) * 1000)
+            future_ms = int((time.time() + 600) * 1000)
+            p.write_text(json.dumps({"slug": "btc-updown-5m-crashed", "endMs": future_ms, "updatedAtMs": stale_ms}))
+            # Crashed process (heartbeat > 120s) should be auto-retired
+            assert_single_window("btc-updown-5m-new", p)
+            self.assertFalse(p.exists())
+
     def test_heartbeat_not_stale_when_fresh(self):
         import time
 

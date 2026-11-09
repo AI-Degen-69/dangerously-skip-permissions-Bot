@@ -57,8 +57,8 @@ class LivePaperLoopTests(unittest.TestCase):
         mock_get_window.return_value = mock_spec
 
         mock_client = MagicMock()
-        mock_client.get_price.return_value = "0.50"
-        mock_client.get_midpoint.return_value = "0.50"
+        mock_client.get_price.return_value = "0.47"
+        mock_client.get_midpoint.return_value = "0.47"
 
         slot = 1_700_000_100
         clock = [float(slot)]
@@ -205,7 +205,9 @@ class LivePaperLoopTests(unittest.TestCase):
             '{"ts": "2026-11-08T07:35:01Z", "kind": "skip", "reason": "dust-quote"}\n'
             '{"ts": "2026-11-08T07:36:01Z", "kind": "entry", "reason": "m4-snipe"}\n'
         )
-        with patch.object(api, "EVENTS_PATH", ev_file), patch.object(api, "get_selected_run_id", return_value=None):
+        with patch.object(api, "EVENTS_PATH", ev_file), \
+             patch.object(api, "resolve_run_workspace", return_value=None), \
+             patch.object(api, "get_selected_run_id", return_value=None):
             items = api.events()
             self.assertEqual(len(items), 6)
             self.assertEqual(items[0]["reason"], "clip-fill")
@@ -252,8 +254,8 @@ class LivePaperLoopTests(unittest.TestCase):
         mock_get_window.return_value = mock_spec
 
         mock_client = MagicMock()
-        mock_client.get_price.return_value = "0.50"
-        mock_client.get_midpoint.return_value = "0.50"
+        mock_client.get_price.return_value = "0.47"
+        mock_client.get_midpoint.return_value = "0.47"
 
         slot = 1_700_000_100
         clock = [float(slot)]
@@ -283,6 +285,100 @@ class LivePaperLoopTests(unittest.TestCase):
         self.assertEqual(kinds_by_reason.get("holding-to-resolution"), "done")
         # Thesis-intact must NEVER be logged anymore
         self.assertNotIn("thesis-intact", reasons_only)
+
+    def test_msr_v2_parabolic_taker_fee_and_maker_zero_fee(self):
+        from bot.executor import compute_fill_usd, taker_fee_per_share
+
+        self.assertAlmostEqual(taker_fee_per_share(0.50), 0.0175, places=6)
+        self.assertAlmostEqual(taker_fee_per_share(0.20), 0.0112, places=6)
+        maker_usd, maker_fee = compute_fill_usd(30.0, 0.50, role="MAKER")
+        self.assertEqual(maker_usd, 15.00)
+        self.assertEqual(maker_fee, 0.0)
+        taker_usd, taker_fee = compute_fill_usd(30.0, 0.50, role="TAKER")
+        self.assertEqual(taker_usd, 15.52)
+        self.assertAlmostEqual(taker_fee, 0.525, places=3)
+
+    def test_msr_v2_lagging_leg_equalizer_and_ceiling_guard(self):
+        from bot.executor import evaluate_microstructure_ladder
+
+        # Up has 90 shares @ $0.20 ($18), Down has 30 shares @ $0.45 ($13.50) -> Down has 60-share deficit
+        inv = {
+            "Up": {"shares": 90.0, "cost": 18.0},
+            "Down": {"shares": 30.0, "cost": 13.5},
+        }
+        # Down rallies into [0.75, 0.95] at 0.80 -> triggers lagging-leg hedge on Down
+        quotes = {
+            "Up": {"bid": 0.19, "ask": 0.21},
+            "Down": {"bid": 0.78, "ask": 0.80},
+        }
+        dec = evaluate_microstructure_ladder(quotes, inv, fill_idx=4, minute=2, lean=LeanSignal(0.0, 1.0))
+        self.assertEqual(dec.action, "fill")
+        self.assertEqual(dec.outcome, "Down")
+        self.assertEqual(dec.sub_reason, "hedge-equalizer")
+        self.assertEqual(dec.shares, 50.0)  # capped at max_clip 50 to close 60-share deficit
+
+        # Ceiling guard: quotes > 0.975 are strictly refused
+        quotes_high = {
+            "Up": {"bid": 0.98, "ask": 0.99},
+            "Down": {"bid": 0.98, "ask": 0.99},
+        }
+        dec_skip = evaluate_microstructure_ladder(quotes_high, inv, fill_idx=5, minute=4, lean=LeanSignal(0.0, 1.0))
+        self.assertEqual(dec_skip.action, "skip")
+        self.assertEqual(dec_skip.reason, "extreme-price-skip")
+        self.assertEqual(dec_skip.sub_reason, "ceiling-price-skip")
+
+    def test_msr_v2_refuses_losing_pair_cost_above_one_dollar(self):
+        from bot import constants as C
+        from bot.executor import evaluate_microstructure_ladder
+
+        self.assertEqual(C.STRADDLE_BAND, (0.34, 0.55))
+        self.assertEqual(C.TARGET_PAIR_COST, 0.965)
+        self.assertEqual(C.MEAN_PAIR_COST, 0.9462)
+        self.assertLess(C.PAIR_COST_MAX, 1.00)
+
+        # Up already held at $0.50 avg (30 shares, $15.00 cost), Down at $0.50 avg (30 shares, $15.00 cost)
+        # Combined pair cost is already $1.00 -> adding another clip at $0.50 (proj_pc = 1.00 > 0.965) is refused!
+        inv_at_par = {
+            "Up": {"shares": 30.0, "cost": 15.0},
+            "Down": {"shares": 30.0, "cost": 15.0},
+        }
+        quotes_par = {
+            "Up": {"bid": 0.50, "ask": 0.51},
+            "Down": {"bid": 0.50, "ask": 0.51},
+        }
+        dec_par = evaluate_microstructure_ladder(quotes_par, inv_at_par, fill_idx=2, minute=1, lean=LeanSignal(0.0, 1.0))
+        self.assertEqual(dec_par.action, "skip")
+        self.assertEqual(dec_par.sub_reason, "pair-cost-cap")
+
+        # Equalizer hedge that would push pair cost to 1.02 (> 0.990 cap) is strictly refused
+        inv_expensive = {
+            "Up": {"shares": 60.0, "cost": 15.0},   # avg $0.25
+            "Down": {"shares": 30.0, "cost": 22.8}, # avg $0.76
+        }
+        quotes_expensive_hedge = {
+            "Up": {"bid": 0.20, "ask": 0.22},
+            "Down": {"bid": 0.78, "ask": 0.80},     # buying 30 Down @ 0.80 taker pushes Down avg > 0.78 -> pair > 1.03
+        }
+        dec_lose = evaluate_microstructure_ladder(quotes_expensive_hedge, inv_expensive, fill_idx=3, minute=2, lean=LeanSignal(0.0, 1.0))
+        # Refuses the 1.03 hedge-equalizer and instead dips Up at 0.20 (which lowers Up avg to 0.233 -> pair = 0.993) or skips
+        self.assertNotEqual(dec_lose.sub_reason, "hedge-equalizer")
+
+    def test_anti_runaway_deficit_freeze(self):
+        from bot.executor import evaluate_microstructure_ladder
+        # When Up leads Down by >= max_share_lead (e.g. 120 Up, 30 Down = 90 lead),
+        # Up is strictly frozen in the Dip Ladder even if Up is at deep discount (e.g. 0.15).
+        inv_lead = {
+            "Up": {"shares": 120.0, "cost": 40.0},
+            "Down": {"shares": 30.0, "cost": 15.0},
+        }
+        quotes = {
+            "Up": {"bid": 0.15, "ask": 0.16},
+            "Down": {"bid": 0.82, "ask": 0.84},
+        }
+        dec = evaluate_microstructure_ladder(quotes, inv_lead, fill_idx=5, minute=1, lean=LeanSignal(0.0, 1.0))
+        # The engine must NOT buy Up (the leading underdog) and instead skips
+        self.assertNotEqual(dec.outcome, "Up")
+        self.assertEqual(dec.action, "skip")
 
 
 if __name__ == "__main__":
