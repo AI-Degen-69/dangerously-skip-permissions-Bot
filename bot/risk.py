@@ -20,6 +20,22 @@ class RiskState:
     kill_reason: str = ""
 
 
+CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
+
+
+def load_risk_config() -> dict:
+    p = CONFIG_PATH if CONFIG_PATH.exists() else Path("bot/config.json")
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text())
+        if not isinstance(data, dict):
+            raise ValueError("config root must be a JSON object")
+        return data.get("risk", {})
+    except Exception as ex:
+        raise RuntimeError(f"failed to read risk configuration: {ex}") from ex
+
+
 DAILY_LOSS_CAP_USD = 500.0  # operator to confirm before any live size
 MAX_USD_PER_WINDOW = 4000.0
 MAX_TRADES_PER_WINDOW = 500
@@ -29,19 +45,56 @@ def clip_shares(want: float) -> float:
     return max(0.0, min(float(want), C.MAX_SHARES))
 
 
-def check_window(trades: int, cost_usd: float, state: RiskState, kill_path: Path | str | None = None) -> str | None:
+def check_window(
+    trades: int,
+    cost_usd: float,
+    state: RiskState,
+    kill_path: Path | str | None = None,
+    daily_loss_cap: float | None = None,
+    max_usd: float | None = None,
+    max_trades: int | None = None,
+) -> str | None:
     if kill_path is not None and Path(kill_path).exists():
         state.killed = True
         state.kill_reason = "kill-switch file present"
     if state.killed:
         return f"killed: {state.kill_reason}"
-    if trades >= MAX_TRADES_PER_WINDOW:
-        return f"window trade cap {MAX_TRADES_PER_WINDOW}"
-    if cost_usd >= MAX_USD_PER_WINDOW:
-        return f"window cost cap ${MAX_USD_PER_WINDOW}"
-    if state.daily_loss_usd <= -DAILY_LOSS_CAP_USD:
+
+    rc = None
+    if max_trades is None or max_usd is None or daily_loss_cap is None:
+        try:
+            rc = load_risk_config()
+        except Exception as ex:
+            state.killed = True
+            state.kill_reason = f"risk config error: {ex}"
+            return f"killed: {state.kill_reason}"
+
+    if max_trades is None:
+        try:
+            val = rc.get("maxFillsPerWindow")
+            max_trades = int(val) if val is not None and int(val) > 0 else MAX_TRADES_PER_WINDOW
+        except (ValueError, TypeError):
+            max_trades = MAX_TRADES_PER_WINDOW
+    if max_usd is None:
+        try:
+            val = rc.get("maxUsdPerWindow")
+            max_usd = float(val) if val is not None and float(val) > 0 else MAX_USD_PER_WINDOW
+        except (ValueError, TypeError):
+            max_usd = MAX_USD_PER_WINDOW
+    if daily_loss_cap is None:
+        try:
+            val = rc.get("dailyLossCapUsd")
+            daily_loss_cap = float(val) if val is not None and float(val) > 0 else DAILY_LOSS_CAP_USD
+        except (ValueError, TypeError):
+            daily_loss_cap = DAILY_LOSS_CAP_USD
+
+    if trades >= max_trades:
+        return f"window trade cap {max_trades}"
+    if cost_usd >= max_usd:
+        return f"window cost cap ${max_usd}"
+    if state.daily_loss_usd <= -daily_loss_cap:
         state.killed = True
-        state.kill_reason = f"daily loss cap ${DAILY_LOSS_CAP_USD}"
+        state.kill_reason = f"daily loss cap ${daily_loss_cap}"
         return f"killed: {state.kill_reason}"
     return None
 

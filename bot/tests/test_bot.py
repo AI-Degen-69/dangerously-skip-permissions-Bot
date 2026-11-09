@@ -66,17 +66,36 @@ class RiskTests(unittest.TestCase):
 
     def test_check_window_caps(self):
         st = RiskState()
-        self.assertIsNone(check_window(10, 100.0, st))
-        self.assertIn("trade cap", check_window(500, 100.0, RiskState()))
-        self.assertIn("cost cap", check_window(10, 99999.0, RiskState()))
+        self.assertIsNone(check_window(10, 100.0, st, max_usd=4000.0, max_trades=500, daily_loss_cap=500.0))
+        self.assertIn("trade cap", check_window(500, 100.0, RiskState(), max_trades=500))
+        self.assertIn("cost cap", check_window(10, 99999.0, RiskState(), max_usd=4000.0))
 
     def test_daily_loss_kills(self):
         st = RiskState(daily_loss_usd=-600.0)
-        reason = check_window(1, 10.0, st)
+        reason = check_window(1, 10.0, st, daily_loss_cap=500.0)
         self.assertTrue(st.killed)
         self.assertIn("killed", reason)
         # killed state blocks everything after
-        self.assertIn("killed", check_window(0, 0.0, st))
+        self.assertIn("killed", check_window(0, 0.0, st, daily_loss_cap=500.0))
+
+    def test_daily_loss_configurable(self):
+        import bot.risk as risk
+        with tempfile.TemporaryDirectory() as td:
+            cfg_file = Path(td) / "config.json"
+            cfg_file.write_text(json.dumps({"risk": {"dailyLossCapUsd": 1500.0}}))
+            with patch.object(risk, "CONFIG_PATH", cfg_file):
+                # Loss of $600 should not trigger a $1500 cap
+                st = RiskState(daily_loss_usd=-600.0)
+                reason = check_window(1, 10.0, st)
+                self.assertIsNone(reason)
+                self.assertFalse(st.killed)
+
+                # Loss of $1501 should trigger the $1500 cap
+                st2 = RiskState(daily_loss_usd=-1501.0)
+                reason2 = check_window(1, 10.0, st2)
+                self.assertIsNotNone(reason2)
+                self.assertTrue(st2.killed)
+                self.assertIn("daily loss cap $1500", reason2)
 
     def test_single_window_invariant(self):
         with tempfile.TemporaryDirectory() as td:
@@ -400,6 +419,22 @@ class TradesViewLiveTests(unittest.TestCase):
         self.assertEqual(day_loss, 0.0)
         self.assertEqual(drawdown, 0.0)
 
+    def test_snapshot_includes_configured_daily_loss_cap(self):
+        import bot.api as api
+        with tempfile.TemporaryDirectory() as td:
+            cfg_file = Path(td) / "config.json"
+            cfg_file.write_text(json.dumps({
+                "bankrollUsd": 1000.0,
+                "risk": {"dailyLossCapUsd": 1500.0}
+            }))
+            with patch.object(api, "CONFIG_PATH", cfg_file), \
+                 patch.object(api, "state", return_value=None), \
+                 patch.object(api, "is_view_only", return_value=False), \
+                 patch.object(api, "live_markets", return_value=[]):
+                snap = api.snapshot()
+                self.assertEqual(snap["limits"]["dailyLossCapUsd"], 1500.0)
+                self.assertEqual(snap["limits"]["dailyLossLimitPct"], 150.0)
+
     def test_snapshot_counts_trades_today_from_unix_timestamps(self):
         import bot.api as api
         from bot.runs import RunWorkspace
@@ -536,6 +571,99 @@ class TradesViewLiveTests(unittest.TestCase):
         self.assertEqual(pos["secondsLeft"], 0)
         self.assertIsNone(pos["mark"])
         self.assertIsNone(pos["unrealizedPnlUsd"])
+
+    def test_snapshot_position_active_when_get_window_fails(self):
+        import time
+        import bot.api as api
+
+        now_ms = int(time.time() * 1000)
+        st = {
+            "slug": "btc-updown-5m-123",
+            "endMs": now_ms + 60_000,
+            "startedAtMs": now_ms - 240_000,
+            "fills": [
+                {"outcome": "Up", "shares": 320.88, "usd": 137.98},
+            ],
+        }
+
+        with patch.object(api, "state", return_value=st), \
+             patch("bot.discovery.get_window", side_effect=RuntimeError("Gamma down")), \
+             patch.object(api, "is_view_only", return_value=False), \
+             patch.object(api, "live_markets", return_value=[]):
+            snap = api.snapshot()
+
+        positions = snap["positions"]
+        self.assertEqual(len(positions), 1)
+        pos = positions[0]
+        self.assertEqual(pos["side"], "Up")
+        self.assertFalse(pos["resolving"])
+        self.assertGreater(pos["secondsLeft"], 0)
+        self.assertEqual(pos["mark"], 0.0)
+        self.assertEqual(pos["unrealizedPnlUsd"], -137.98)
+
+    def test_snapshot_position_uses_ws_orderbook(self):
+        import time
+        import bot.api as api
+
+        now_ms = int(time.time() * 1000)
+        st = {
+            "slug": "btc-updown-5m-123",
+            "endMs": now_ms + 60_000,
+            "startedAtMs": now_ms - 240_000,
+            "fills": [
+                {"outcome": "Up", "shares": 100, "usd": 40.0},
+            ],
+            "ws": {
+                "up_book": {"best_bid": 0.25, "best_ask": 0.26, "midpoint": 0.255},
+            },
+        }
+
+        with patch.object(api, "state", return_value=st), \
+             patch.object(api, "is_view_only", return_value=False), \
+             patch.object(api, "live_markets", return_value=[]):
+            snap = api.snapshot()
+
+        positions = snap["positions"]
+        self.assertEqual(len(positions), 1)
+        pos = positions[0]
+        self.assertEqual(pos["side"], "Up")
+        self.assertFalse(pos["resolving"])
+        self.assertEqual(pos["mark"], 0.25)
+        self.assertEqual(pos["unrealizedPnlUsd"], -15.0)
+
+    def test_snapshot_position_uses_live_markets_quotes(self):
+        import time
+        import bot.api as api
+
+        now_ms = int(time.time() * 1000)
+        slug = "btc-updown-5m-123"
+        st = {
+            "slug": slug,
+            "endMs": now_ms + 60_000,
+            "startedAtMs": now_ms - 240_000,
+            "fills": [
+                {"outcome": "Down", "shares": 100, "usd": 50.0},
+            ],
+        }
+        markets = [{
+            "slug": slug,
+            "quotes": {
+                "Down": {"bid": 0.85, "ask": 0.86},
+            },
+        }]
+
+        with patch.object(api, "state", return_value=st), \
+             patch.object(api, "is_view_only", return_value=False), \
+             patch.object(api, "live_markets", return_value=markets):
+            snap = api.snapshot()
+
+        positions = snap["positions"]
+        self.assertEqual(len(positions), 1)
+        pos = positions[0]
+        self.assertEqual(pos["side"], "Down")
+        self.assertFalse(pos["resolving"])
+        self.assertEqual(pos["mark"], 0.85)
+        self.assertEqual(pos["unrealizedPnlUsd"], 35.0)
 
 
 if __name__ == "__main__":

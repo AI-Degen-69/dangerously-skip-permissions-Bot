@@ -18,7 +18,7 @@ export interface MarketView {
   edge: number | null
   spreadCents: number | null
   secondsRemaining: number
-  verdict: { action: 'enter' | 'skip' | 'blocked' | 'refuse' | 'done'; reason: string; detail: Record<string, unknown> }
+  verdict: { action: 'enter' | 'skip' | 'blocked' | 'refuse' | 'done' | 'snipe'; reason: string; detail: Record<string, unknown> }
   oddsHistory?: { t: number; v: number }[]
   lean?: number | null
   leanSource?: string | null
@@ -30,6 +30,7 @@ export interface RiskState {
   tradesTodayByInterval: Record<Interval, number>
   consecutiveLosses: number
   realizedPnlUsd: number
+  dailyLossUsd?: number
   dayStartEquityUsd: number
   highWaterEquityUsd: number
   halted: boolean
@@ -123,6 +124,7 @@ export interface BotSnapshot {
     maxTradesPerDay: number
     maxConsecutiveLosses: number
     dailyLossLimitPct: number
+    dailyLossCapUsd?: number
     maxDrawdownPct: number
     maxConcurrentPositions: number
     minEdge: number
@@ -269,6 +271,35 @@ export interface BotPerf {
     downFills: number
     upWins: number
     downWins: number
+    winRate?: number
+    lossRate?: number
+    winsCount?: number
+    lossesCount?: number
+    grossProfitUsd?: number
+    grossLossUsd?: number
+    profitFactor?: number
+    avgWinUsd?: number
+    avgLossUsd?: number
+    payoffRatio?: number
+    expectancyUsd?: number
+    expectancyRatio?: number
+    breakEvenWinRate?: number | null
+    edgePct?: number | null
+    sharpeRatio?: number
+    sortinoRatio?: number
+    maxDrawdownUsd?: number
+    maxDrawdownPct?: number
+    currentDrawdownUsd?: number
+    currentDrawdownPct?: number
+    currentStreak?: number
+    maxWinStreak?: number
+    maxLossStreak?: number
+    upWindows?: number
+    downWindows?: number
+    upNetUsd?: number
+    downNetUsd?: number
+    upWinRate?: number
+    downWinRate?: number
   }
   targets: {
     windows: number
@@ -346,6 +377,9 @@ export interface BotConfigView {
     maxTradesPerDay: number
     maxConsecutiveLosses: number
     dailyLossLimitPct: number
+    dailyLossCapUsd?: number
+    maxUsdPerWindow?: number
+    maxFillsPerWindow?: number
     maxDrawdownPct: number
     cooldownAfterLossSec: number
     [key: string]: unknown
@@ -490,7 +524,30 @@ export const useResumeBot = () =>
   useBotMutation(() => send<{ ok: boolean; killSwitch: boolean }>('/resume', 'POST'))
 
 export const useStartBot = () =>
-  useBotMutation(() => send<{ running: boolean; pid: number | null; reason?: string }>('/start', 'POST'))
+  useBotMutation((runId?: string | null) =>
+    send<{ running: boolean; pid: number | null; reason?: string; runId?: string }>('/start', 'POST', runId ? { runId } : {}),
+  )
+
+export const useResumeRun = () =>
+  useBotMutation((runId?: string | null) =>
+    send<{ running: boolean; pid: number | null; runId: string; activeRunId: string; isViewOnly: boolean }>(
+      '/resume-run',
+      'POST',
+      runId ? { runId } : {},
+    ),
+  )
 
 export const useStopBot = () =>
   useBotMutation(() => send<{ running: boolean; pid: number | null }>('/stop', 'POST'))
+
+export const useRedeemBot = () =>
+  useBotMutation(() =>
+    send<{
+      ok: boolean
+      redeemedCount: number
+      zeroCleanCount: number
+      totalWindowsMarked: number
+      payoutUsd: number
+      redeemedAt: string
+    }>('/redeem', 'POST'),
+  )

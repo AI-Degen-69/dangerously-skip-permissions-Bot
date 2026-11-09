@@ -19,6 +19,8 @@ Usage:
 import argparse
 import json
 import os
+import re
+import shutil
 import sys
 import threading
 import time
@@ -37,7 +39,7 @@ from bot.executor import (
     evaluate_microstructure_ladder,
 )
 from bot.risk import RiskState, assert_single_window, check_window, clip_shares, heartbeat
-from bot.runs import RunWorkspace, get_active_run_id, make_run_id, set_active_run_id
+from bot.runs import RunWorkspace, find_run_id, get_active_run_id, make_run_id, set_active_run_id
 from bot.signal import LeanSignal
 from bot.ws import LiveBookStreamer
 
@@ -58,10 +60,30 @@ def get_current_workspace() -> RunWorkspace | None:
 def init_run_session(run_id: str | None = None, label: str = "msr_v2") -> RunWorkspace:
     """Initialize a run-scoped directory and update active run pointer."""
     global CURRENT_WORKSPACE
-    rid = run_id or make_run_id(mode="paper", label=label)
+    resolved_id = find_run_id(run_id) if run_id else None
+    rid = resolved_id or run_id or make_run_id(mode="paper", label=label)
     ws = RunWorkspace(rid)
     ws.init_workspace(config=load_cfg(), mode="paper", label=label)
     set_active_run_id(ws.run_id)
+    ws.sync_to_paper_runs(RUNS_DIR)
+    try:
+        ws.settle_pending_windows(RUNS_DIR)
+    except Exception:
+        pass
+    if ws.events_file.exists() and ws.events_file.stat().st_size > 0:
+        try:
+            shutil.copyfile(ws.events_file, EVENTS_PATH)
+        except Exception:
+            pass
+    if STATE_PATH.exists():
+        try:
+            st = json.loads(STATE_PATH.read_text())
+            end_ms = st.get("endMs")
+            st_run_id = st.get("runId")
+            if (st_run_id and st_run_id != ws.run_id) or (end_ms and int(end_ms) < int(time.time() * 1000)):
+                STATE_PATH.unlink(missing_ok=True)
+        except Exception:
+            STATE_PATH.unlink(missing_ok=True)
     CURRENT_WORKSPACE = ws
     return ws
 
@@ -218,6 +240,7 @@ def write_state(
 ) -> None:
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     payload = {
+        "runId": CURRENT_WORKSPACE.run_id if CURRENT_WORKSPACE else None,
         "slug": slug,
         "endMs": end_ms,
         "startedAtMs": started_ms,
@@ -248,12 +271,23 @@ def _risk_reason_code(raw_reason: str) -> str:
 
 
 def _risk_detail(raw_reason: str, state: RiskState, cost: float, trades: int) -> dict:
+    risk_cfg = load_cfg().get("risk", {})
+    default_cap = float(risk_cfg.get("dailyLossCapUsd", 500.0))
+    cost_cap = float(risk_cfg.get("maxUsdPerWindow", 4000.0))
+    trade_cap = int(risk_cfg.get("maxFillsPerWindow", 500))
+
     if "daily loss cap" in raw_reason:
-        return {"lossUsd": round(abs(state.daily_loss_usd), 2), "capUsd": C.DAILY_LOSS_CAP_USD}
+        m = re.search(r"daily loss cap \$?([0-9.]+(?:[eE][+-]?\d+)?)", raw_reason)
+        cap = float(m.group(1)) if m else default_cap
+        return {"lossUsd": round(abs(state.daily_loss_usd), 2), "capUsd": cap}
     if "cost cap" in raw_reason:
-        return {"costUsd": round(cost, 2), "capUsd": C.MAX_USD_PER_WINDOW}
+        m = re.search(r"cost cap \$?([0-9.]+(?:[eE][+-]?\d+)?)", raw_reason)
+        cap = float(m.group(1)) if m else cost_cap
+        return {"costUsd": round(cost, 2), "capUsd": cap}
     if "trade cap" in raw_reason:
-        return {"fills": trades, "cap": C.MAX_TRADES_PER_WINDOW}
+        m = re.search(r"trade cap (\d+)", raw_reason)
+        cap = int(m.group(1)) if m else trade_cap
+        return {"fills": trades, "cap": cap}
     return {}
 
 

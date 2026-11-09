@@ -1,6 +1,20 @@
-import { Activity, AlertTriangle, CheckCircle2, History, Info, Pause, Play, RotateCcw, Target } from 'lucide-react'
+import {
+  Activity,
+  AlertTriangle,
+  BarChart3,
+  CheckCircle2,
+  History,
+  Info,
+  Pause,
+  Percent,
+  Play,
+  RotateCcw,
+  Scale,
+  Target,
+  TrendingUp,
+} from 'lucide-react'
 import { Link } from 'react-router'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 
 import { Badge, Button, Card, ConfirmDialog, EmptyState, PageHeader, Skeleton, useToast } from '../components/ui'
 import { InteractivePnlChart } from '../components/InteractivePnlChart'
@@ -9,12 +23,15 @@ import {
   useBotControl,
   useBotPerf,
   useBotRuns,
+  useRedeemBot,
   useResetBot,
+  useResumeRun,
   useSelectRun,
   useStartBot,
   useStopBot,
 } from '../lib/bot'
 import type { BotPerf, PerfGate, PerfNote, PerfWindow } from '../lib/bot'
+import { computeKpiStats } from '../lib/kpiStats'
 import { cx } from '../lib/cx'
 import { money2, relativeTime } from '../lib/format'
 
@@ -55,8 +72,10 @@ export function Dashboard() {
   const runsQuery = useBotRuns()
   const selectRun = useSelectRun()
   const start = useStartBot()
+  const resumeRun = useResumeRun()
   const stop = useStopBot()
   const reset = useResetBot()
+  const redeem = useRedeemBot()
   const toast = useToast()
   const [confirmReset, setConfirmReset] = useState(false)
   const [hoveredSlug, setHoveredSlug] = useState<string | null>(null)
@@ -73,7 +92,8 @@ export function Dashboard() {
   const windows = data?.windows ?? []
   const settled = windows.filter((window) => !window.pending)
   const startingCapital = data?.summary?.bankrollUsd ?? 1000
-  const currentCapital = startingCapital + (summary?.netUsd ?? 0)
+  const stats = computeKpiStats(windows, startingCapital, summary)
+  const currentCapital = stats.currentCapital
   const gateJudged = settled.length >= (data?.targets.windows ?? 288)
   const strategySymbol = data?.strategy?.symbol ?? control.data?.strategy?.symbol ?? '🎯 HAPCS-v1'
   const strategyName =
@@ -159,17 +179,33 @@ export function Dashboard() {
                 </Button>
               </>
             ) : (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() =>
-                  selectRun.mutate(null, {
-                    onSuccess: () => toast('Returned to live session'),
-                  })
-                }
-              >
-                Return to Live
-              </Button>
+              <>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  loading={resumeRun.isPending}
+                  onClick={() =>
+                    resumeRun.mutate(selectedRunId, {
+                      onSuccess: (res) => toast(`Resumed run ${res.runId} on existing database`),
+                      onError: (err) => toast(`Failed to resume: ${(err as Error).message}`),
+                    })
+                  }
+                >
+                  <Play />
+                  Resume run
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() =>
+                    selectRun.mutate(null, {
+                      onSuccess: () => toast('Returned to live session'),
+                    })
+                  }
+                >
+                  Return to Live
+                </Button>
+              </>
             )}
           </div>
         }
@@ -206,21 +242,37 @@ export function Dashboard() {
                   Viewing Historical Run: <code className="font-mono">{selectedRunId}</code>
                 </p>
                 <p className="text-[12.5px] text-muted">
-                  Bot controls are disabled in view-only mode to prevent overwriting historical records.
+                  Inspecting past run telemetry and database. Click &ldquo;Resume run&rdquo; to restart the bot on this database and continue from where it stopped.
                 </p>
               </div>
             </div>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() =>
-                selectRun.mutate(null, {
-                  onSuccess: () => toast('Returned to live session'),
-                })
-              }
-            >
-              Back to Live Run
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="primary"
+                loading={resumeRun.isPending}
+                onClick={() =>
+                  resumeRun.mutate(selectedRunId, {
+                    onSuccess: (res) => toast(`Resumed run ${res.runId} on existing database`),
+                    onError: (err) => toast(`Failed to resume: ${(err as Error).message}`),
+                  })
+                }
+              >
+                <Play className="size-3.5" />
+                Resume run
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() =>
+                  selectRun.mutate(null, {
+                    onSuccess: () => toast('Returned to live session'),
+                  })
+                }
+              >
+                Back to Live Run
+              </Button>
+            </div>
           </div>
         </Card>
       )}
@@ -293,32 +345,82 @@ export function Dashboard() {
         />
       </Card>
 
-      <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {!summary ? (
-          Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-[104px] rounded-card" />)
+          Array.from({ length: 5 }).map((_, index) => <Skeleton key={index} className="h-[116px] rounded-card" />)
         ) : (
           <>
             <Stat
-              label="Paper net"
-              value={usd(summary.netUsd)}
-              hint={`${summary.profitable}/${summary.settled} windows profitable · ${(summary.roi * 100).toFixed(1)}% on cost`}
-              tone={summary.netUsd >= 0 ? 'success' : 'danger'}
+              label="Net P&amp;L"
+              value={`${stats.netUsd >= 0 ? '+' : ''}${usd(stats.netUsd)}`}
+              hint={`${stats.capitalReturnPct >= 0 ? '+' : ''}${stats.capitalReturnPct.toFixed(1)}% capital · ${stats.roiPct.toFixed(1)}% ROI`}
+              tone={stats.netUsd >= 0 ? 'success' : 'danger'}
+              badge={
+                <Badge tone={stats.netUsd >= 0 ? 'success' : 'danger'}>
+                  {stats.netUsd >= 0 ? 'Profitable' : 'Loss'}
+                </Badge>
+              }
+              tip="Total realized paper profit/loss across all settled windows vs starting capital."
+              icon={<TrendingUp className="size-3.5" />}
             />
             <Stat
-              label="Staked"
-              value={usd(summary.costUsd)}
-              hint={`${summary.fills} fills · median ${summary.medianFills} / window`}
+              label="Win Rate"
+              value={`${(stats.winRate * 100).toFixed(1)}%`}
+              hint={`${stats.winsCount}W – ${stats.lossesCount}L (${stats.settled} settled)`}
+              tone={stats.winRate >= 0.5 ? 'success' : 'danger'}
+              badge={
+                stats.edgePct !== null ? (
+                  <Badge tone={stats.edgePct >= 0 ? 'success' : 'warning'}>
+                    {stats.edgePct >= 0 ? `+${stats.edgePct.toFixed(1)}% edge` : `${stats.edgePct.toFixed(1)}% edge`}
+                  </Badge>
+                ) : (
+                  <Badge tone="neutral">No edge data</Badge>
+                )
+              }
+              tip="Percentage of settled windows closing positive. Edge reflects surplus over the break-even required win rate."
+              icon={<Percent className="size-3.5" />}
             />
             <Stat
-              label="Returned"
-              value={usd(summary.payoutUsd)}
-              hint={`held to resolution${summary.pending ? ` · ${summary.pending} settling` : ''}`}
+              label="Expectancy"
+              value={`${stats.expectancyUsd >= 0 ? '+' : ''}${usd(stats.expectancyUsd)}`}
+              unit="/ window"
+              hint={`Avg Win +${usd(stats.avgWinUsd)} · Loss -${usd(stats.avgLossUsd)}`}
+              tone={stats.expectancyUsd >= 0 ? 'success' : 'danger'}
+              badge={
+                <Badge tone="neutral" className="font-mono text-[10.5px]">
+                  {stats.expectancyRatio >= 0 ? '+' : ''}
+                  {stats.expectancyRatio.toFixed(2)}R EV
+                </Badge>
+              }
+              tip="Expected dollar and R-multiple gain per 5-minute window: (Win Rate × Avg Win) - (Loss Rate × Avg Loss)."
+              icon={<Target className="size-3.5" />}
             />
             <Stat
-              label="Redeem due"
-              value={usd(data?.redeem.payoutUsd ?? 0)}
-              hint={`${data?.redeem.count ?? 0} winning window${data?.redeem.count === 1 ? '' : 's'} unclaimed`}
-              tone={(data?.redeem.count ?? 0) > 0 ? 'warning' : undefined}
+              label="Profit Factor"
+              value={stats.grossLossUsd === 0 && stats.grossProfitUsd > 0 ? '∞' : stats.profitFactor.toFixed(2)}
+              hint={`Gross: +${usd(stats.grossProfitUsd)} / -${usd(stats.grossLossUsd)}`}
+              tone={stats.profitFactor >= 1.5 ? 'success' : stats.profitFactor >= 1.0 ? 'warning' : 'danger'}
+              badge={
+                <Badge tone="neutral" className="font-mono text-[10.5px]">
+                  Payoff {stats.lossesCount === 0 && stats.winsCount > 0 ? '∞' : `${stats.payoffRatio.toFixed(2)}x`}
+                </Badge>
+              }
+              tip="Total profit from winning windows divided by total loss from losing windows. >1.0 means profitable, >1.5 is strong quant tier."
+              icon={<Scale className="size-3.5" />}
+            />
+            <Stat
+              label="Sharpe Ratio"
+              value={stats.sharpeRatio.toFixed(2)}
+              unit="Ann."
+              hint={`Sortino: ${stats.lossesCount === 0 && stats.settled > 0 && stats.netUsd > 0 ? '∞' : stats.sortinoRatio.toFixed(2)} · Max DD: -${stats.maxDrawdownPct.toFixed(1)}%`}
+              tone={stats.sharpeRatio >= 1.0 ? 'success' : stats.sharpeRatio >= 0 ? 'neutral' : 'danger'}
+              badge={
+                <Badge tone={stats.maxDrawdownPct <= 15 ? 'success' : stats.maxDrawdownPct <= 30 ? 'warning' : 'danger'}>
+                  DD {stats.maxDrawdownPct.toFixed(1)}%
+                </Badge>
+              }
+              tip="Annualized risk-adjusted return ratio measuring return per unit of volatility over 105,120 5m-periods/year."
+              icon={<Activity className="size-3.5" />}
             />
           </>
         )}
@@ -328,11 +430,21 @@ export function Dashboard() {
         <Card className="p-5 lg:col-span-2">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-[14px] font-semibold">Paper P&amp;L &amp; Capital</h2>
                 <Badge tone="neutral" className="font-mono text-[11px]">
                   Base {usd(startingCapital)}
                 </Badge>
+                {stats.settled > 0 && (
+                  <Badge tone={stats.expectancyUsd >= 0 ? 'success' : 'danger'} className="text-[11px]">
+                    EV: {stats.expectancyUsd >= 0 ? '+' : ''}{usd(stats.expectancyUsd)}/window
+                  </Badge>
+                )}
+                {stats.settled > 0 && (
+                  <Badge tone="neutral" className="text-[11px]">
+                    PF: {stats.grossLossUsd === 0 && stats.grossProfitUsd > 0 ? '∞' : stats.profitFactor.toFixed(2)}
+                  </Badge>
+                )}
               </div>
               <p className="text-[12.5px] text-muted">
                 Cumulative capital &amp; net per settled window vs {usd(startingCapital)} starting capital; pending windows excluded.
@@ -398,68 +510,214 @@ export function Dashboard() {
           )}
         </Card>
 
-        <Card className="p-5">
-          <div className="flex items-center justify-between">
-            <h2 className="text-[14px] font-semibold">Resolution &amp; redeem</h2>
-            <Target className="size-4 text-faint" />
+        <Card className="flex flex-col justify-between p-5">
+          <div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="grid size-8 place-items-center rounded-tile bg-accent-soft text-accent">
+                  <BarChart3 className="size-4" />
+                </span>
+                <div>
+                  <h2 className="text-[14px] font-semibold">Performance Diagnostics</h2>
+                  <p className="text-[12px] text-muted">Edge analysis &amp; risk profile</p>
+                </div>
+              </div>
+              <Badge tone={stats.netUsd >= 0 ? 'success' : 'danger'} dot>
+                {stats.settled}w settled
+              </Badge>
+            </div>
+
+            {summary ? (
+              <>
+                {/* Win / Loss & Payoff Quality */}
+                <div className="mt-3.5 rounded-tile border border-line bg-surface-2/30 p-3">
+                  <div className="flex items-baseline justify-between text-[12.5px]">
+                    <span className="font-medium text-fg">Win Rate Breakdown</span>
+                    <span className="tabular-nums font-semibold text-fg">
+                      {(stats.winRate * 100).toFixed(1)}%{' '}
+                      <span className="text-[11px] font-normal text-muted">
+                        ({stats.winsCount}W · {stats.lossesCount}L{stats.scratchCount > 0 ? ` · ${stats.scratchCount}T` : ''})
+                      </span>
+                    </span>
+                  </div>
+                  <div className="mt-2 flex h-2 overflow-hidden rounded-full bg-surface-2">
+                    <div
+                      className="h-full bg-success transition-all duration-300"
+                      style={{ width: `${Math.max(stats.winsCount > 0 ? 2 : 0, stats.winRate * 100)}%` }}
+                      title={`${(stats.winRate * 100).toFixed(1)}% Wins (${stats.winsCount})`}
+                    />
+                    {stats.scratchCount > 0 && (
+                      <div
+                        className="h-full bg-line/80 transition-all duration-300"
+                        style={{ width: `${((stats.scratchCount / (stats.settled || 1)) * 100).toFixed(1)}%` }}
+                        title={`${((stats.scratchCount / (stats.settled || 1)) * 100).toFixed(1)}% Break-even (${stats.scratchCount})`}
+                      />
+                    )}
+                    <div
+                      className="h-full bg-danger transition-all duration-300"
+                      style={{ width: `${Math.max(stats.lossesCount > 0 ? 2 : 0, stats.lossRate * 100)}%` }}
+                      title={`${(stats.lossRate * 100).toFixed(1)}% Losses (${stats.lossesCount})`}
+                    />
+                  </div>
+                  <div className="mt-2.5 grid grid-cols-2 gap-2 border-t border-line/60 pt-2 text-[11.5px]">
+                    <div>
+                      <span className="text-faint">Payoff (Avg W/L): </span>
+                      <span className="font-medium tabular-nums text-fg">
+                        {stats.lossesCount === 0 && stats.winsCount > 0 ? '∞' : `${stats.payoffRatio.toFixed(2)}x`}
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-faint">Break-Even Req: </span>
+                      <span className="font-medium tabular-nums text-fg">
+                        {stats.breakEvenWinRate !== null
+                          ? `${(stats.breakEvenWinRate * 100).toFixed(1)}%`
+                          : 'N/A'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Risk & Volatility Profile */}
+                <ul className="mt-3.5 space-y-2 text-[12.5px]">
+                  <Row
+                    label="Max Drawdown"
+                    value={`-${usd(stats.maxDrawdownUsd)} (-${stats.maxDrawdownPct.toFixed(1)}%)`}
+                    tone="danger"
+                  />
+                  <Row
+                    label="Current Drawdown"
+                    value={
+                      stats.currentDrawdownUsd <= 0.01
+                        ? 'At All-Time High'
+                        : `-${usd(stats.currentDrawdownUsd)} (-${stats.currentDrawdownPct.toFixed(1)}%)`
+                    }
+                    tone={stats.currentDrawdownUsd <= 0.01 ? 'success' : undefined}
+                  />
+                  <Row
+                    label="Sortino Ratio"
+                    value={stats.lossesCount === 0 && stats.settled > 0 && stats.netUsd > 0 ? '∞' : stats.sortinoRatio.toFixed(2)}
+                    tone={stats.sortinoRatio >= 1.5 ? 'success' : undefined}
+                  />
+                  <Row
+                    label="Best / Worst Window"
+                    value={`${stats.bestUsd > 0 ? `+${usd(stats.bestUsd)}` : usd(stats.bestUsd)} / ${stats.worstUsd > 0 ? `+${usd(stats.worstUsd)}` : usd(stats.worstUsd)}`}
+                  />
+                  <Row
+                    label="Streak (Current · Best · Worst)"
+                    value={`${stats.currentStreak > 0 ? `+${stats.currentStreak}W` : stats.currentStreak < 0 ? `${stats.currentStreak}L` : '0'} · +${stats.maxWinStreak}W / -${stats.maxLossStreak}L`}
+                  />
+                </ul>
+
+                {/* Directional Market Edge (Up vs Down) */}
+                <div className="mt-3.5 border-t border-line pt-3">
+                  <div className="flex items-center justify-between text-[12.5px]">
+                    <span className="font-medium text-fg">Directional Edge</span>
+                    <span className="text-[11.5px] text-faint">Up vs Down resolution</span>
+                  </div>
+                  <div className="mt-2 space-y-1.5 text-[12px]">
+                    <div className="flex items-center justify-between">
+                      <span className="inline-flex items-center gap-1.5 text-muted">
+                        <span className="size-2 rounded-[2px] bg-success" />
+                        Up Windows ({stats.upCount})
+                      </span>
+                      <span className="tabular-nums">
+                        <span className="text-muted">
+                          {stats.upWins}W ({(stats.upWinRate * 100).toFixed(0)}%) ·{' '}
+                        </span>
+                        <span className={cx('font-medium', stats.upNetUsd >= 0 ? 'text-success' : 'text-danger')}>
+                          {stats.upNetUsd >= 0 ? '+' : ''}
+                          {usd(stats.upNetUsd)}
+                        </span>
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="inline-flex items-center gap-1.5 text-muted">
+                        <span className="size-2 rounded-[2px] bg-danger" />
+                        Down Windows ({stats.downCount})
+                      </span>
+                      <span className="tabular-nums">
+                        <span className="text-muted">
+                          {stats.downWins}W ({(stats.downWinRate * 100).toFixed(0)}%) ·{' '}
+                        </span>
+                        <span className={cx('font-medium', stats.downNetUsd >= 0 ? 'text-success' : 'text-danger')}>
+                          {stats.downNetUsd >= 0 ? '+' : ''}
+                          {usd(stats.downNetUsd)}
+                        </span>
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="mt-2.5 flex items-center justify-between text-[12px]">
+                    <span className="text-muted">Fill mix</span>
+                    <span className="tabular-nums text-faint">
+                      Up {stats.upFills} · Down {stats.downFills}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex h-1.5 overflow-hidden rounded-full bg-surface-2">
+                    <div
+                      className="h-full bg-success/80"
+                      style={{
+                        width: `${(stats.upFills / Math.max(1, stats.upFills + stats.downFills)) * 100}%`,
+                      }}
+                      title={`${share(stats.upFills / Math.max(1, stats.upFills + stats.downFills))} Up`}
+                    />
+                    <div className="h-full flex-1 bg-danger/70" />
+                  </div>
+                </div>
+              </>
+            ) : (
+              <Skeleton className="mt-4 h-[300px]" />
+            )}
           </div>
 
-          {summary ? (
-            <>
-              <div className="mt-3">
-                <div className="flex items-baseline justify-between">
-                  <p className="text-[13px] text-muted">Windows profitable</p>
-                  <p className="tabular-nums text-[13px] font-medium">
-                    {summary.profitable}/{summary.settled}
-                  </p>
+          {/* Operational Settlement Notice */}
+          {summary && (
+            <div className="mt-4 pt-2">
+              {(data?.redeem.count ?? 0) > 0 ? (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-tile border border-warning/30 bg-warning-soft/30 p-3 text-[11.5px]">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 font-medium text-warning-strong">
+                      <span>
+                        {data?.redeem.count} unredeemed {data?.redeem.count === 1 ? 'window' : 'windows'}
+                      </span>
+                      <span>•</span>
+                      <span>{usd(data?.redeem.payoutUsd ?? 0)}</span>
+                    </div>
+                    <p className="mt-0.5 text-[11px] leading-tight text-muted">
+                      Claim payouts into your run session records or run <code className="font-mono text-[10.5px]">python bot/redeem.py</code>.
+                    </p>
+                  </div>
+                  {!isViewOnly && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      loading={redeem.isPending}
+                      onClick={() =>
+                        redeem.mutate(undefined, {
+                          onSuccess: (res) =>
+                            toast(
+                              res.redeemedCount > 0
+                                ? `Redeemed ${res.redeemedCount} winning ${res.redeemedCount === 1 ? 'window' : 'windows'} (${usd(res.payoutUsd)})`
+                                : 'All windows marked clean',
+                            ),
+                          onError: (err) =>
+                            toast(err instanceof Error ? err.message : 'Failed to redeem'),
+                        })
+                      }
+                    >
+                      Redeem all
+                    </Button>
+                  )}
                 </div>
-                <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-surface-2">
-                  <div className="h-full rounded-full bg-success" style={{ width: `${summary.hitRate * 100}%` }} />
-                </div>
-              </div>
-
-              <ul className="mt-4 space-y-2.5 text-[12.5px]">
-                <Row label="Best window" value={usd(summary.bestUsd)} tone={summary.bestUsd >= 0 ? 'success' : undefined} />
-                <Row label="Worst window" value={usd(summary.worstUsd)} tone="danger" />
-                <Row label="Winning sides" value={`Up ${summary.upWins} · Down ${summary.downWins}`} />
-                <Row label="Settling now" value={String(summary.pending)} />
-              </ul>
-
-              <div className="mt-4 border-t border-line pt-3">
-                <div className="flex items-center justify-between text-[12.5px]">
-                  <span className="text-muted">Fill mix</span>
-                  <span className="tabular-nums text-faint">
-                    Up {summary.upFills} · Down {summary.downFills}
+              ) : (
+                <div className="flex items-center justify-between rounded-tile border border-line bg-surface-2/30 px-3 py-2 text-[11.5px] text-muted">
+                  <span className="flex items-center gap-1.5">
+                    <CheckCircle2 className="size-3.5 text-success" /> All settled payouts redeemed
                   </span>
+                  <span className="font-mono text-[11px] text-faint">clean</span>
                 </div>
-                <div className="mt-1.5 flex h-2 overflow-hidden rounded-full bg-surface-2">
-                  <div
-                    className="h-full bg-success/80"
-                    style={{
-                      width: `${(summary.upFills / Math.max(1, summary.upFills + summary.downFills)) * 100}%`,
-                    }}
-                    title={`${share(summary.upFills / Math.max(1, summary.upFills + summary.downFills))} Up`}
-                  />
-                  <div className="h-full flex-1 bg-danger/70" />
-                </div>
-                <p className="mt-1 text-[11.5px] text-faint">
-                  {share(summary.upFills / Math.max(1, summary.upFills + summary.downFills))} Up ·{' '}
-                  {share(summary.downFills / Math.max(1, summary.upFills + summary.downFills))} Down
-                </p>
-              </div>
-
-              <div className="mt-4 rounded-tile bg-surface-2/60 p-3">
-                <p className="text-[12.5px] font-medium">
-                  {data?.redeem.count ?? 0} unredeemed · {usd(data?.redeem.payoutUsd ?? 0)}
-                </p>
-                <p className="mt-1 text-[11.5px] leading-relaxed text-muted">
-                  Winners only pay when claimed. Run <code className="font-mono">python bot/redeem.py --dry-run</code>,
-                  then without the flag.
-                </p>
-              </div>
-            </>
-          ) : (
-            <Skeleton className="mt-4 h-[280px]" />
+              )}
+            </div>
           )}
         </Card>
       </div>
@@ -599,7 +857,7 @@ export function Dashboard() {
                       )}
                     </td>
                     <td className="py-2.5 text-muted">
-                      {window.pending ? '—' : window.redeemed ? 'claimed' : 'due'}
+                      {window.pending ? '—' : (window.payoutUsd ?? 0) <= 0 ? '—' : window.redeemed ? 'claimed' : 'due'}
                     </td>
                   </tr>
                 ))}
@@ -632,28 +890,72 @@ export function Dashboard() {
 function Stat({
   label,
   value,
+  unit,
   hint,
+  badge,
+  tip,
   tone,
+  icon,
 }: {
   label: string
   value: string
-  hint: string
-  tone?: 'success' | 'danger' | 'warning'
+  unit?: string
+  hint: React.ReactNode
+  badge?: React.ReactNode
+  tip?: string
+  tone?: 'success' | 'danger' | 'warning' | 'neutral'
+  icon?: React.ReactNode
 }) {
+  const tipId = useId()
   return (
-    <Card className="flex h-[104px] flex-col justify-between p-4">
-      <p className="text-[13px] text-muted">{label}</p>
-      <div>
-        <p
-          className={cx(
-            'text-[22px] font-semibold tracking-[-0.02em] tabular-nums',
-            tone === 'danger' && 'text-danger',
-            tone === 'warning' && 'text-warning',
+    <Card className="group relative flex h-[116px] flex-col justify-between p-3.5 transition-colors hover:border-line-strong">
+      <div className="flex items-center justify-between gap-1.5">
+        <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-muted">
+          {icon && <span className="text-faint [&_svg]:size-3.5">{icon}</span>}
+          <span>{label}</span>
+          {tip && (
+            <span className="group/tip relative inline-flex">
+              <span
+                tabIndex={0}
+                aria-label={`About ${label}`}
+                aria-describedby={tipId}
+                className="cursor-help text-faint transition-colors hover:text-fg focus-visible:text-fg"
+              >
+                <Info className="size-3" aria-hidden="true" />
+              </span>
+              <span
+                id={tipId}
+                role="tooltip"
+                className="pointer-events-none absolute bottom-full left-0 z-50 mb-1.5 hidden w-64 rounded-tile bg-fg px-2.5 py-2 text-[11.5px] font-normal normal-case leading-relaxed text-surface shadow-pop group-hover/tip:block group-focus-within/tip:block"
+              >
+                {tip}
+              </span>
+            </span>
           )}
-        >
-          {value}
-        </p>
-        <p className="mt-0.5 truncate text-[12px] text-faint">{hint}</p>
+        </div>
+        {badge}
+      </div>
+      <div>
+        <div className="flex items-baseline gap-1.5">
+          <span
+            className={cx(
+              'text-[23px] font-semibold tracking-[-0.02em] tabular-nums text-fg',
+              tone === 'success' && 'text-success',
+              tone === 'danger' && 'text-danger',
+              tone === 'warning' && 'text-warning',
+            )}
+          >
+            {value}
+          </span>
+          {unit && <span className="text-[12px] font-medium text-muted">{unit}</span>}
+        </div>
+        {typeof hint === 'string' ? (
+          <p className="mt-0.5 truncate text-[11.5px] text-faint" title={hint}>
+            {hint}
+          </p>
+        ) : (
+          <div className="mt-0.5 truncate text-[11.5px] text-faint">{hint}</div>
+        )}
       </div>
     </Card>
   )

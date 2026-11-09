@@ -17,13 +17,17 @@ For backward compatibility with existing tools and default paths:
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 import shutil
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger("bot.runs")
 
 ROOT = Path(__file__).resolve().parent.parent
 BOT_DIR = ROOT / "bot"
@@ -98,6 +102,21 @@ class RunWorkspace:
     def init_workspace(self, config: dict[str, Any] | None = None, mode: str = "paper", label: str = "default") -> RunMeta:
         self.root.mkdir(parents=True, exist_ok=True)
         self.windows_dir.mkdir(parents=True, exist_ok=True)
+        existing = self.read_meta()
+        if existing:
+            existing.status = "running"
+            existing.ended_at = None
+            if config:
+                merged_snap = dict(config)
+                # Preserve the run's original starting capital / bankroll
+                orig_snap = existing.config_snapshot or {}
+                if "bankrollUsd" in orig_snap:
+                    merged_snap["bankrollUsd"] = orig_snap["bankrollUsd"]
+                if "initialCapitalUsd" in orig_snap:
+                    merged_snap["initialCapitalUsd"] = orig_snap["initialCapitalUsd"]
+                existing.config_snapshot = merged_snap
+            self.save_meta(existing)
+            return existing
         meta = RunMeta(
             run_id=self.run_id,
             started_at=utc_now_iso(),
@@ -155,6 +174,120 @@ class RunWorkspace:
                     continue
         return out
 
+    def sync_to_paper_runs(self, target_dir: Path | None = None) -> int:
+        """Mirror all windows from self.windows_dir into active paper_runs, removing stale windows from other runs."""
+        dest = target_dir or (BOT_DIR / "paper_runs")
+        dest.mkdir(parents=True, exist_ok=True)
+        self.windows_dir.mkdir(parents=True, exist_ok=True)
+        # 1. Mirror all windows from self.windows_dir into dest, preserving redemption info
+        for p in self.windows_dir.glob("*.json"):
+            dest_file = dest / p.name
+            try:
+                if dest_file.exists():
+                    try:
+                        dest_data = json.loads(dest_file.read_text(encoding="utf-8"))
+                        if dest_data.get("redeemed") or dest_data.get("redeemedAt"):
+                            src_data = json.loads(p.read_text(encoding="utf-8"))
+                            if not src_data.get("redeemed") and dest_data.get("redeemed"):
+                                src_data["redeemed"] = dest_data["redeemed"]
+                            if "redeemedAt" in dest_data and "redeemedAt" not in src_data:
+                                src_data["redeemedAt"] = dest_data["redeemedAt"]
+                            p.write_text(json.dumps(src_data, indent=2), encoding="utf-8")
+                    except Exception as err:
+                        logger.warning(f"Error checking redemption info in {dest_file}: {err}")
+                shutil.copyfile(p, dest_file)
+            except Exception as exc:
+                logger.error(f"Failed to copy window file {p} to {dest_file}: {exc}")
+                raise RuntimeError(f"Window sync failed for {p.name}: {exc}") from exc
+        # 2. Clean up any windows in dest that do NOT exist in self.windows_dir
+        ws_names = set(p.name for p in self.windows_dir.glob("*.json"))
+        for p in dest.glob("*.json"):
+            if p.name not in ws_names:
+                try:
+                    p.unlink(missing_ok=True)
+                except Exception:
+                    pass
+        return len(ws_names)
+
+    def settle_pending_windows(self, target_dir: Path | None = None, max_windows: int = 50) -> list[str]:
+        """Check for any unsettled/pending windows in workspace and resolve via Polymarket if finalized."""
+        resolved_slugs = []
+        if not self.windows_dir.exists():
+            return resolved_slugs
+        dest = target_dir or (BOT_DIR / "paper_runs")
+        try:
+            from polymarket import PublicClient
+            client = PublicClient()
+        except Exception:
+            return resolved_slugs
+
+        count = 0
+        for p in sorted(self.windows_dir.glob("*.json")):
+            if count >= max_windows:
+                break
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not data.get("pending") and data.get("winner"):
+                continue
+            slug = data.get("event_slug") or p.stem
+            try:
+                ev = client.get_event(slug=slug).model_dump()
+                mk = (ev.get("markets") or [{}])[0]
+                outs = mk.get("outcomes") or {}
+                winner = None
+                for _key, info in outs.items():
+                    try:
+                        if float(info.get("price") or 0) >= 1.0:
+                            winner = info.get("label")
+                            break
+                    except (TypeError, ValueError):
+                        continue
+                if winner:
+                    fills = data.get("fills", [])
+                    cost = float(data.get("cost_usd", 0.0))
+                    wshares = sum(f["shares"] for f in fills if f.get("outcome") == winner)
+                    payout = round(wshares * 1.0, 2)
+                    net = round(payout - cost, 2)
+                    data["winner"] = winner
+                    data["payout_usd"] = payout
+                    data["net_usd"] = net
+                    data.pop("pending", None)
+                    data["resolvedAt"] = utc_now_iso()
+                    p.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                    if dest.exists():
+                        (dest / p.name).write_text(json.dumps(data, indent=2), encoding="utf-8")
+                    resolved_slugs.append(slug)
+                    count += 1
+            except Exception:
+                continue
+        return resolved_slugs
+
+
+def find_run_id(query: str, runs_root: Path = RUNS_DIR) -> str | None:
+    """Find a run_id by exact match or substring match (e.g. '083527')."""
+    if not runs_root.exists():
+        return None
+    clean = str(query).strip()
+    if not clean:
+        return None
+    # Reject path traversal / directory separator characters
+    if not re.match(r"^[a-zA-Z0-9_\-]+$", clean):
+        return None
+    # Check exact match
+    exact = runs_root / clean
+    if exact.is_dir() and (exact / "run_meta.json").exists():
+        return clean
+    # Check substring / prefix match (newest first)
+    matches = []
+    for d in sorted(runs_root.iterdir(), reverse=True):
+        if d.is_dir() and (d / "run_meta.json").exists() and clean in d.name:
+            matches.append(d.name)
+    if matches:
+        return matches[0]
+    return None
+
 
 def get_active_run_id() -> str | None:
     """Return the currently active or selected run_id from pointer file."""
@@ -202,7 +335,11 @@ def list_all_runs(runs_root: Path = RUNS_DIR) -> list[dict[str, Any]]:
 
 def resolve_run_workspace(run_id: str | None = None) -> RunWorkspace | None:
     """Resolve RunWorkspace by specific run_id or currently active run."""
-    target_id = run_id or get_active_run_id()
+    target_id = None
+    if run_id:
+        target_id = find_run_id(run_id) or run_id
+    else:
+        target_id = get_active_run_id()
     if not target_id:
         # Check if there are any runs at all; if so, pick latest
         all_runs = list_all_runs()

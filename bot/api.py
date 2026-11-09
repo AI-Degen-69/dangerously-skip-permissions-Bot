@@ -14,10 +14,13 @@ bot/events.jsonl. Live market reads via PublicClient (public, no keys).
 
 import argparse
 import json
+import math
 import os
+import shutil
 import statistics
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 from datetime import datetime, timezone
@@ -29,6 +32,7 @@ sys.path.insert(0, str(ROOT))
 
 from bot.runs import (
     RunWorkspace,
+    find_run_id,
     get_active_run_id,
     list_all_runs,
     make_run_id,
@@ -170,8 +174,9 @@ def events(limit: int = 150) -> list[dict]:
             # Normalize kind mappings
             if ev.get("reason") in ("dust-quote", "extreme-price-skip", "no-liquidity", "spread-too-wide"):
                 ev["kind"] = "refuse"
-            elif ev.get("reason") == "m4-snipe":
+            elif ev.get("reason") == "m4-snipe" or (ev.get("kind") in ("entry", "snipe") and ev.get("detail", {}).get("minute") in ("M4", 4)):
                 ev["kind"] = "snipe"
+                ev["reason"] = "m4-snipe"
             elif ev.get("reason") in ("holding-to-resolution", "too-late-in-window"):
                 ev["kind"] = "done"
 
@@ -229,6 +234,61 @@ def loop_running() -> int | None:
     except Exception:
         return None
     return pid if alive else None
+
+
+_loop_lock = threading.Lock()
+
+
+def stop_loop_process(timeout: float = 3.0) -> int | None:
+    with _loop_lock:
+        pid = loop_running()
+        if pid:
+            try:
+                if os.name == "nt":
+                    subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
+                else:
+                    os.kill(pid, 15)
+            except Exception:
+                pass
+            start_t = time.time()
+            while time.time() - start_t < timeout:
+                if not loop_running():
+                    break
+                time.sleep(0.1)
+            if os.name != "nt" and loop_running():
+                try:
+                    os.kill(pid, 9)
+                except Exception:
+                    pass
+            PID_PATH.unlink(missing_ok=True)
+            log_event("risk", "loop-stopped", detail={"pid": pid})
+        return pid
+
+
+def start_loop_process(run_id: str | None = None) -> int:
+    with _loop_lock:
+        existing_pid = loop_running()
+        if existing_pid:
+            return existing_pid
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        logf = LOG_PATH.open("ab")
+        cmd = [sys.executable, "bot/live_paper.py", "--loop"]
+        if run_id:
+            cmd.extend(["--run-id", run_id])
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(ROOT), stdout=logf, stderr=subprocess.STDOUT,
+            start_new_session=True)
+        PID_PATH.write_text(str(proc.pid))
+        if run_id:
+            try:
+                ws = resolve_run_workspace(run_id)
+                if ws:
+                    ws.pid_file.write_text(str(proc.pid))
+            except Exception:
+                pass
+        log_event("info", "loop-started", detail={"pid": proc.pid, "runId": run_id})
+        return proc.pid
 
 
 # ---------------------------------------------------------------- live reads
@@ -333,9 +393,12 @@ def live_markets(cfg: dict) -> list[dict]:
         elif fills_count == 1:
             verdict = {"action": "enter", "reason": "hedge-pending",
                        "detail": {"fills": fills_count, "minute": f"M{minute_num}", "remainingSec": remaining}}
-        elif remaining <= 60:
-            verdict = {"action": "snipe", "reason": "m4-window",
+        elif elapsed_sec >= 240 or remaining <= 60:
+            verdict = {"action": "snipe", "reason": "m4-snipe",
                        "detail": {"fills": fills_count, "minute": "M4", "remainingSec": remaining}}
+        elif fills_count >= 2:
+            verdict = {"action": "enter", "reason": "working-fills",
+                       "detail": {"fills": fills_count, "minute": f"M{minute_num}", "remainingSec": remaining}}
         else:
             verdict = {"action": "enter", "reason": "working-fills",
                        "detail": {"fills": fills_count, "minute": f"M{minute_num}", "remainingSec": remaining}}
@@ -390,6 +453,10 @@ def snapshot() -> dict:
     settled = [r for r in all_runs if not is_pending(r)]
     realized = round(sum((r.get("net_usd") or 0.0) for r in settled), 2)
     st = state()
+    try:
+        markets = live_markets(cfg)
+    except Exception:
+        markets = []
     positions: list[dict] = []
     exposure = 0.0
     now_ms = int(time.time() * 1000)
@@ -399,44 +466,78 @@ def snapshot() -> dict:
             by_side.setdefault(f["outcome"], []).append(f)
         end_ms = int(st.get("endMs") or now_ms)
         is_resolving = now_ms >= end_ms
+        slug = st.get("slug", "")
+
+        curr_market = next((m for m in markets if m.get("slug") == slug), None)
+        market_quotes = (curr_market.get("quotes") or {}) if curr_market else {}
+        ws_data = st.get("ws") or {}
+
         for side, fills in by_side.items():
             shares = sum(f["shares"] for f in fills)
             cost = sum(f["usd"] for f in fills)
             avg = cost / shares if shares else 0
             mark = None
             if not is_resolving:
-                try:
-                    from bot.discovery import get_window
-                    spec = get_window(client(), st["slug"])
-                    tid = spec.up_token_id if side == "Up" else spec.down_token_id
-                    c = client()
-                    px = None
+                px = None
+
+                # 1. Check WebSocket live orderbook in state (0ms latency)
+                ws_book = ws_data.get(f"{side.lower()}_book") or {}
+                if isinstance(ws_book, dict):
+                    ws_bid = ws_book.get("best_bid")
+                    if ws_bid is not None and 0.0 < float(ws_bid) <= 1.0:
+                        px = float(ws_bid)
+                    elif ws_book.get("midpoint") is not None and 0.0 < float(ws_book["midpoint"]) <= 1.0:
+                        px = float(ws_book["midpoint"])
+                    elif ws_book.get("best_ask") is not None and 0.0 < float(ws_book["best_ask"]) <= 1.0:
+                        px = float(ws_book["best_ask"])
+
+                # 2. Check quotes from live_markets
+                if px is None:
+                    side_q = market_quotes.get(side) or {}
+                    q_bid = side_q.get("bid")
+                    q_ask = side_q.get("ask")
+                    if q_bid is not None and 0.0 < float(q_bid) <= 1.0:
+                        px = float(q_bid)
+                    elif q_ask is not None and 0.0 < float(q_ask) <= 1.0:
+                        px = float(q_ask)
+
+                # 3. Fallback: query client CLOB if not found yet
+                if px is None:
                     try:
-                        p = float(c.get_price(token_id=tid, side="BUY"))
-                        if 0.0 < p <= 1.0:
-                            px = p
-                    except Exception:
-                        pass
-                    if px is None:
+                        spec = _WINDOW_SPEC_CACHE.get(slug)
+                        if spec is None:
+                            from bot.discovery import get_window
+                            spec = get_window(client(), slug)
+                            _WINDOW_SPEC_CACHE[slug] = spec
+                        tid = spec.up_token_id if side == "Up" else spec.down_token_id
+                        c = client()
                         try:
                             p = float(c.get_price(token_id=tid, side="SELL"))
                             if 0.0 < p <= 1.0:
                                 px = p
                         except Exception:
                             pass
-                    if px is None:
-                        try:
-                            mid = float(c.get_midpoint(token_id=tid))
-                            if 0.0 < mid <= 1.0:
-                                px = mid
-                        except Exception:
-                            pass
-                    if px is not None:
-                        mark = px
-                    else:
-                        mark = 0.0
-                except Exception:
-                    mark = None
+                        if px is None:
+                            try:
+                                p = float(c.get_price(token_id=tid, side="BUY"))
+                                if 0.0 < p <= 1.0:
+                                    px = p
+                            except Exception:
+                                pass
+                        if px is None:
+                            try:
+                                mid = float(c.get_midpoint(token_id=tid))
+                                if 0.0 < mid <= 1.0:
+                                    px = mid
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+                # While the window is running (not resolving), mark is NEVER None.
+                # If a positive price exists, use it; otherwise price is 0.0.
+                mark = px if px is not None else 0.0
+
             mv = round(mark * shares, 2) if mark is not None else None
             exposure += cost
             positions.append({
@@ -489,6 +590,28 @@ def snapshot() -> dict:
 
     kills = KILL_PATH.exists()
     try:
+        raw_cap = risk_cfg.get("dailyLossCapUsd")
+        daily_loss_cap = float(raw_cap) if raw_cap is not None and float(raw_cap) > 0 else 500.0
+    except (ValueError, TypeError):
+        daily_loss_cap = 500.0
+    daily_loss_pct = round((daily_loss_cap / day_start_equity) * 100, 2) if day_start_equity > 0 else 50.0
+
+    def _to_int(val, default: int) -> int:
+        try:
+            return int(val) if val is not None else default
+        except (ValueError, TypeError):
+            return default
+
+    def _to_float(val, default: float) -> float:
+        try:
+            return float(val) if val is not None else default
+        except (ValueError, TypeError):
+            return default
+
+    settled_equity = round(bankroll + sum((r.get("net_usd") or 0.0) for r in settled), 2)
+    daily_loss_usd = round(max(0.0, day_start_equity - settled_equity), 2)
+
+    try:
         markets = live_markets(cfg)
     except Exception:
         markets = []
@@ -507,12 +630,16 @@ def snapshot() -> dict:
         "risk": {"dayKey": day_key, "tradesToday": len(today),
                  "tradesTodayByInterval": {"5m": len(today), "15m": 0},
                  "consecutiveLosses": consecutive_losses, "realizedPnlUsd": realized,
+                 "dailyLossUsd": daily_loss_usd,
                  "dayStartEquityUsd": day_start_equity, "highWaterEquityUsd": high_water,
                  "halted": kills, "haltReason": "kill-switch-file-present" if kills else None,
                  "cooldownUntilMs": 0},
-        "limits": {"maxTradesPerDay": 288, "maxConsecutiveLosses": 99,
-                   "dailyLossLimitPct": 50,
-                   "maxDrawdownPct": 90, "maxConcurrentPositions": 1,
+        "limits": {"maxTradesPerDay": _to_int(risk_cfg.get("maxTradesPerDay"), 288),
+                   "maxConsecutiveLosses": _to_int(risk_cfg.get("maxConsecutiveLosses"), 99),
+                   "dailyLossLimitPct": daily_loss_pct,
+                   "dailyLossCapUsd": daily_loss_cap,
+                   "maxDrawdownPct": _to_float(risk_cfg.get("maxDrawdownPct"), 90.0),
+                   "maxConcurrentPositions": _to_int(risk_cfg.get("maxConcurrentPositions"), 1),
                    "minEdge": 0, "feeRate": 0, "profitTargetCents": 100},
         "killSwitch": kills, "newsBlocked": False,
         "feed": {"price": None, "updatedAtMs": None, "history": []},
@@ -728,7 +855,7 @@ def perf() -> dict:
          "detail": "Total-variation distance from the tape's minute mix (3,081/3,821/4,289/3,914/1,750)."},
     ]
 
-    redeem_due = [w for w in settled if w["winner"] and not w["redeemed"]]
+    redeem_due = [w for w in settled if w["winner"] and not w["redeemed"] and (w.get("payoutUsd") or 0) > 0]
     redeem_payout = round(sum(w["payoutUsd"] for w in redeem_due), 2)
 
     pid = loop_running()
@@ -766,7 +893,7 @@ def perf() -> dict:
              "Payout is not final until the market resolves; these are excluded from net, cost and the gate.")
     if redeem_due:
         note("warning", f"{len(redeem_due)} winning window{'s' if len(redeem_due) != 1 else ''} unredeemed (${redeem_payout:,.2f})",
-             "Hold-to-redeem is the strategy: paper only books the win when claimed. Run python bot/redeem.py --dry-run, then without the flag.")
+             "Hold-to-redeem is the strategy: paper only books the win when claimed. Redeem via the Dashboard or run python bot/redeem.py.")
     if zero_fills:
         note("danger", f"{zero_fills} fills at $0.00",
              "No capital moved, but they still count toward the fill median and skew the M4 bucket. Fix the late dust path before trusting fill fidelity.")
@@ -806,6 +933,85 @@ def perf() -> dict:
         if isinstance(cfg, dict):
             cfg_bankroll = cfg.get("bankrollUsd")
     bankroll = _num(cfg_bankroll, default=float(BANKROLL_DEFAULT))
+
+    wins = [n for n in nets if n > 0]
+    losses = [-n for n in nets if n < 0]
+    wins_count = len(wins)
+    losses_count = len(losses)
+    gross_profit = round(sum(wins), 2)
+    gross_loss = round(sum(losses), 2)
+    profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else (99.0 if gross_profit > 0 else 0.0)
+    avg_win = round(gross_profit / wins_count, 2) if wins_count > 0 else 0.0
+    avg_loss = round(gross_loss / losses_count, 2) if losses_count > 0 else 0.0
+    payoff_ratio = round(avg_win / avg_loss, 2) if avg_loss > 0 else (99.0 if avg_win > 0 else 0.0)
+    win_rate = round(profitable / len(settled), 4) if settled else 0.0
+    loss_rate = round(losses_count / len(settled), 4) if settled else 0.0
+    expectancy_usd = round(net / len(settled), 2) if settled else 0.0
+    expectancy_ratio = round((win_rate * payoff_ratio) - loss_rate, 2) if settled else 0.0
+    be_win_rate = round(((wins_count + losses_count) / len(settled)) / (1.0 + payoff_ratio), 4) if (settled and wins_count > 0 and payoff_ratio > 0) else None
+    edge_pct = round((win_rate - be_win_rate) * 100, 2) if (settled and be_win_rate is not None) else None
+
+    annual_factor = math.sqrt(288 * 365)
+    if len(nets) >= 2:
+        mean_net = statistics.mean(nets)
+        stdev_net = statistics.stdev(nets)
+        sharpe_ratio = round((mean_net / stdev_net) * annual_factor, 2) if stdev_net > 0.0001 else 0.0
+        downside = [min(0.0, n) for n in nets]
+        downside_variance = sum(d**2 for d in downside) / len(nets)
+        downside_std = math.sqrt(downside_variance)
+        sortino_ratio = round((mean_net / downside_std) * annual_factor, 2) if downside_std > 0.0001 else (99.0 if mean_net > 0 else 0.0)
+    else:
+        sharpe_ratio = 0.0
+        sortino_ratio = 0.0
+
+    sorted_settled = sorted(settled, key=lambda w: w.get("startMs", 0))
+    equity = bankroll
+    peak = equity
+    max_dd_usd = 0.0
+    max_dd_pct = 0.0
+    for w in sorted_settled:
+        n = w.get("netUsd") or 0.0
+        equity += n
+        if equity > peak:
+            peak = equity
+        dd = peak - equity
+        dd_pct = dd / peak if peak > 0 else 0.0
+        if dd > max_dd_usd:
+            max_dd_usd = dd
+        if dd_pct > max_dd_pct:
+            max_dd_pct = dd_pct
+    current_dd_usd = round(max(0.0, peak - equity), 2)
+    current_dd_pct = round(current_dd_usd / peak, 4) if peak > 0 else 0.0
+    max_dd_usd = round(max_dd_usd, 2)
+    max_dd_pct = round(max_dd_pct, 4)
+
+    current_streak = 0
+    max_win_streak = 0
+    max_loss_streak = 0
+    streak = 0
+    for w in sorted_settled:
+        n = w.get("netUsd") or 0.0
+        if n > 0:
+            streak = streak + 1 if streak > 0 else 1
+            if streak > max_win_streak:
+                max_win_streak = streak
+        elif n < 0:
+            streak = streak - 1 if streak < 0 else -1
+            if abs(streak) > max_loss_streak:
+                max_loss_streak = abs(streak)
+        else:
+            streak = 0
+    current_streak = streak
+
+    up_windows = [w for w in settled if w.get("winner") == "Up"]
+    down_windows = [w for w in settled if w.get("winner") == "Down"]
+    up_wins = sum(1 for w in up_windows if (w.get("netUsd") or 0) > 0)
+    down_wins = sum(1 for w in down_windows if (w.get("netUsd") or 0) > 0)
+    up_net = round(sum(w.get("netUsd") or 0.0 for w in up_windows), 2)
+    down_net = round(sum(w.get("netUsd") or 0.0 for w in down_windows), 2)
+    up_win_rate = round(up_wins / len(up_windows), 4) if up_windows else 0.0
+    down_win_rate = round(down_wins / len(down_windows), 4) if down_windows else 0.0
+
     return {
         "strategy": {
             "id": C.STRATEGY_ID,
@@ -832,8 +1038,37 @@ def perf() -> dict:
             "worstUsd": round(min(nets), 2) if nets else 0.0,
             "zeroPriceFills": zero_fills,
             "upFills": up_fills, "downFills": down_fills,
-            "upWins": sum(1 for w in settled if w["winner"] == "Up"),
-            "downWins": sum(1 for w in settled if w["winner"] == "Down"),
+            "upWins": up_wins,
+            "downWins": down_wins,
+            "winRate": win_rate,
+            "lossRate": loss_rate,
+            "winsCount": wins_count,
+            "lossesCount": losses_count,
+            "grossProfitUsd": gross_profit,
+            "grossLossUsd": gross_loss,
+            "profitFactor": profit_factor,
+            "avgWinUsd": avg_win,
+            "avgLossUsd": avg_loss,
+            "payoffRatio": payoff_ratio,
+            "expectancyUsd": expectancy_usd,
+            "expectancyRatio": expectancy_ratio,
+            "breakEvenWinRate": be_win_rate,
+            "edgePct": edge_pct,
+            "sharpeRatio": sharpe_ratio,
+            "sortinoRatio": sortino_ratio,
+            "maxDrawdownUsd": max_dd_usd,
+            "maxDrawdownPct": max_dd_pct,
+            "currentDrawdownUsd": current_dd_usd,
+            "currentDrawdownPct": current_dd_pct,
+            "currentStreak": current_streak,
+            "maxWinStreak": max_win_streak,
+            "maxLossStreak": max_loss_streak,
+            "upWindows": len(up_windows),
+            "downWindows": len(down_windows),
+            "upNetUsd": up_net,
+            "downNetUsd": down_net,
+            "upWinRate": up_win_rate,
+            "downWinRate": down_win_rate,
         },
         "targets": {
             "windows": C.NUM_WINDOWS_24H,
@@ -881,7 +1116,7 @@ def _enrich_fill(f: dict, idx: int, default_ts: int, slug: str | None) -> dict:
         detail["minute"] = minute
     return {
         "ts": int(f.get("ts") or default_ts),
-        "kind": "entry",
+        "kind": "snipe" if reason == "m4-snipe" else "entry",
         "slug": slug,
         "interval": "5m",
         "side": f.get("outcome"),
@@ -1101,45 +1336,153 @@ class Handler(BaseHTTPRequestHandler):
         body = self._body()
         try:
             if self.path == "/api/bot/start":
+                req_run_id = body.get("runId")
+                resume_requested = body.get("resume", False)
+                if req_run_id or resume_requested:
+                    if req_run_id:
+                        resolved_id = find_run_id(str(req_run_id))
+                        if not resolved_id:
+                            self._send(404, {"error": f"Run not found: {req_run_id}"})
+                            return
+                    else:
+                        target = get_selected_run_id() or get_active_run_id()
+                        resolved_id = find_run_id(str(target)) if target else None
+
+                    if resolved_id:
+                        prev_active = get_active_run_id()
+                        prev_selected = get_selected_run_id()
+                        stop_loop_process()
+
+                        if prev_active and STATE_PATH.exists():
+                            try:
+                                prev_ws = RunWorkspace(prev_active)
+                                if prev_ws.exists():
+                                    shutil.copyfile(STATE_PATH, prev_ws.root / "state.json")
+                            except Exception:
+                                pass
+
+                        try:
+                            set_active_run_id(resolved_id)
+                            set_selected_run_id(None)
+                            ws = RunWorkspace(resolved_id)
+                            ws.init_workspace(config=load_config(), mode="paper")
+                            ws.sync_to_paper_runs(RUNS_DIR)
+                            try:
+                                ws.settle_pending_windows(RUNS_DIR, max_windows=15)
+                            except Exception:
+                                pass
+                            if ws.events_file.exists() and ws.events_file.stat().st_size > 0:
+                                try:
+                                    shutil.copyfile(ws.events_file, EVENTS_PATH)
+                                except Exception:
+                                    pass
+                            else:
+                                if EVENTS_PATH.exists():
+                                    try:
+                                        EVENTS_PATH.unlink()
+                                    except Exception:
+                                        pass
+                            STATE_PATH.unlink(missing_ok=True)
+                            KILL_PATH.unlink(missing_ok=True)
+                            pid = start_loop_process(run_id=resolved_id)
+                        except Exception as err:
+                            if prev_active:
+                                set_active_run_id(prev_active)
+                            if prev_selected:
+                                set_selected_run_id(prev_selected)
+                            self._send(500, {"error": f"Failed to start run {resolved_id}: {err}"})
+                            return
+
+                        self._send(200, {"running": True, "pid": pid, "runId": resolved_id, "activeRunId": resolved_id, "isViewOnly": False})
+                        return
+
                 if is_view_only():
                     self._send(400, {
-                        "error": "Cannot start bot while inspecting a past run in view-only mode. Switch back to live run first.",
+                        "error": "Cannot start bot while inspecting a past run in view-only mode. Use 'Resume run' or switch back to live run first.",
                         "isViewOnly": True,
                     })
                     return
                 if loop_running():
                     self._send(200, {"running": True, "pid": loop_running(), "reason": "already-running"})
                     return
-                LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-                logf = LOG_PATH.open("ab")
-                proc = subprocess.Popen(
-                    [sys.executable, "bot/live_paper.py", "--loop", "--label", "msr_v2"],
-                    cwd=str(ROOT), stdout=logf, stderr=subprocess.STDOUT,
-                    start_new_session=True)
-                PID_PATH.write_text(str(proc.pid))
-                log_event("info", "loop-started", detail={"pid": proc.pid})
-                self._send(200, {"running": True, "pid": proc.pid})
+                active_id = get_active_run_id()
+                pid = start_loop_process(run_id=active_id)
+                self._send(200, {"running": True, "pid": pid, "runId": active_id})
+            elif self.path == "/api/bot/resume-run":
+                target = body.get("runId") or get_selected_run_id() or get_active_run_id()
+                if not target:
+                    self._send(400, {"error": "No runId specified or selected to resume"})
+                    return
+                resolved_id = find_run_id(str(target))
+                if not resolved_id:
+                    self._send(404, {"error": f"Run {target} not found"})
+                    return
+                ws = RunWorkspace(resolved_id)
+                if not ws.exists():
+                    self._send(404, {"error": f"Run workspace {resolved_id} does not exist"})
+                    return
+
+                prev_active = get_active_run_id()
+                prev_selected = get_selected_run_id()
+                stop_loop_process()
+
+                if prev_active and STATE_PATH.exists():
+                    try:
+                        prev_ws = RunWorkspace(prev_active)
+                        if prev_ws.exists():
+                            shutil.copyfile(STATE_PATH, prev_ws.root / "state.json")
+                    except Exception:
+                        pass
+
+                try:
+                    set_active_run_id(resolved_id)
+                    set_selected_run_id(None)
+                    ws.init_workspace(config=load_config(), mode="paper")
+                    ws.sync_to_paper_runs(RUNS_DIR)
+                    try:
+                        ws.settle_pending_windows(RUNS_DIR, max_windows=15)
+                    except Exception:
+                        pass
+                    if ws.events_file.exists() and ws.events_file.stat().st_size > 0:
+                        try:
+                            shutil.copyfile(ws.events_file, EVENTS_PATH)
+                        except Exception:
+                            pass
+                    else:
+                        if EVENTS_PATH.exists():
+                            try:
+                                EVENTS_PATH.unlink()
+                            except Exception:
+                                pass
+                    STATE_PATH.unlink(missing_ok=True)
+                    KILL_PATH.unlink(missing_ok=True)
+
+                    pid = start_loop_process(run_id=resolved_id)
+                except Exception as err:
+                    if prev_active:
+                        set_active_run_id(prev_active)
+                    if prev_selected:
+                        set_selected_run_id(prev_selected)
+                    self._send(500, {"error": f"Failed to resume run {resolved_id}: {err}"})
+                    return
+
+                self._send(200, {
+                    "running": True,
+                    "pid": pid,
+                    "runId": resolved_id,
+                    "activeRunId": resolved_id,
+                    "isViewOnly": False,
+                })
             elif self.path == "/api/bot/stop":
                 if is_view_only():
                     self._send(400, {"error": "Cannot stop bot while in view-only mode", "isViewOnly": True})
                     return
-                pid = loop_running()
-                if pid:
-                    try:
-                        if os.name == "nt":
-                            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
-                                           capture_output=True)
-                        else:
-                            os.kill(pid, 15)
-                    except Exception:
-                        pass
-                    PID_PATH.unlink(missing_ok=True)
-                    log_event("risk", "loop-stopped", detail={"pid": pid})
+                pid = stop_loop_process()
                 active_id = get_active_run_id()
                 if active_id:
                     ws = RunWorkspace(active_id)
                     if ws.exists():
-                        ws.finalize(status="completed", summary=perf().get("summary", {}))
+                        ws.finalize(status="interrupted", summary=perf().get("summary", {}))
                 self._send(200, {"running": False, "pid": None})
             elif self.path == "/api/bot/select-run":
                 target_run_id = body.get("runId")
@@ -1200,6 +1543,20 @@ class Handler(BaseHTTPRequestHandler):
                 KILL_PATH.unlink(missing_ok=True)
                 log_event("info", "entries-resumed")
                 self._send(200, {"ok": True, "killSwitch": False})
+            elif self.path == "/api/bot/redeem":
+                if is_view_only():
+                    self._send(400, {
+                        "error": "Cannot redeem windows while in view-only mode. Switch back to live run first.",
+                        "isViewOnly": True,
+                    })
+                    return
+                from bot.redeem import execute_redeem
+                sel_run = get_selected_run_id()
+                try:
+                    res = execute_redeem(run_id=sel_run, dry_run=False)
+                    self._send(200, res)
+                except ValueError as err:
+                    self._send(400, {"error": str(err)})
             else:
                 self._send(404, {"error": "not found"})
         except (ConnectionError, BrokenPipeError):
@@ -1229,7 +1586,9 @@ class Handler(BaseHTTPRequestHandler):
             write_path(cfg, path, value)
         if isinstance(patch.get("news.events"), list):
             cfg.setdefault("news", {})["events"] = patch["news.events"]
-        CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
+        tmp_cfg = CONFIG_PATH.with_suffix(".tmp")
+        tmp_cfg.write_text(json.dumps(cfg, indent=2))
+        tmp_cfg.replace(CONFIG_PATH)
         log_event("info", "config-updated", detail={"warnings": warnings})
         self._send(200, {"config": self._config_view(), "warnings": warnings})
 
@@ -1252,17 +1611,25 @@ class Handler(BaseHTTPRequestHandler):
             "wholeLadderClips": True,
             **cfg.get("entry", {}),
         }
+        risk_raw = cfg.get("risk", {})
+        try:
+            raw_cap = risk_raw.get("dailyLossCapUsd")
+            daily_loss_cap = float(raw_cap) if raw_cap is not None and float(raw_cap) > 0 else 500.0
+        except (ValueError, TypeError):
+            daily_loss_cap = 500.0
+        bankroll = float(cfg.get("bankrollUsd", BANKROLL_DEFAULT))
+        calc_pct = round((daily_loss_cap / bankroll) * 100, 2) if bankroll > 0 else 50.0
         risk = {
             "maxUsdPerWindow": 4000,
             "maxFillsPerWindow": 500,
-            "dailyLossCapUsd": 500,
+            "dailyLossCapUsd": daily_loss_cap,
             "maxConcurrentPositions": 1,
             "maxTradesPerDay": 288,
             "maxConsecutiveLosses": 99,
-            "dailyLossLimitPct": 50,
+            "dailyLossLimitPct": calc_pct,
             "maxDrawdownPct": 90,
             "cooldownAfterLossSec": 0,
-            **cfg.get("risk", {}),
+            **risk_raw,
         }
         news = cfg.get("news", {})
         return {

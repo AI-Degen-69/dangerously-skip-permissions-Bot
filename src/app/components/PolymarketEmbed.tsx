@@ -279,6 +279,8 @@ function MarketChartPanel({
   const verdictTone =
     market.verdict.action === 'enter'
       ? 'success'
+      : market.verdict.action === 'snipe'
+      ? 'accent'
       : market.verdict.action === 'blocked' || market.verdict.action === 'refuse'
       ? 'warning'
       : market.verdict.action === 'done'
@@ -287,46 +289,7 @@ function MarketChartPanel({
   const slug = market.slug
   const eventUrl = `https://polymarket.com/event/${slug}?utm_medium=embed&utm_campaign=market&utm_content=spread-hunter`
 
-  const upPos = positions.find((p) => p.side === 'Up')
-  const downPos = positions.find((p) => p.side === 'Down')
-  const upShares = upPos?.shares ?? 0
-  const downShares = downPos?.shares ?? 0
-  const upAvgPrice = upPos?.entryPrice ?? null
-  const downAvgPrice = downPos?.entryPrice ?? null
-  const hasHoldings = upShares > 0 || downShares > 0
-  const isHedged = upShares > 0 && downShares > 0
-
-  // 1. Pair Cost
-  let pairCost: number | null = null
-  let isIndicative = false
-  if (isHedged && upAvgPrice != null && downAvgPrice != null) {
-    pairCost = upAvgPrice + downAvgPrice
-  } else if (market.quotes.Up.ask != null && market.quotes.Down.ask != null) {
-    pairCost = market.quotes.Up.ask + market.quotes.Down.ask
-    isIndicative = true
-  }
-
-  // 2. Holdings Balance
-  const delta = Math.round(upShares) - Math.round(downShares)
-  const holdingsText = hasHoldings
-    ? `${Math.round(upShares)} Up · ${Math.round(downShares)} Down`
-    : '0 Up · 0 Down'
-  const holdingsHint = !hasHoldings
-    ? 'flat'
-    : delta === 0
-    ? 'balanced 1:1'
-    : delta > 0
-    ? `+${delta} Up bias`
-    : `+${Math.abs(delta)} Down bias`
-
-  // 3. Settlement Payoff
-  const totalCost = (upPos?.costUsd ?? 0) + (downPos?.costUsd ?? 0)
-  const payIfUp = upShares * 1.0 - totalCost
-  const payIfDown = downShares * 1.0 - totalCost
-  const minFloor = hasHoldings ? Math.min(payIfUp, payIfDown) : 0
-  const maxPayoff = hasHoldings ? Math.max(payIfUp, payIfDown) : 0
-
-  // 4. Microprice Lean
+  // 1. Microprice Lean
   let leanVal = market.lean
   let leanConf = 0.5
   if (leanVal == null) {
@@ -345,12 +308,12 @@ function MarketChartPanel({
     leanConf = Math.max(0, Math.min(1.0, 1.0 - spreadDist * 5.0))
   }
 
-  // 5. Window Fills
+  // 2. Window Fills
   const fillsCount =
     Number(market.verdict?.detail?.fills) ||
     (positions.length > 0 ? (hasUp ? 1 : 0) + (hasDown ? 1 : 0) : 0)
 
-  // 6. CLOB Spread & Depth
+  // 3. CLOB Spread & Depth
   const upSpread =
     market.quotes.Up.ask != null && market.quotes.Up.bid != null
       ? market.quotes.Up.ask - market.quotes.Up.bid
@@ -460,28 +423,7 @@ function MarketChartPanel({
         ))}
       </div>
 
-      <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2.5 rounded-tile border border-line/50 bg-surface-2/30 p-3 sm:grid-cols-3">
-        <Field
-          label="Pair Cost"
-          value={pairCost != null ? `${(pairCost * 100).toFixed(1)}¢` : '—'}
-          valueClassName={
-            pairCost == null ? 'text-faint' : pairCost <= 1.0 ? 'text-success' : 'text-danger'
-          }
-          hint={
-            pairCost == null
-              ? 'awaiting fills'
-              : pairCost <= 1.0
-              ? `+${((1.0 - pairCost) * 100).toFixed(1)}¢ margin${isIndicative ? ' (book)' : ''}`
-              : `−${((pairCost - 1.0) * 100).toFixed(1)}¢ over par${isIndicative ? ' (book)' : ''}`
-          }
-        />
-        <Field label="Holdings Balance" value={holdingsText} hint={holdingsHint} />
-        <Field
-          label="Settlement Payoff"
-          value={hasHoldings ? `${minFloor >= 0 ? '+' : '−'}$${Math.abs(minFloor).toFixed(2)}` : '—'}
-          valueClassName={!hasHoldings ? 'text-faint' : minFloor >= 0 ? 'text-success' : 'text-danger'}
-          hint={hasHoldings ? `max +$${maxPayoff.toFixed(2)}` : 'min floor'}
-        />
+      <dl className="mt-3 grid grid-cols-1 gap-x-4 gap-y-2.5 rounded-tile border border-line/50 bg-surface-2/30 p-3 sm:grid-cols-3">
         <Field
           label="Microprice Lean"
           value={
@@ -491,7 +433,11 @@ function MarketChartPanel({
           }
           hint={`${Math.round(leanConf * 100)}% conf · OB`}
         />
-        <Field label="Window Fills" value={`${fillsCount} fills`} hint="tape med: 39" />
+        <Field
+          label="Window Fills"
+          value={`${fillsCount} fills`}
+          hint={elapsedSec >= 240 ? 'M4 snipe' : 'tape med: 45'}
+        />
         <Field
           label="CLOB Spread & Depth"
           value={clobSpread != null ? `${(clobSpread * 100).toFixed(1)}¢` : '—'}
