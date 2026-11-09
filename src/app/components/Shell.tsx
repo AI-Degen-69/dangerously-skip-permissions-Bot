@@ -43,15 +43,17 @@ export function Shell() {
   const sidebar = (
     <div className="flex h-full flex-col px-3 py-3">
       <div className="flex h-10 items-center gap-2.5 px-2">
-        <span className="grid size-7 place-items-center rounded-[9px] bg-fg text-surface">
-          <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-            <path d="M3 16.5l5-5 3.5 3.5L20 6.5" />
-            <path d="M20 11V6.5h-4.5" />
-          </svg>
+        <span className="grid size-7 place-items-center rounded-[9px] bg-accent text-white shadow-xs" title="🎯 Hybrid Arbitrage Pairing & Certainty Sniping v1">
+          <span className="text-[13px] font-bold leading-none">🎯</span>
         </span>
-        <div className="min-w-0">
-          <p className="truncate text-[13.5px] font-semibold tracking-tight">Up/Down desk</p>
-          <p className="truncate text-[11px] text-faint">Polymarket 5m paper</p>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <p className="truncate text-[13.5px] font-semibold tracking-tight">Up/Down desk</p>
+            <span className="inline-flex items-center rounded-pill bg-accent-soft px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-accent">
+              🎯 HAPCS-v1
+            </span>
+          </div>
+          <p className="truncate font-mono text-[10.5px] text-faint">Hybrid Arb · Port 5180→8799</p>
         </div>
       </div>
 

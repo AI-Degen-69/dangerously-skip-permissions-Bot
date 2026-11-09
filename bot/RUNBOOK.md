@@ -20,14 +20,18 @@ python bot/live_paper.py --slot <epoch>
 
 ## Config (`bot/config.json`)
 
-- `entry`: `clipSharesDefault` 30, `clipEveryNth` 3, `medianShares` 13.86,
-  `maxShares` 50, `medianFillsTarget` 45, `openDelaySec` 13,
-  `hedgeDelaySec` 15, `stopBeforeCloseSec` 15, `minFillPrice` 0.01,
-  `leanSource` `microprice` (or `dumb` for neutral straddle).
+- `entry`: `startAfterOpenSec` 4 (T+4s opening buffer, sbc 296–300),
+  `stopBeforeCloseSec` 12 (T−12s settlement cutoff, sbc 0–12),
+  `clipSharesDefault` 30 (30.4% signature), `maxShares` 50,
+  `minFillPrice` 0.07 (dust floor), `maxFillPrice` 0.95 (favorite cap),
+  `targetPairCost` 0.965 ($0.9654 measured median), `maxPairCost` 0.990 (sub-$1.00 hard cap),
+  `maxShareLead` 90 (anti-runaway lead cap),
+  `minSpacingMoveSec` 0.5, `minSpacingStaticSec` 2.5,
+  `includeTakerFee` true, `wholeLadderClips` true.
 - `risk`: `maxUsdPerWindow` 4000, `maxFillsPerWindow` 500,
   `dailyLossCapUsd` 500 (operator confirms before any live size),
   `maxConcurrentPositions` 1.
-- Editable from the desk Config page (clamped to safe bounds).
+- Editable from the desk Config page (clamped to safe MSR-v2 bounds).
 
 ## Files
 
@@ -77,17 +81,14 @@ it would mutate `paper_runs/`.
 Do NOT fund until ALL pass:
 
 1. `python -m unittest bot.tests.test_bot` — 19/19 green.
-2. `python bot/run_paper.py` — deterministic 288-window sim:
-   median ~44 (target 45), both-sides 288/288 (target 280/288).
-   See `docs/bot-fidelity-report.md` for the full diff.
-3. Desk loop paper ≥ 24h (`paper_runs/` ≥ ~288 settled) with `fidelity()`
-   median/both-sides within the same band. Current live sample (10 settled)
-   is too small to judge — median 24.5 is sample noise, not a gate failure.
+2. `python -m unittest discover -s bot/tests` — all unit tests green.
+3. Desk loop paper ≥ 24h (`paper_runs/` ≥ ~288 settled) with market-neutral
+   sub-$1.00 pair-cost arbitrage and both-sides fill rate matching reconstructed tape.
 4. `python bot/redeem.py --dry-run` clean + kill-switch drill above green.
 5. Operator approves: live keys, `dailyLossCapUsd`, max per-window USD.
 
-Micro-size start: 1 window, dust-size clips (`medianFillsTarget` 5–10,
-`clipSharesDefault` 1), `leanSource: dumb`, kill file within reach.
+Micro-size start: 1 window, dust-size clips (`clipSharesDefault` 1),
+kill file within reach.
 Scale only after a profitable held-to-redeem window reconciles end-to-end.
 
 ## Stop / reset

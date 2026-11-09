@@ -308,11 +308,10 @@ function MarketChartPanel({
     leanConf = Math.max(0, Math.min(1.0, 1.0 - spreadDist * 5.0))
   }
 
-  // 2. Cadence Fills
+  // 2. Window Fills
   const fillsCount =
     Number(market.verdict?.detail?.fills) ||
     (positions.length > 0 ? (hasUp ? 1 : 0) + (hasDown ? 1 : 0) : 0)
-  const targetFills = 45
 
   // 3. CLOB Spread & Depth
   const upSpread =
@@ -435,9 +434,9 @@ function MarketChartPanel({
           hint={`${Math.round(leanConf * 100)}% conf · OB`}
         />
         <Field
-          label="Cadence Fills"
-          value={`${fillsCount} / ${targetFills} target`}
-          hint={elapsedSec >= 240 ? 'M4 snipe' : 'M1–M3 clips'}
+          label="Window Fills"
+          value={`${fillsCount} fills`}
+          hint={elapsedSec >= 240 ? 'M4 snipe' : 'tape med: 45'}
         />
         <Field
           label="CLOB Spread & Depth"

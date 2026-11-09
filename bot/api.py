@@ -39,6 +39,7 @@ from bot.runs import (
     resolve_run_workspace,
     set_active_run_id,
 )
+from bot import constants as C
 
 BOT_DIR = ROOT / "bot"
 CONFIG_PATH = BOT_DIR / "config.json"
@@ -83,6 +84,8 @@ def is_view_only() -> bool:
     if not sel:
         return False
     active = get_active_run_id()
+    if not active:
+        return False
     return sel != active
 
 
@@ -364,43 +367,41 @@ def live_markets(cfg: dict) -> list[dict]:
         bids = [q["bid"] for q in quotes.values() if q["bid"] is not None]
         spread = (min(asks) - max(bids)) if asks and bids else None
         entry = cfg.get("entry", {})
-        stop_before = entry.get("stopBeforeCloseSec", 15)
-        open_delay = entry.get("openDelaySec", 13)
+        stop_before = entry.get("stopBeforeCloseSec", C.HARD_CUTOFF_SBC)
+        start_buffer = entry.get("startAfterOpenSec", entry.get("openDelaySec", C.WINDOW_OPEN_BUFFER_S))
 
         curr_state = state()
         has_fills = bool(curr_state and curr_state.get("slug") == slug and curr_state.get("fills"))
         fills_count = len(curr_state["fills"]) if has_fills else 0
 
+        minute_num = min(4, max(0, int(elapsed_sec // 60)))
+
         if remaining <= stop_before:
-            verdict = {"action": "done", "reason": "too-late-in-window",
-                       "detail": {"remainingSec": remaining, "needsSec": stop_before}}
-        elif not has_fills and elapsed_sec < open_delay:
-            verdict = {"action": "skip", "reason": "opening-delay",
-                       "detail": {"elapsedSec": elapsed, "needsSec": open_delay}}
+            verdict = {"action": "done", "reason": "holding-to-resolution",
+                       "detail": {"remainingSec": remaining, "needsSec": stop_before, "fills": fills_count}}
+        elif not has_fills and elapsed_sec < start_buffer:
+            verdict = {"action": "skip", "reason": "opening-buffer",
+                       "detail": {"elapsedSec": elapsed, "needsSec": start_buffer}}
         elif spread is not None and spread > 0.30:
             verdict = {"action": "refuse", "reason": "spread-too-wide",
                        "detail": {"spreadCents": round(spread * 100, 1), "maxCents": 30}}
         elif not asks:
             verdict = {"action": "refuse", "reason": "no-liquidity", "detail": {"side": "both"}}
+        elif fills_count == 0:
+            verdict = {"action": "enter", "reason": "straddle-open",
+                       "detail": {"minute": f"M{minute_num}", "remainingSec": remaining}}
         elif fills_count == 1:
             verdict = {"action": "enter", "reason": "hedge-pending",
-                       "detail": {"fills": fills_count}}
-        elif elapsed_sec >= 240:
+                       "detail": {"fills": fills_count, "minute": f"M{minute_num}", "remainingSec": remaining}}
+        elif elapsed_sec >= 240 or remaining <= 60:
             verdict = {"action": "snipe", "reason": "m4-snipe",
-                       "detail": {"fills": fills_count, "minute": "M4"}}
+                       "detail": {"fills": fills_count, "minute": "M4", "remainingSec": remaining}}
         elif fills_count >= 2:
             verdict = {"action": "enter", "reason": "working-fills",
-                       "detail": {"fills": fills_count}}
+                       "detail": {"fills": fills_count, "minute": f"M{minute_num}", "remainingSec": remaining}}
         else:
-            # straddle-plus-lean always has a side to take; lean comes from the book
-            try:
-                up_mid = float(c.get_midpoint(token_id=spec.up_token_id))
-                down_mid = float(c.get_midpoint(token_id=spec.down_token_id))
-                lean_side = "Up" if up_mid >= down_mid else "Down"
-            except Exception:
-                lean_side = None
-            verdict = {"action": "enter", "reason": "straddle-open",
-                       "detail": {"leanSide": lean_side or "even"}}
+            verdict = {"action": "enter", "reason": "working-fills",
+                       "detail": {"fills": fills_count, "minute": f"M{minute_num}", "remainingSec": remaining}}
 
         up_q = quotes.get("Up", {})
         down_q = quotes.get("Down", {})
@@ -610,8 +611,19 @@ def snapshot() -> dict:
     settled_equity = round(bankroll + sum((r.get("net_usd") or 0.0) for r in settled), 2)
     daily_loss_usd = round(max(0.0, day_start_equity - settled_equity), 2)
 
+    try:
+        markets = live_markets(cfg)
+    except Exception:
+        markets = []
+    from bot import constants as C
     return {
         "version": 1, "mode": "paper", "asset": cfg.get("asset", "BTC"),
+        "strategy": {
+            "id": C.STRATEGY_ID,
+            "symbol": C.STRATEGY_SYMBOL,
+            "name": C.STRATEGY_NAME,
+            "signature": C.STRATEGY_SIGNATURE,
+        },
         "updatedAt": utc_now_iso(), "equityUsd": equity, "bankrollUsd": bankroll,
         "exposureUsd": round(exposure, 2), "cashUsd": round(equity - exposure, 2),
         "realizedPnlUsd": realized,
@@ -1001,6 +1013,17 @@ def perf() -> dict:
     down_win_rate = round(down_wins / len(down_windows), 4) if down_windows else 0.0
 
     return {
+        "strategy": {
+            "id": C.STRATEGY_ID,
+            "symbol": C.STRATEGY_SYMBOL,
+            "name": C.STRATEGY_NAME,
+            "signature": C.STRATEGY_SIGNATURE,
+            "makerShareTarget": C.MAKER_SHARE_TARGET,
+            "pairCostTarget": C.PAIR_COST_TARGET,
+            "priceFloor": C.PRICE_FLOOR,
+            "priceCeiling": C.PRICE_CEILING,
+            "cutoffSec": C.HARD_CUTOFF_SBC,
+        },
         "summary": {
             "bankrollUsd": bankroll,
             "settled": len(settled), "pending": len(pending), "fills": fills,
@@ -1143,17 +1166,20 @@ def trades_view(limit: int) -> list[dict]:
 EDITABLE = {
     "bankrollUsd": [100, 100000],
     "entry.clipSharesDefault": [1, 50],
-    "entry.clipEveryNth": [1, 10],
-    "entry.medianShares": [1, 50],
-    "entry.maxShares": [1, 50],
-    "entry.medianFillsTarget": [5, 400],
-    "entry.openDelaySec": [0, 120],
-    "entry.hedgeDelaySec": [0, 120],
-    "entry.stopBeforeCloseSec": [0, 120],
-    "entry.minFillPrice": [0.01, 0.5],
-    "risk.maxUsdPerWindow": [50, 50000],
-    "risk.maxFillsPerWindow": [5, 500],
-    "risk.dailyLossCapUsd": [10, 100000],
+    "entry.maxShares": [5, 100],
+    "entry.minFillPrice": [0.01, 0.50],
+    "entry.maxFillPrice": [0.70, 0.99],
+    "entry.benchmarkPairCost": [0.80, 0.99],
+    "entry.targetPairCost": [0.80, 0.99],
+    "entry.maxPairCost": [0.90, 0.999],
+    "entry.maxShareLead": [10, 300],
+    "entry.startAfterOpenSec": [0, 30],
+    "entry.stopBeforeCloseSec": [5, 60],
+    "entry.minSpacingMoveSec": [0.1, 5.0],
+    "entry.minSpacingStaticSec": [0.5, 10.0],
+    "risk.maxUsdPerWindow": [500, 20000],
+    "risk.maxFillsPerWindow": [50, 1000],
+    "risk.dailyLossCapUsd": [50, 10000],
     "risk.maxConcurrentPositions": [1, 2],
 }
 
@@ -1267,6 +1293,7 @@ class Handler(BaseHTTPRequestHandler):
                 active_id = get_active_run_id()
                 sel_id = get_selected_run_id() or active_id
                 view_only = is_view_only()
+                from bot import constants as C
                 self._send(200, {
                     "running": pid is not None and not view_only,
                     "pid": pid if not view_only else None,
@@ -1276,6 +1303,12 @@ class Handler(BaseHTTPRequestHandler):
                     "activeRunId": active_id,
                     "selectedRunId": sel_id,
                     "isViewOnly": view_only,
+                    "strategy": {
+                        "id": C.STRATEGY_ID,
+                        "symbol": C.STRATEGY_SYMBOL,
+                        "name": C.STRATEGY_NAME,
+                        "signature": C.STRATEGY_SIGNATURE,
+                    },
                 })
             elif url.path == "/api/bot/runs":
                 all_r = list_all_runs()
@@ -1535,9 +1568,6 @@ class Handler(BaseHTTPRequestHandler):
                 pass
 
     def do_PUT(self):
-        if is_view_only():
-            self._send(400, {"error": "Cannot edit config while in view-only mode", "isViewOnly": True})
-            return
         if self.path != "/api/bot/config":
             self._send(404, {"error": "not found"})
             return
@@ -1553,9 +1583,6 @@ class Handler(BaseHTTPRequestHandler):
                 if not (lo <= value <= hi):
                     warnings.append(f"{path} clamped to [{lo}, {hi}]")
                     value = min(hi, max(lo, value))
-            if path == "entry.leanSource" and value not in ("microprice", "dumb"):
-                warnings.append("entry.leanSource must be microprice or dumb")
-                continue
             write_path(cfg, path, value)
         if isinstance(patch.get("news.events"), list):
             cfg.setdefault("news", {})["events"] = patch["news.events"]
@@ -1567,12 +1594,23 @@ class Handler(BaseHTTPRequestHandler):
 
     def _config_view(self) -> dict:
         cfg = load_config()
-        entry = {"minEdge": 0, "minModelProb": 0.5, "maxModelProb": 1,
-                 "maxEntryPriceCents": 1, "minMovePct": 0, "maxMovePct": 100,
-                 "minHourlyRangePct": 0, "tightChopRangeUsd": 0, "maxSpreadCents": 30,
-                 "noisePct": 0, "nonLiveAnchorExtraMovePct": 0,
-                 "kellyCut": 0.25, "maxPositionPct": 0.08, "feeRate": 0,
-                 **cfg.get("entry", {})}
+        entry = {
+            "startAfterOpenSec": 4,
+            "stopBeforeCloseSec": 12,
+            "clipSharesDefault": 30,
+            "maxShares": 50,
+            "minFillPrice": 0.07,
+            "maxFillPrice": 0.975,
+            "benchmarkPairCost": 0.965,
+            "targetPairCost": 0.965,
+            "maxPairCost": 0.990,
+            "maxShareLead": 90,
+            "minSpacingMoveSec": 0.5,
+            "minSpacingStaticSec": 2.5,
+            "includeTakerFee": True,
+            "wholeLadderClips": True,
+            **cfg.get("entry", {}),
+        }
         risk_raw = cfg.get("risk", {})
         try:
             raw_cap = risk_raw.get("dailyLossCapUsd")
@@ -1581,25 +1619,36 @@ class Handler(BaseHTTPRequestHandler):
             daily_loss_cap = 500.0
         bankroll = float(cfg.get("bankrollUsd", BANKROLL_DEFAULT))
         calc_pct = round((daily_loss_cap / bankroll) * 100, 2) if bankroll > 0 else 50.0
-        risk = {"maxConcurrentPositions": 1, "maxTradesPerDay": 288,
-                "maxConsecutiveLosses": 99, "dailyLossLimitPct": calc_pct,
-                "dailyLossCapUsd": daily_loss_cap,
-                "maxDrawdownPct": 90, "cooldownAfterLossSec": 0,
-                **risk_raw}
+        risk = {
+            "maxUsdPerWindow": 4000,
+            "maxFillsPerWindow": 500,
+            "dailyLossCapUsd": daily_loss_cap,
+            "maxConcurrentPositions": 1,
+            "maxTradesPerDay": 288,
+            "maxConsecutiveLosses": 99,
+            "dailyLossLimitPct": calc_pct,
+            "maxDrawdownPct": 90,
+            "cooldownAfterLossSec": 0,
+            **risk_raw,
+        }
         news = cfg.get("news", {})
-        return {"asset": cfg.get("asset", "BTC"), "intervals": ["5m"],
-                "mode": "paper", "bankrollUsd": cfg.get("bankrollUsd", BANKROLL_DEFAULT),
-                "entry": entry, "exit": {"profitTargetCents": 1},
-                "risk": risk,
-                "news": {"blackoutMinutes": news.get("blackoutMinutes", 0),
-                         "events": news.get("events", [])},
-                "intervalParams": {
-                    "5m": {"observationSeconds": entry.get("openDelaySec", 13),
-                           "minDirectionHoldSeconds": entry.get("hedgeDelaySec", 15),
-                           "minRemainingSeconds": entry.get("stopBeforeCloseSec", 15),
-                           "stallSeconds": 0},
-                    "15m": {"observationSeconds": 300, "minDirectionHoldSeconds": 60,
-                            "minRemainingSeconds": 240, "stallSeconds": 180}}}
+        return {
+            "asset": cfg.get("asset", "BTC"),
+            "intervals": ["5m"],
+            "mode": "paper",
+            "bankrollUsd": cfg.get("bankrollUsd", BANKROLL_DEFAULT),
+            "entry": entry,
+            "risk": risk,
+            "news": {"blackoutMinutes": news.get("blackoutMinutes", 0), "events": news.get("events", [])},
+            "intervalParams": {
+                "5m": {
+                    "observationSeconds": entry.get("startAfterOpenSec", 4),
+                    "minDirectionHoldSeconds": 0,
+                    "minRemainingSeconds": entry.get("stopBeforeCloseSec", 12),
+                    "stallSeconds": 0,
+                },
+            },
+        }
 
 
 class QuietThreadingHTTPServer(ThreadingHTTPServer):
@@ -1615,7 +1664,7 @@ class QuietThreadingHTTPServer(ThreadingHTTPServer):
 def main() -> None:
     """Run loopback desk API server."""
     ap = argparse.ArgumentParser(description="Paper desk API (loopback only)")
-    ap.add_argument("--port", type=int, default=8789)
+    ap.add_argument("--port", type=int, default=8799)
     args = ap.parse_args()
     try:
         server = QuietThreadingHTTPServer(("127.0.0.1", args.port), Handler)

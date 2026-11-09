@@ -96,10 +96,23 @@ export interface WsTick {
   ask_size?: number | null
 }
 
+export interface StrategyInfo {
+  id: string
+  symbol: string
+  name: string
+  signature?: string
+  makerShareTarget?: number
+  pairCostTarget?: number
+  priceFloor?: number
+  priceCeiling?: number
+  cutoffSec?: number
+}
+
 export interface BotSnapshot {
   version: 1
   mode: 'paper' | 'live'
   asset: string
+  strategy?: StrategyInfo
   updatedAt: string
   equityUsd: number
   bankrollUsd: number
@@ -195,6 +208,7 @@ export interface BotControl {
   activeRunId?: string | null
   selectedRunId?: string | null
   isViewOnly?: boolean
+  strategy?: StrategyInfo
 }
 
 export interface PerfGate {
@@ -232,6 +246,7 @@ export interface PerfNote {
 }
 
 export interface BotPerf {
+  strategy?: StrategyInfo
   summary: {
     bankrollUsd?: number
     settled: number
@@ -323,24 +338,41 @@ export interface BotConfigView {
   mode: 'paper' | 'live'
   bankrollUsd: number
   entry: {
-    minEdge: number
-    minModelProb: number
-    maxModelProb: number
-    maxEntryPriceCents: number
-    minMovePct: number
-    maxMovePct: number
-    minHourlyRangePct: number
-    tightChopRangeUsd: number
-    maxSpreadCents: number
-    noisePct: number
-    nonLiveAnchorExtraMovePct: number
-    kellyCut: number
-    maxPositionPct: number
-    minPositionUsd: number
-    feeRate: number
+    startAfterOpenSec?: number
+    stopBeforeCloseSec?: number
+    clipSharesDefault?: number
+    maxShares?: number
+    minFillPrice?: number
+    maxFillPrice?: number
+    targetPairCost?: number
+    maxPairCost?: number
+    maxShareLead?: number
+    minSpacingMoveSec?: number
+    minSpacingStaticSec?: number
+    includeTakerFee?: boolean
+    wholeLadderClips?: boolean
+    minEdge?: number
+    minModelProb?: number
+    maxModelProb?: number
+    maxEntryPriceCents?: number
+    minMovePct?: number
+    maxMovePct?: number
+    minHourlyRangePct?: number
+    tightChopRangeUsd?: number
+    maxSpreadCents?: number
+    noisePct?: number
+    nonLiveAnchorExtraMovePct?: number
+    kellyCut?: number
+    maxPositionPct?: number
+    minPositionUsd?: number
+    feeRate?: number
+    [key: string]: unknown
   }
-  exit: { profitTargetCents: number; stallBandLow: number; stallBandHigh: number; acceptLossBelowCents?: number; stopLossBelowCents?: number }
+  exit: { profitTargetCents: number; stallBandLow?: number; stallBandHigh?: number; acceptLossBelowCents?: number; stopLossBelowCents?: number }
   risk: {
+    maxUsdPerWindow?: number
+    maxFillsPerWindow?: number
+    dailyLossCapUsd?: number
     maxConcurrentPositions: number
     maxTradesPerDay: number
     maxConsecutiveLosses: number
@@ -350,6 +382,7 @@ export interface BotConfigView {
     maxFillsPerWindow?: number
     maxDrawdownPct: number
     cooldownAfterLossSec: number
+    [key: string]: unknown
   }
   news: { blackoutMinutes: number; events: string[] }
   intervalParams: Record<
@@ -363,7 +396,7 @@ export interface BotConfigView {
  * directly rather than through the app's worker (which never reaches the
  * machine). Its CORS policy accepts loopback origins only.
  */
-export const BOT_ORIGIN = import.meta.env.VITE_BOT_ORIGIN ?? 'http://127.0.0.1:8789'
+export const BOT_ORIGIN = import.meta.env.VITE_BOT_ORIGIN ?? 'http://127.0.0.1:8799'
 const botUrl = (path: string) => `${BOT_ORIGIN}/api/bot${path}`
 
 async function getJson<T>(path: string): Promise<T> {

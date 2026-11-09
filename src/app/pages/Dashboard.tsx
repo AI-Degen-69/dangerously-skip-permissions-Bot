@@ -95,14 +95,28 @@ export function Dashboard() {
   const stats = computeKpiStats(windows, startingCapital, summary)
   const currentCapital = stats.currentCapital
   const gateJudged = settled.length >= (data?.targets.windows ?? 288)
+  const strategySymbol = data?.strategy?.symbol ?? control.data?.strategy?.symbol ?? '🎯 HAPCS-v1'
+  const strategyName =
+    data?.strategy?.name ??
+    control.data?.strategy?.name ??
+    'Hybrid Arbitrage Pairing & Certainty Sniping v1'
+  const strategySignature =
+    data?.strategy?.signature ??
+    control.data?.strategy?.signature ??
+    'Maker Dip Grid [7¢–50¢] (0% fee) · Dynamic Pairing Arbitrage · Resolution Certainty Snipe [up to 97.5¢] · Pair Cost Benchmark $0.965 (cap ≤$0.990)'
 
   return (
     <div className="mx-auto max-w-[1200px] p-5 sm:p-8">
       <PageHeader
-        title="Paper desk"
-        subtitle="BTC 5-minute straddle-plus-lean, held to redeem. Every number is the loop's own paper tape."
+        title="Paper desk · 🎯 HAPCS-v1"
+        subtitle="Reconstructed BTC 5-minute Hybrid Arbitrage Pairing & Certainty Sniping Engine, held to redeem."
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            <span title={strategyName}>
+              <Badge tone="accent" className="font-mono font-semibold">
+                {strategySymbol} · Recovery Engine
+              </Badge>
+            </span>
             {availableRuns.length > 0 && (
               <div className="flex items-center gap-1.5 rounded-pill border border-subtle bg-subtle px-2.5 py-1 text-[12px]">
                 <History className="size-3.5 text-muted" />
@@ -196,6 +210,25 @@ export function Dashboard() {
           </div>
         }
       />
+
+      <Card className="mt-4 border-accent/40 bg-accent-soft/20 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span className="grid size-8 shrink-0 place-items-center rounded-tile bg-accent text-white font-bold shadow-xs">
+              ⚡
+            </span>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[13.5px] font-semibold text-fg">{strategyName}</span>
+                <Badge tone="info" className="font-mono text-[10.5px]">
+                  Isolated Desk · {BOT_ORIGIN}
+                </Badge>
+              </div>
+              <p className="mt-0.5 font-mono text-[11.5px] text-muted">{strategySignature}</p>
+            </div>
+          </div>
+        </div>
+      </Card>
 
       {isViewOnly && (
         <Card className="mt-4 border-warning/40 bg-warning-soft/30 p-4">

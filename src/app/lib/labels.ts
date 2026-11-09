@@ -1,19 +1,23 @@
 export const LABELS: Record<string, string> = {
   // Window Timing & Planned Cutoffs
-  'opening-delay': 'Waiting opening delay',
-  'too-late-in-window': 'Planned entry cutoff (last 15s)',
+  'opening-buffer': 'Opening buffer (T+0..4s)',
+  'opening-delay': 'Opening buffer (T+0..4s)',
+  'too-late-in-window': 'Settlement cutoff (T−12s..0s)',
   'awaiting-resolution': 'Window ended — awaiting market resolution',
 
   // Entries & Snipes
   'straddle-open': 'Straddle opened — first touch',
   'hedge-pending': 'First leg filled — hedge pending',
-  'hedge-leg': 'Hedge leg filled (+15s)',
-  'clip-fill': 'Clip fill accumulated',
-  'working-fills': 'Working fills (M1–M3)',
+  'hedge-leg': 'Hedge leg filled',
+  'clip-fill': 'MSR-v2 ladder fill accumulated',
+  'maker-dip-ladder': 'Maker dip ladder [7¢–50¢] (0% fee)',
+  'hedge-equalizer': 'Lagging-leg share equalizer [75¢–95¢]',
+  'working-fills': 'Active grid accumulation (M0–M3)',
+  'm4-window': 'M4 late snipe & hedge window (T−60s..12s)',
   'lean-up': 'Microprice lean Up',
   'lean-down': 'Microprice lean Down',
-  'straddle-balance': 'Straddle cadence balance',
-  'm4-snipe': 'M4 late snipe',
+  'straddle-balance': 'Straddle balance fill',
+  'm4-snipe': 'M4 late snipe filled',
   'paper-fill': 'Paper fill',
 
   // Holds & Pacing
@@ -26,7 +30,9 @@ export const LABELS: Record<string, string> = {
   'holding-to-resolution': 'Window trading done — holding to resolution',
 
   // Refusals: Conditions Refused
-  'extreme-price-skip': 'Extreme odds refused — saved for M4',
+  'extreme-price-skip': 'Price outside active bands [7¢–50¢] / [75¢–95¢]',
+  'pair-cost-cap': 'Refused — projected pair cost exceeds $0.99 cap',
+  'share-lead-cap': 'Refused — share lead exceeds 90-share limit',
   'dust-quote': 'Dust quote refused (<1¢)',
   'no-liquidity': 'Quotes refused — no liquidity on this side',
   'spread-too-wide': 'Quote refused — spread too wide (>30¢)',
@@ -114,11 +120,10 @@ export const REASON_METRICS: Record<string, MetricSpec[]> = {
   ],
   'working-fills': [{ key: 'fills', label: 'fills', unit: 'count' }],
   'clip-fill': [
-    { key: 'minute' },
+    { key: 'role' },
     { key: 'price', label: 'price', unit: 'price' },
     { key: 'shares', label: 'shares' },
-    { key: 'lean', label: 'lean', unit: 'ratio' },
-    { key: 'fills', label: 'fill #' },
+    { key: 'pairCost', label: 'pair', unit: 'usd' },
   ],
   'm4-snipe': [
     { key: 'minute' },

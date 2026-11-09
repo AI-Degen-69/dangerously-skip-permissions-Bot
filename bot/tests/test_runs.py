@@ -30,10 +30,10 @@ class TestRunScopedSessions(unittest.TestCase):
 
     def tearDown(self):
         set_active_run_id(None)
+        api.set_selected_run_id(None)
         runs.RUNS_DIR = self.orig_runs_root
         runs.ACTIVE_RUN_POINTER = self.orig_active_pointer
         shutil.rmtree(self.tmp, ignore_errors=True)
-        api.set_selected_run_id(None)
 
     def test_make_run_id_format(self):
         rid = make_run_id(mode="paper", label="test")

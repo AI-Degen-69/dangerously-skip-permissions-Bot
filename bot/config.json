@@ -1,19 +1,30 @@
 {
   "asset": "BTC",
-  "intervals": ["5m"],
+  "intervals": [
+    "5m"
+  ],
   "mode": "paper",
   "bankrollUsd": 1000,
+  "strategy": {
+    "id": "hapcs-v1",
+    "symbol": "🎯 HAPCS-v1",
+    "name": "Hybrid Arbitrage Pairing & Certainty Sniping v1"
+  },
   "entry": {
+    "startAfterOpenSec": 4,
+    "stopBeforeCloseSec": 12,
     "clipSharesDefault": 30,
-    "clipEveryNth": 3,
-    "medianShares": 13.86,
     "maxShares": 50,
-    "medianFillsTarget": 45,
-    "openDelaySec": 13,
-    "hedgeDelaySec": 15,
-    "stopBeforeCloseSec": 15,
-    "minFillPrice": 0.01,
-    "leanSource": "microprice"
+    "minFillPrice": 0.07,
+    "maxFillPrice": 0.975,
+    "benchmarkPairCost": 0.965,
+    "targetPairCost": 0.965,
+    "maxPairCost": 0.990,
+    "maxShareLead": 90,
+    "includeTakerFee": true,
+    "wholeLadderClips": true,
+    "minSpacingMoveSec": 0.5,
+    "minSpacingStaticSec": 2.5
   },
   "risk": {
     "maxUsdPerWindow": 4000,
@@ -21,5 +32,8 @@
     "dailyLossCapUsd": 500,
     "maxConcurrentPositions": 1
   },
-  "news": { "blackoutMinutes": 0, "events": [] }
+  "news": {
+    "blackoutMinutes": 0,
+    "events": []
+  }
 }
