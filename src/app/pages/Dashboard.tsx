@@ -108,8 +108,8 @@ export function Dashboard() {
   return (
     <div className="mx-auto max-w-[1200px] p-5 sm:p-8">
       <PageHeader
-        title="Paper desk · 🎯 HAPCS-v1"
-        subtitle="Reconstructed BTC 5-minute Hybrid Arbitrage Pairing & Certainty Sniping Engine, held to redeem."
+        title={`Paper desk · ${strategySymbol}`}
+        subtitle={`${strategyName} — BTC 5-minute windows, held to redeem.`}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <span title={strategyName}>

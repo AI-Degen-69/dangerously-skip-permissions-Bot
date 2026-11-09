@@ -115,6 +115,39 @@ STRATEGY_SETUPS = {
             "wholeLadderClips": True,
         },
     },
+    "dangerously-skip-permissions-v2.2": {
+        "id": "dangerously-skip-permissions-v2.2",
+        "symbol": "⚡ DSP-v2.2",
+        "name": "Dangerously Skip Permissions v2.2 (Confidence Sizing)",
+        "signature": (
+            "Confidence Sizing (60 sh Atomic / 10 sh Micro) · Pre-Flight Arb Gate (≤$0.995) · "
+            "Passive Maker Sweep (T-75s..15s) · Strict Sub-$1.00 Pair Cap"
+        ),
+        "description": (
+            "Confidence-based sizing candidate: Maximizes profit by heavy sizing (60 shares) on 100% risk-free "
+            "atomic pairings and deficit equalizations, while minimizing risk via 10-share micro clips on speculative "
+            "dips and enforcing a pre-flight hedge gate to prevent entering unhedgeable positions."
+        ),
+        "entry": {
+            "startAfterOpenSec": 4,
+            "stopBeforeCloseSec": 75,
+            "clipSharesDefault": 10.0,
+            "maxShares": 60.0,
+            "minFillPrice": 0.07,
+            "maxFillPrice": 0.880,
+            "benchmarkPairCost": 0.965,
+            "targetPairCost": 0.965,
+            "maxPairCost": 0.985,
+            "maxShareLead": 30.0,
+            "freezeLead": 15.0,
+            "rescuePairCostMax": 0.995,
+            "rescueCeilingPrice": 0.985,
+            "minSpacingMoveSec": 0.5,
+            "minSpacingStaticSec": 2.5,
+            "includeTakerFee": True,
+            "wholeLadderClips": True,
+        },
+    },
 }
 
 # Timing Parameters (seconds countdown SBC: seconds before close)

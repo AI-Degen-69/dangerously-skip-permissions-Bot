@@ -309,13 +309,13 @@ def get_ab_test_data() -> dict[str, Any]:
         },
         "candidate": {
             "runId": candidate_id,
-            "name": "dangerously-skip-permissions v2.1 (Unified Triad)",
-            "description": "Unified triad: De-escalating dip clips (30→20→10), passive maker sweep (T-75s..15s), and strict sub-$1.00 pair cap (≤$0.995).",
+            "name": "dangerously-skip-permissions v2.2 (Confidence Sizing)",
+            "description": "Confidence-based sizing: 60-share heavy clips on 100% risk-free atomic pairings, 10-share micro clips on speculative dips, and pre-flight gate (≤$0.995).",
             "configHighlights": {
                 "rescuePairCostMax": "≤ $0.995 (strict sub-$1.00)",
-                "dipClips": "Throttled (30 → 20 → 10 sh)",
+                "dipClips": "Confidence Sizing (60 sh Atomic / 10 sh Micro)",
+                "preflightGate": "Enforced (Entry + Opp Ask ≤ $0.995)",
                 "sweepEqualization": "Passive Maker at 0% fee (T-75s..15s)",
-                "maxFillPrice": "88¢ (dip) / 98.5¢ (deficit)",
             },
             "targetSamples": TARGET_SAMPLE_SIZE,
             "progressPct": round(min(100.0, (n_b / TARGET_SAMPLE_SIZE) * 100.0), 1),
@@ -338,8 +338,8 @@ def get_ab_test_data() -> dict[str, Any]:
             "verdictTone": verdict_tone,
         },
         "hypotheses": {
-            "nullHypothesis": "H₀: μ_v2.1 ≤ μ_v2.0 (or μ_v2.1 ≤ 0) — The unified triad does not produce a statistically significant positive expected return.",
-            "altHypothesis": "H₁: μ_v2.1 > 0 and μ_v2.1 > μ_v2.0 — The unified triad generates a statistically significant positive mean window return at α = 0.05.",
+            "nullHypothesis": "H₀: μ_v2.2 ≤ μ_v2.0 (or μ_v2.2 ≤ 0) — Confidence-based sizing does not produce a statistically significant positive expected return.",
+            "altHypothesis": "H₁: μ_v2.2 > 0 and μ_v2.2 > μ_v2.0 — Confidence-based sizing generates a statistically significant positive mean window return at α = 0.05.",
             "decisionRule": f"Reject H₀ if t > {T_CRITICAL_95} (p < 0.05) once candidate sample size reaches N = {TARGET_SAMPLE_SIZE} windows.",
         },
         "histogram": histogram,
@@ -349,19 +349,22 @@ def get_ab_test_data() -> dict[str, Any]:
 def start_candidate_test() -> dict[str, Any]:
     from bot import api
     
-    # 1. Update config to Candidate DSP v2.1 parameters
+    # 1. Update config to Candidate DSP v2.2 parameters
     cfg = api.load_config()
     cfg["strategy"] = {
-        "id": "dangerously-skip-permissions-v2.1",
-        "symbol": "⚡ DSP-v2.1",
-        "name": "Dangerously Skip Permissions v2.1 (Unified Triad)",
+        "id": "dangerously-skip-permissions-v2.2",
+        "symbol": "⚡ DSP-v2.2",
+        "name": "Dangerously Skip Permissions v2.2 (Confidence Sizing)",
     }
     entry = cfg.setdefault("entry", {})
-    entry["rescuePairCostMax"] = 0.995  # Tweak 1: Strict sub-$1.00 pair cap
+    entry["rescuePairCostMax"] = 0.995  # Strict sub-$1.00 pair cap
     entry["rescueCeilingPrice"] = 0.985
     entry["maxPairCost"] = 0.985
     entry["freezeLead"] = 15.0
     entry["stopBeforeCloseSec"] = 75
+    entry["clipSharesDefault"] = 10.0  # Micro clip for unhedged dips
+    entry["maxShares"] = 60.0          # Heavy clip for atomic arbs and deficit hedges
+    entry["maxShareLead"] = 30.0
     
     tmp = api.CONFIG_PATH.with_suffix(".tmp")
     tmp.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
@@ -372,7 +375,7 @@ def start_candidate_test() -> dict[str, Any]:
     time.sleep(0.5)
 
     # 3. Generate run ID and register candidate
-    run_id = f"run_{time.strftime('%Y%m%d_%H%M%S')}_paper_dsp_v2_1"
+    run_id = f"run_{time.strftime('%Y%m%d_%H%M%S')}_paper_dsp_v2_2"
     ab_state = {
         "baselineRunId": DEFAULT_BASELINE_ID,
         "candidateRunId": run_id,

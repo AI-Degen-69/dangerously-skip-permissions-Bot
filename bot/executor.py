@@ -53,25 +53,34 @@ def select_ladder_clip(
     max_clip: float = C.MAX_SHARES,
     whole_ladder: bool = True,
     current_lead: float = 0.0,
+    is_v22: bool = False,
+    atomic_arb: bool = False,
     **kwargs,  # absorbs legacy unused kwargs
 ) -> float:
-    """Select clip size. When hedging an existing deficit, snap directly to deficit!"""
+    """Select clip size. In v2.2, employs Confidence Sizing (Heavy on atomic/deficit, Micro on dips)."""
     if deficit > 0:
         # Snap directly to the deficit capped at max_clip so we don't overshoot
         # or leave residual unhedged dust!
-        return min(clip_shares(deficit), max_clip)
+        return min(clip_shares(deficit, max_clip), max_clip)
+    # DSP v2.2 Confidence-Based Sizing:
+    # 1. Atomic Arb (High Confidence, Risk-Free): Size heavy (up to max_clip = 60 sh)
+    if is_v22 and atomic_arb:
+        return min(clip_shares(max_clip, max_clip), max_clip)
+    # 2. Speculative Dip Intake (Low Confidence, Directional Risk): Size micro (10 sh)
+    if is_v22:
+        return min(clip_shares(10.0, max_clip), max_clip)
     # Tweak 2: De-escalating clip sizes when leading side accumulates dips
     # Prevents huge runaway deficits from forming during early trending moves
     if current_lead >= 10.0:
-        return min(clip_shares(10.0), max_clip)
+        return min(clip_shares(10.0, max_clip), max_clip)
     if current_lead >= 5.0:
-        return min(clip_shares(20.0), max_clip)
+        return min(clip_shares(20.0, max_clip), max_clip)
     # Standard 30-share ladder clip on opening, deep dips (<=35c), or alternate fills
     if fill_idx % 2 == 0 or price <= 0.35:
-        return min(clip_shares(default_clip), max_clip)
+        return min(clip_shares(default_clip, max_clip), max_clip)
     rungs = [r for r in (25.0, 20.0, 15.0, 10.0) if r <= max_clip]
     chosen = rungs[fill_idx % len(rungs)] if rungs else default_clip
-    return min(clip_shares(chosen), max_clip)
+    return min(clip_shares(chosen, max_clip), max_clip)
 
 
 @dataclass
@@ -148,6 +157,12 @@ def evaluate_microstructure_ladder(
     saw_ceiling = False
     saw_dust = False
     saw_pair_cap = False
+    # DSP family (v2.0, v2.1, v2.2, ...) shares the same recovery-engine rules.
+    is_dsp = strategy_id.startswith("dangerously-skip-permissions")
+    is_v22 = strategy_id.endswith("v2.2")
+    # v2.2: hard cap on unhedged lead = 20 sh (2 micro-clips). v2.1 = 30 sh. Baseline = 45 sh.
+    lead_cap = 20.0 if is_v22 else (30.0 if strategy_id.endswith("v2.1") else max_share_lead)
+    rescue_cap = rescue_max_pair_cost if (is_dsp or in_sweep_phase) else max_pair_cost
 
     # 1. Phase 3: Resolution Certainty Snipe in Minute 4 [0.90, 0.975]
     # Enabled exclusively for 'hapcs-v1'. Disabled for 'dangerously-skip-permissions'
@@ -202,7 +217,7 @@ def evaluate_microstructure_ladder(
             continue
         # In rescue/hedging mode (deficit > 0), allow up to rescue_ceiling (0.985)
         # to ensure open deficit-closing hedges are executed rather than facing 100% loss at resolution.
-        effective_ceiling = rescue_ceiling if (strategy_id == "dangerously-skip-permissions" or in_sweep_phase) else max_fill
+        effective_ceiling = rescue_ceiling if (is_dsp or in_sweep_phase) else max_fill
         if px > effective_ceiling:
             saw_ceiling = True
             continue
@@ -215,6 +230,7 @@ def evaluate_microstructure_ladder(
             default_clip=default_clip,
             max_clip=max_clip,
             whole_ladder=whole_ladder,
+            is_v22=is_v22,
         )
         # Tweak 3: Prioritize 0% maker fills during sweep equalization to eliminate adverse fee drag
         if in_sweep_phase and bid is not None:
@@ -230,7 +246,7 @@ def evaluate_microstructure_ladder(
         # Standard: proj_pc <= max_pair_cost -> sub-$1.00 profitable pairing arbitrage.
         # Rescue: when holding a deficit in DSP or sweep phase, accepting proj_pc up to rescue_max_pair_cost (1.080)
         # locks in capital redemption, preventing a 100% loss ($0.00 redemption) on the naked leg.
-        rescue_cap = rescue_max_pair_cost if (strategy_id == "dangerously-skip-permissions" or in_sweep_phase) else max_pair_cost
+        rescue_cap = rescue_max_pair_cost if (is_dsp or in_sweep_phase) else max_pair_cost
         is_rescue = (proj_pc is not None and proj_pc > max_pair_cost)
         if proj_pc is None or proj_pc <= max_pair_cost or (proj_pc <= rescue_cap and exec_px <= effective_ceiling):
             return MicrostructureDecision(
@@ -262,7 +278,7 @@ def evaluate_microstructure_ladder(
     # Anti-Runaway Deficit Lock & Strict Leading-Side Freeze:
     # If one side leads by >= freeze_lead (15.0 shares in DSP), STRICTLY FREEZE buying the leading side!
     # Candidates must ONLY be the lagging side until balance is restored.
-    fl = freeze_lead if strategy_id == "dangerously-skip-permissions" else max_share_lead
+    fl = freeze_lead if is_dsp else max_share_lead
     if up_def >= fl:
         candidates = ("Up",)   # Down leads -> ONLY Up allowed!
     elif down_def >= fl:
@@ -290,6 +306,8 @@ def evaluate_microstructure_ladder(
         deficit = max(0.0, round(inv[opp]["shares"] - inv[side]["shares"], 2))
         lead = max(0.0, round(inv[side]["shares"] - inv[opp]["shares"], 2))
         bid, ask = _side_prices(side)
+        opp_bid, opp_ask = _side_prices(opp)
+        opp_ref = opp_ask if opp_ask is not None else opp_bid
         px = bid if (bid is not None and bid >= min_fill) else ask
         if px is None:
             continue
@@ -299,8 +317,21 @@ def evaluate_microstructure_ladder(
         if px > max_fill:
             saw_ceiling = True
             continue
-        dip_max = 0.45 if strategy_id == "dangerously-skip-permissions" else C.DIP_LADDER_MAX
+        dip_max = 0.45 if is_dsp else C.DIP_LADDER_MAX
         if px <= dip_max:
+            # Pre-Flight Hedge Gate (v2.2+):
+            # Before taking an unhedged speculative dip fill, verify that the opposite side
+            # allows a hedge under rescue_cap (0.995). If the opposite side is already too expensive,
+            # refuse immediately so we NEVER enter a position where a sub-$1.00 hedge is impossible!
+            if is_v22 and deficit <= 0 and opp_ref is not None:
+                if px + opp_ref > rescue_cap:
+                    saw_pair_cap = True
+                    continue
+
+            # High-Confidence Atomic Arb Detection:
+            # If both sides can be filled immediately with sum <= 0.990, flag atomic_arb = True!
+            is_atomic = bool(is_v22 and opp_ref is not None and (px + opp_ref <= 0.990))
+
             role = "MAKER" if ((bid is not None and px == bid) or bid is None) else "TAKER"
             shares = select_ladder_clip(
                 deficit=deficit,
@@ -311,11 +342,13 @@ def evaluate_microstructure_ladder(
                 max_clip=max_clip,
                 whole_ladder=whole_ladder,
                 current_lead=lead,
+                is_v22=is_v22,
+                atomic_arb=is_atomic,
             )
             est_usd, _ = compute_fill_usd(shares, px, role=role, include_fee=(role == "TAKER"))
             proj_pc = _projected_pair_cost(inv, side, shares, est_usd)
             # Strict hard ceiling on one-sided lead: NEVER exceed max_share_lead.
-            if lead >= max_share_lead or (lead + shares > max_share_lead + 5.0):
+            if lead >= lead_cap or (lead + shares > lead_cap + 5.0):
                 saw_pair_cap = True
                 continue
             # Sub-$1.00 pair-cost gate: <= max_pair_cost when closing deficit, <= bench_pc otherwise
@@ -335,6 +368,12 @@ def evaluate_microstructure_ladder(
             saw_pair_cap = True
         elif px <= C.STRADDLE_BAND[1] and inv["Up"]["shares"] == 0 and inv["Down"]["shares"] == 0:
             # Opening Straddle Leg 1 in (0.50, 0.55]
+            if is_v22 and opp_ref is not None:
+                if px + opp_ref > rescue_cap:
+                    saw_pair_cap = True
+                    continue
+
+            is_atomic = bool(is_v22 and opp_ref is not None and (px + opp_ref <= 0.990))
             role = "MAKER" if ((bid is not None and px == bid) or bid is None) else "TAKER"
             shares = select_ladder_clip(
                 deficit=0.0,
@@ -344,6 +383,8 @@ def evaluate_microstructure_ladder(
                 default_clip=default_clip,
                 max_clip=max_clip,
                 whole_ladder=whole_ladder,
+                is_v22=is_v22,
+                atomic_arb=is_atomic,
             )
             return MicrostructureDecision(
                 action="fill",

@@ -41,8 +41,9 @@ MAX_USD_PER_WINDOW = 4000.0
 MAX_TRADES_PER_WINDOW = 500
 
 
-def clip_shares(want: float) -> float:
-    return max(0.0, min(float(want), C.MAX_SHARES))
+def clip_shares(want: float, max_shares: float | None = None) -> float:
+    cap = max_shares if max_shares is not None else C.MAX_SHARES
+    return max(0.0, min(float(want), cap))
 
 
 def check_window(
