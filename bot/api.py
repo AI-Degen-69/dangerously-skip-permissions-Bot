@@ -1669,7 +1669,12 @@ class Handler(BaseHTTPRequestHandler):
                     "symbol": setup["symbol"],
                     "name": setup["name"],
                 }
-                cfg.setdefault("entry", {}).update(setup["entry"])
+                entry_cfg = cfg.setdefault("entry", {})
+                # A leftover curve or dollar cap from the previous setup would keep
+                # sizing the new one; unrelated keys (tapeEnabled) are preserved.
+                entry_cfg.pop("dipCurve", None)
+                entry_cfg.pop("maxUnhedgedUsd", None)
+                entry_cfg.update(setup["entry"])
                 tmp_cfg = CONFIG_PATH.with_suffix(".tmp")
                 tmp_cfg.write_text(json.dumps(cfg, indent=2))
                 tmp_cfg.replace(CONFIG_PATH)
@@ -1696,7 +1701,7 @@ class Handler(BaseHTTPRequestHandler):
                 })
             elif self.path == "/api/bot/ab-test/start":
                 from bot.ab_test import start_candidate_test
-                res = start_candidate_test()
+                res = start_candidate_test(body.get("candidateId"), body.get("baselineRunId"))
                 self._send(200, res)
             elif self.path == "/api/bot/ab-test/stop":
                 from bot.ab_test import stop_candidate_test

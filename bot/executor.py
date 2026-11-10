@@ -44,6 +44,25 @@ def compute_fill_usd(
     return round(shares * price, 2), 0.0
 
 
+def dip_curve_shares(curve: dict, price: float, max_clip: float) -> float | None:
+    """Shares for a fresh dip from a linear inverse-dip curve, or None if the curve is unusable.
+
+    curve = {"lo": 0.07, "hi": 0.45, "sharesLo": 33, "sharesHi": 8}: the fat
+    end of the band (low price) gets the big clip, the thin end the small one,
+    interpolated linearly in price and clamped outside the band.
+    """
+    try:
+        lo = float(curve.get("lo", 0.07))
+        hi = float(curve.get("hi", 0.45))
+        s_lo = float(curve.get("sharesLo", 10.0))
+        s_hi = float(curve.get("sharesHi", 10.0))
+    except (AttributeError, TypeError, ValueError):
+        # A typo in config.json must not crash the trading loop mid-window.
+        return None
+    a = min(max((price - lo) / (hi - lo), 0.0), 1.0) if hi > lo else 0.0
+    return min(clip_shares(round(s_lo + (s_hi - s_lo) * a), max_clip), max_clip)
+
+
 def select_ladder_clip(
     deficit: float,
     price: float,
@@ -57,6 +76,7 @@ def select_ladder_clip(
     atomic_arb: bool = False,
     is_v23: bool = False,
     target_risk_usd: float | None = None,
+    dip_curve: dict | None = None,
     **kwargs,  # absorbs legacy unused kwargs
 ) -> float:
     """Select clip size. In v2.2, employs Confidence Sizing (Heavy on atomic/deficit, Micro on dips).
@@ -64,11 +84,19 @@ def select_ladder_clip(
     In v2.3, employs Constant Dollar-Risk Sizing: Shares = $4.50 / entry price,
     floored to 5-share increments and bounded to [10, max_clip] so unhedged
     downside (shares * entry price) strictly never exceeds $4.50.
+
+    dip_curve (optional): linear inverse-dip curve that overrides the fresh-dip
+    clip. Deficit-closing fills are unaffected (they snap to the deficit).
     """
     if deficit > 0:
         # Snap directly to the deficit capped at max_clip so we don't overshoot
         # or leave residual unhedged dust!
         return min(clip_shares(deficit, max_clip), max_clip)
+    if dip_curve:
+        curve_clip = dip_curve_shares(dip_curve, price, max_clip)
+        if curve_clip is not None:
+            return curve_clip
+        # Unusable curve values: fall through to the flat ladder clip.
     # DSP v2.2 Confidence-Based Sizing:
     # 1. Atomic Arb (High Confidence, Risk-Free): Size heavy (up to max_clip = 60 sh)
     # v2.3 intentionally does NOT take the heavy path here: fresh dips always
@@ -145,6 +173,8 @@ def evaluate_microstructure_ladder(
     benchmark_pair_cost: float = C.BENCHMARK_PAIR_COST,
     max_pair_cost: float = C.PAIR_COST_MAX,
     max_share_lead: float = C.MAX_SHARE_LEAD,
+    max_unhedged_usd: float = 0.0,
+    dip_curve: dict | None = None,
     target_pair_cost: float | None = None,
     in_sweep_phase: bool = False,
     rescue_max_pair_cost: float = C.RESCUE_PAIR_COST_MAX,
@@ -418,6 +448,7 @@ def evaluate_microstructure_ladder(
                 is_v22=is_v22,
                 atomic_arb=is_atomic,
                 is_v23=is_v23,
+                dip_curve=dip_curve,
             )
             est_usd, _ = compute_fill_usd(shares, px, role=role, include_fee=(role == "TAKER"))
             proj_pc = _projected_pair_cost(inv, side, shares, est_usd)
@@ -429,6 +460,18 @@ def evaluate_microstructure_ladder(
             if not atomic_bypass and (lead + shares >= lead_cap):
                 saw_unhedged_cap = True
                 continue
+            # Dollar-denominated unhedged cap (opt-in; 0 = off). max_share_lead
+            # counts SHARES, so it vetoes a big cheap clip ("33 >= 11") while
+            # saying nothing about dollars at risk. This knob caps the dollars
+            # exposed instead: average cost of this side's inventory x the net
+            # unhedged lead it would leave behind.
+            if max_unhedged_usd > 0:
+                new_sh = inv[side]["shares"] + shares
+                new_cost = inv[side]["cost"] + est_usd
+                lead_after = new_sh - inv[opp]["shares"]
+                if lead_after > 0 and (new_cost / new_sh) * lead_after > max_unhedged_usd:
+                    saw_unhedged_cap = True
+                    continue
             # Sub-$1.00 pair-cost gate: <= max_pair_cost when closing deficit, <= bench_pc otherwise
             allowed_pc = max_pair_cost if deficit > 0 else bench_pc
             if proj_pc is None or proj_pc <= allowed_pc:

@@ -112,6 +112,7 @@ export function PolymarketLiveChart({
             market={market}
             positions={positions.filter((p) => p.slug === market.slug)}
             params={config?.config.intervalParams[market.interval] ?? null}
+            pairCostCap={config?.config.entry.maxPairCost}
             wide={activeMarkets.length === 1}
             ws={ws}
           />
@@ -125,12 +126,14 @@ function MarketChartPanel({
   market,
   positions = [],
   params,
+  pairCostCap,
   wide = false,
   ws,
 }: {
   market: MarketView
   positions?: PositionView[]
   params: BotConfigView['intervalParams'][Interval] | null
+  pairCostCap?: number
   wide?: boolean
   ws?: WsStatus
 }) {
@@ -320,8 +323,8 @@ function MarketChartPanel({
       <ProbabilityChart market={market} points={points} ticks={ticks} />
 
       <div className="mt-3 space-y-2">
-        <LiveWindowStrip markets={[market]} ws={ws} />
-        <OpenPositionsStrip positions={positions} />
+        <LiveWindowStrip markets={[market]} ws={ws} pairCostCap={pairCostCap} />
+        <OpenPositionsStrip positions={positions} pairCostCap={pairCostCap} />
       </div>
 
       <div className="mt-3 flex items-center justify-between text-[11px] text-faint">

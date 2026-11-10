@@ -79,8 +79,9 @@ export function AbTest() {
 
   const isCandidateRunning = Boolean(
     control.data?.running &&
-    ((control.data?.activeRunId && data?.candidate?.runId && control.data.activeRunId === data.candidate.runId) ||
-     (control.data?.strategy?.id && (control.data.strategy.id.endsWith('v2.2') || control.data.strategy.id.endsWith('v2.3') || control.data.strategy.id.endsWith('v2.4'))))
+    control.data?.activeRunId &&
+    data?.candidate?.runId &&
+    control.data.activeRunId === data.candidate.runId
   )
   const handleStart = async () => {
     try {
