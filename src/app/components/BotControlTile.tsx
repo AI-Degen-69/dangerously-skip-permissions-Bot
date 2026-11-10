@@ -16,6 +16,7 @@ import {
   useStartBot,
   useStopBot,
   useStrategySetups,
+  mergeStrategySetups,
   type StrategySetup,
 } from '../lib/bot'
 import { STRATEGY_PRESETS } from '../botDefaults'
@@ -61,7 +62,7 @@ export function BotControlTile() {
   const running = (control.data?.running ?? false) && !isViewOnly
   const activeRunId = control.data?.activeRunId ?? runsQuery.data?.activeRunId ?? null
   const selectedRunId = control.data?.selectedRunId ?? runsQuery.data?.selectedRunId ?? null
-  const setups: StrategySetup[] = setupsQuery.data?.setups ?? Object.values(STRATEGY_PRESETS)
+  const setups: StrategySetup[] = mergeStrategySetups(setupsQuery.data?.setups, STRATEGY_PRESETS as unknown as Record<string, StrategySetup>)
   const activeStrategyId = control.data?.strategy?.id ?? setupsQuery.data?.activeSetupId ?? setups[0]?.id
 
   // While the loop runs, the tile always shows what the engine is running.

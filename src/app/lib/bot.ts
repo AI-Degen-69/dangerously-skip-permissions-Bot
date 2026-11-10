@@ -108,12 +108,24 @@ export interface StrategyInfo {
   cutoffSec?: number
 }
 
+export interface StrategyFeatures {
+  sizing?: string
+  dollarRisk?: number
+  preflightGate?: boolean
+  heavyAtomic?: boolean
+  sweep?: boolean
+  pairedVolumeCapped?: boolean
+  blurb?: string
+}
+
 export interface StrategySetup {
   id: string
   symbol: string
   name: string
   signature: string
   description: string
+  configHighlights?: Record<string, string>
+  features?: StrategyFeatures
   entry: {
     clipSharesDefault: number
     maxShares: number
@@ -588,6 +600,18 @@ export const useStrategySetups = () =>
     retry: false,
   })
 
+/** Union backend setups with local presets so a newly-added preset (e.g. DSP-v2.3)
+ *  stays selectable even while an older API process is still serving a stale list. */
+export function mergeStrategySetups(
+  backend: StrategySetup[] | undefined,
+  fallback: Record<string, StrategySetup>,
+): StrategySetup[] {
+  const byId = new Map<string, StrategySetup>()
+  for (const preset of Object.values(fallback)) byId.set(preset.id, preset)
+  for (const item of backend ?? []) byId.set(item.id, { ...(byId.get(item.id) ?? {} as StrategySetup), ...item })
+  return [...byId.values()]
+}
+
 export const useSelectStrategySetup = () =>
   useBotMutation((setupId: string) =>
     send<{ ok: boolean; activeSetupId: string; setup: StrategySetup; config: BotConfigView }>('/strategy-setup', 'POST', { setupId }),
@@ -611,7 +635,10 @@ export interface AbTestDistributionStats {
   runId: string | null
   name: string
   description?: string
+  signature?: string
   configHighlights?: Record<string, string>
+  entry?: Record<string, number | boolean>
+  features?: StrategyFeatures
   samples: number
   targetSamples?: number
   progressPct?: number

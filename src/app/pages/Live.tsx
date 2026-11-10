@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Activity, Radio, Target, Zap } from 'lucide-react'
+import { Activity, Radio, Target } from 'lucide-react'
 import { Link } from 'react-router'
 
 import { PolymarketLiveChart } from '../components/PolymarketEmbed'
@@ -13,13 +13,13 @@ import {
   useBotTrades,
   useBotWsTicks,
   useStrategySetups,
+  mergeStrategySetups,
   type WsStatus,
+  type StrategySetup,
   type WsTick,
   type BotEvent,
   type BotSnapshot,
   type BotTrade,
-  type MarketView,
-  type PositionView,
 } from '../lib/bot'
 import { STRATEGY_PRESETS } from '../botDefaults'
 import { cx } from '../lib/cx'
@@ -88,16 +88,12 @@ export function Live() {
     [rawEvents],
   )
 
-  const activeStrategyId = data?.strategy?.id ?? control.data?.strategy?.id ?? setupsQuery.data?.activeSetupId ?? 'hapcs-v1'
-  const setups = setupsQuery.data?.setups ?? Object.values(STRATEGY_PRESETS)
+  const activeStrategyId = data?.strategy?.id ?? control.data?.strategy?.id ?? setupsQuery.data?.activeSetupId
+  const setups = mergeStrategySetups(setupsQuery.data?.setups, STRATEGY_PRESETS as unknown as Record<string, StrategySetup>)
   const currentSetup = setups.find((s) => s.id === activeStrategyId) ?? setups[0]
 
-  const strategySymbol = data?.strategy?.symbol ?? control.data?.strategy?.symbol ?? currentSetup?.symbol ?? '⚡ DSP-v2.2'
-  const strategyName =
-    data?.strategy?.name ??
-    control.data?.strategy?.name ??
-    currentSetup?.name ??
-    'Dangerously Skip Permissions v2.2 (Confidence Sizing)'
+  const strategySymbol = data?.strategy?.symbol ?? control.data?.strategy?.symbol ?? currentSetup?.symbol ?? '—'
+  const strategyName = data?.strategy?.name ?? control.data?.strategy?.name ?? currentSetup?.name ?? '—'
   const strategySignature =
     data?.strategy?.signature ??
     control.data?.strategy?.signature ??
@@ -212,12 +208,12 @@ export function Live() {
       ) : (
         data && (
           <>
-            <StraddleDeskStrip data={data} ws={ws} />
+            <StraddleDeskStrip data={data} />
 
             <PolymarketLiveChart markets={data.markets} positions={data.positions} ws={ws} />
 
             <div className="mt-3 grid gap-3 lg:grid-cols-3">
-              <Card className="p-5 lg:col-span-2">
+              <Card className="p-5 lg:col-span-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h2 className="text-[14px] font-semibold">Decision journal</h2>
@@ -277,11 +273,6 @@ export function Live() {
                   )}
                 </div>
               </Card>
-
-              <div className="flex flex-col gap-3">
-                <Positions data={data} />
-                <RiskPanel data={data} />
-              </div>
             </div>
 
             <WssStreamTape ws={ws} ticks={ticks} />
@@ -378,135 +369,6 @@ function EventRow({ event }: { event: BotEvent }) {
   )
 }
 
-function Positions({ data }: { data: BotSnapshot }) {
-  return (
-    <Card className="p-5">
-      <div className="flex items-center justify-between">
-        <h2 className="text-[14px] font-semibold">Open positions</h2>
-        <Badge tone={data.positions.length > 0 ? 'accent' : 'neutral'}>{data.positions.length}</Badge>
-      </div>
-      {data.positions.length === 0 ? (
-        <p className="mt-3 text-[13px] text-muted">Flat. The bot only holds a position when every entry gate passes.</p>
-      ) : (
-        <ul className="mt-2 divide-y divide-line">
-          {data.positions.map((position) => (
-            <PositionRow key={position.id} position={position} markets={data.markets} />
-          ))}
-        </ul>
-      )}
-    </Card>
-  )
-}
-
-function PositionRow({ position, markets }: { position: PositionView; markets?: MarketView[] }) {
-  const isResolving = Boolean(position.resolving ?? (position.secondsLeft <= 0))
-
-  // Mid-window fallback: if window is still running, ensure mark and pnl are not hidden with a dash
-  const market = markets?.find((m) => m.slug === position.slug)
-  const quotes = market?.quotes?.[position.side]
-  const quoteMark = quotes?.bid ?? quotes?.ask ?? null
-  const fallbackMark = position.mark ?? quoteMark ?? (isResolving ? null : 0)
-  const fallbackPnl =
-    position.unrealizedPnlUsd ??
-    (fallbackMark != null ? Number((fallbackMark * position.shares - position.costUsd).toFixed(2)) : (isResolving ? null : -position.costUsd))
-
-  const mark = isResolving && position.mark == null ? null : fallbackMark
-  const pnl = isResolving && position.unrealizedPnlUsd == null ? null : fallbackPnl
-  const resolving = isResolving && pnl == null
-
-  return (
-    <li className="py-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Badge tone={position.side === 'Up' ? 'success' : 'danger'}>{position.side}</Badge>
-          <span className="text-[12.5px] text-muted">{windowLabel(position.slug)}</span>
-        </div>
-        <span
-          className={cx(
-            'text-[13px] font-semibold tabular-nums',
-            resolving || pnl == null ? 'text-faint' : pnl >= 0 ? 'text-success' : 'text-danger',
-          )}
-        >
-          {resolving ? 'resolving…' : money(pnl)}
-        </span>
-      </div>
-      <div className="mt-1.5 grid grid-cols-3 gap-2 text-[12px] text-muted">
-        <span>
-          {position.shares} @ {cents(position.entryPrice)}
-        </span>
-        <span>mark {mark == null ? '—' : cents(mark)}</span>
-        <span className="text-right">{Math.max(0, Math.round(position.secondsLeft))}s left</span>
-      </div>
-      <div className="mt-1 flex items-center gap-2 text-[11.5px] text-faint">
-        <span>p {position.modelProb.toFixed(3)}</span>
-        <span>edge {(position.edge * 100).toFixed(1)}¢</span>
-        {position.stalledSec !== null && <span className="text-warning">stalled {Math.round(position.stalledSec)}s</span>}
-      </div>
-    </li>
-  )
-}
-
-function RiskPanel({ data }: { data: BotSnapshot }) {
-  const { risk, limits } = data
-  const dayLoss = risk.dailyLossUsd != null ? risk.dailyLossUsd : Math.max(0, risk.dayStartEquityUsd - data.equityUsd)
-  const dayLimit = limits.dailyLossCapUsd != null ? limits.dailyLossCapUsd : (risk.dayStartEquityUsd * limits.dailyLossLimitPct) / 100
-  const drawdown = Math.max(0, risk.highWaterEquityUsd - data.equityUsd)
-  const drawdownLimit = (risk.highWaterEquityUsd * limits.maxDrawdownPct) / 100
-  const cooldownLeft = Math.max(0, Math.round((risk.cooldownUntilMs - Date.now()) / 1000))
-
-  return (
-    <Card className="p-5">
-      <div className="flex items-center justify-between">
-        <h2 className="text-[14px] font-semibold">Risk limits</h2>
-        <Zap className="size-4 text-faint" />
-      </div>
-      <ul className="mt-3 space-y-3">
-        <Limit label="Trades today" value={`${risk.tradesToday} / ${limits.maxTradesPerDay}`} ratio={risk.tradesToday / limits.maxTradesPerDay} />
-        <Limit
-          label="Losses in a row"
-          value={`${risk.consecutiveLosses} / ${limits.maxConsecutiveLosses}`}
-          ratio={risk.consecutiveLosses / limits.maxConsecutiveLosses}
-        />
-        <Limit label="Daily loss" value={`${money(dayLoss)} of ${money(dayLimit)}`} ratio={dayLimit > 0 ? dayLoss / dayLimit : 0} />
-        <Limit label="Drawdown" value={`${money(drawdown)} of ${money(drawdownLimit)}`} ratio={drawdownLimit > 0 ? drawdown / drawdownLimit : 0} />
-      </ul>
-
-      {risk.halted && (
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-tile bg-danger-soft p-2.5 text-[12.5px] text-danger">
-          <span>Halted for the day: {label(risk.haltReason)}</span>
-          <Link to="/" className="text-[12px] font-medium text-danger underline hover:text-fg">
-            Clear on Dashboard →
-          </Link>
-        </div>
-      )}
-      {cooldownLeft > 0 && !risk.halted && (
-        <p className="mt-3 rounded-tile bg-warning-soft px-2.5 py-2 text-[12.5px] text-warning">
-          Cooling down after a loss — {cooldownLeft}s left
-        </p>
-      )}
-      {data.newsBlocked && <p className="mt-3 rounded-tile bg-info-soft px-2.5 py-2 text-[12.5px] text-info">News blackout active</p>}
-    </Card>
-  )
-}
-
-function Limit({ label: limitLabel, value, ratio }: { label: string; value: string; ratio: number }) {
-  const clamped = Math.min(1, Math.max(0, Number.isFinite(ratio) ? ratio : 0))
-  return (
-    <li>
-      <div className="flex items-center justify-between text-[12.5px]">
-        <span className="text-muted">{limitLabel}</span>
-        <span className="tabular-nums">{value}</span>
-      </div>
-      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-2">
-        <div
-          className={cx('h-full rounded-full', clamped >= 1 ? 'bg-danger' : clamped > 0.66 ? 'bg-warning' : 'bg-accent')}
-          style={{ width: `${clamped * 100}%` }}
-        />
-      </div>
-    </li>
-  )
-}
-
 function parseTsMs(ts: number | string): number {
   const raw = typeof ts === 'string' ? Number(ts) || new Date(ts).getTime() : ts
   return Number.isFinite(raw) ? (raw < 1e11 ? raw * 1000 : raw) : Date.now()
@@ -586,9 +448,16 @@ function getTradeWhy(trade: BotTrade): WhyInfo {
     case 'hedge-leg':
       return {
         label: 'Hedge Leg',
-        sub: 'opposite leg',
+        sub: pairCost != null ? `opposite leg · pair $${pairCost.toFixed(2)}` : 'opposite leg',
         tone: 'info',
         tip: 'Counter hedge leg filled to balance directional exposure.',
+      }
+    case 'rescue-hedge':
+      return {
+        label: 'Pair Closer',
+        sub: pairCost != null ? `${role ?? 'MAKER'} · pair closed $${pairCost.toFixed(2)}` : `${role ?? 'MAKER'} · closing leg`,
+        tone: 'info',
+        tip: 'Equalizing buy on the lagging side that closes the pair opened by the earlier dip.',
       }
     case 'lean-up':
       return {
@@ -844,7 +713,7 @@ function Trades({ items }: { items: BotTrade[] }) {
   )
 }
 
-function StraddleDeskStrip({ data, ws }: { data: BotSnapshot; ws?: WsStatus }) {
+function StraddleDeskStrip({ data }: { data: BotSnapshot }) {
   const activeMarket = data.markets[0]
   const positions = data.positions
   const upPos = positions.find((p) => p.side === 'Up')
@@ -877,7 +746,6 @@ function StraddleDeskStrip({ data, ws }: { data: BotSnapshot; ws?: WsStatus }) {
   const minFloor = hasHoldings ? Math.min(payIfUp, payIfDown) : 0
   const maxPayoff = hasHoldings ? Math.max(payIfUp, payIfDown) : 0
   const favoredSide = payIfUp >= payIfDown ? 'Up' : 'Down'
-  const delta = Math.round(upShares) - Math.round(downShares)
 
   const fillsCount =
     Number(activeMarket?.verdict?.detail?.fills) ||
@@ -886,7 +754,7 @@ function StraddleDeskStrip({ data, ws }: { data: BotSnapshot; ws?: WsStatus }) {
 
   return (
     <Card className="mt-3 p-4">
-      <div className="grid grid-cols-2 gap-4 divide-y sm:divide-y-0 sm:divide-x divide-line lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 divide-y sm:divide-y-0 sm:divide-x divide-line lg:grid-cols-3">
         {/* Metric 1: Combined Pair Cost */}
         <div className="pt-2 sm:pt-0 sm:px-3 first:pl-0">
           <p className="text-[11px] font-medium uppercase tracking-wide text-faint">Combined Pair Cost</p>
@@ -932,30 +800,7 @@ function StraddleDeskStrip({ data, ws }: { data: BotSnapshot; ws?: WsStatus }) {
           </p>
         </div>
 
-        {/* Metric 2: Holdings & Net Bias */}
-        <div className="pt-2 sm:pt-0 sm:px-3">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-faint">Holdings & Net Bias</p>
-          <p className="mt-1 text-[22px] font-semibold tracking-[-0.02em] tabular-nums">
-            {hasHoldings ? `${Math.round(upShares)} Up · ${Math.round(downShares)} Down` : '0 Up · 0 Down'}
-          </p>
-          <p className="mt-0.5 text-[11.5px] text-muted">
-            {!hasHoldings ? (
-              'Flat · No open inventory'
-            ) : delta === 0 ? (
-              <span className="font-medium text-success">Balanced 1:1 (Flat Delta)</span>
-            ) : delta > 0 ? (
-              <span className={cx('font-medium', delta > 30 ? 'text-warning' : 'text-accent')}>
-                Net: +{delta} Up bias ({unpairedShares} unhedged)
-              </span>
-            ) : (
-              <span className={cx('font-medium', Math.abs(delta) > 30 ? 'text-warning' : 'text-accent')}>
-                Net: +{Math.abs(delta)} Down bias ({unpairedShares} unhedged)
-              </span>
-            )}
-          </p>
-        </div>
-
-        {/* Metric 3: Guaranteed Settlement Floor */}
+        {/* Metric 2: Guaranteed Settlement Floor */}
         <div className="pt-2 sm:pt-0 sm:px-3">
           <p className="text-[11px] font-medium uppercase tracking-wide text-faint">Settlement Payoff Floor</p>
           <div className="mt-1 flex items-baseline gap-2">
@@ -984,7 +829,7 @@ function StraddleDeskStrip({ data, ws }: { data: BotSnapshot; ws?: WsStatus }) {
           </p>
         </div>
 
-        {/* Metric 4: Window Budget & Clips */}
+        {/* Metric 3: Window Budget & Clips */}
         <div className="pt-2 sm:pt-0 sm:px-3 last:pr-0">
           <p className="text-[11px] font-medium uppercase tracking-wide text-faint">Window Budget & Clips</p>
           <div className="mt-1 flex items-baseline gap-2">
@@ -997,11 +842,6 @@ function StraddleDeskStrip({ data, ws }: { data: BotSnapshot; ws?: WsStatus }) {
             <span className="tabular-nums">
               {fillsCount} fills (tape med: 39)
             </span>
-            {ws?.state === 'connected' && (
-              <span className="tabular-nums opacity-80">
-                WSS {ws.age_ms != null ? `${ws.age_ms}ms` : '<40ms'}
-              </span>
-            )}
           </div>
         </div>
       </div>
@@ -1009,12 +849,7 @@ function StraddleDeskStrip({ data, ws }: { data: BotSnapshot; ws?: WsStatus }) {
   )
 }
 
-
 function WssStreamTape({ ws, ticks }: { ws?: WsStatus; ticks?: WsTick[] }) {
-  const isConnected = ws?.state === 'connected'
-  const isStale = ws?.state === 'stale'
-  const isFallback = ws?.state === 'fallback_active'
-
   return (
     <Card className="mt-3 p-5">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
@@ -1023,27 +858,12 @@ function WssStreamTape({ ws, ticks }: { ws?: WsStatus; ticks?: WsTick[] }) {
             <Radio className="size-4 animate-pulse" />
           </span>
           <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-[14px] font-semibold">Live WSS Orderbook Stream</h2>
-              <Badge
-                tone={isConnected ? 'success' : isStale ? 'warning' : isFallback ? 'danger' : 'neutral'}
-                dot
-              >
-                {isConnected
-                  ? 'Connected (<40ms)'
-                  : isStale
-                  ? 'Stale Feed (>3s)'
-                  : isFallback
-                  ? 'REST Fallback Active'
-                  : 'Disconnected'}
-              </Badge>
-            </div>
+            <h2 className="text-[14px] font-semibold">Live WSS Orderbook Stream</h2>
             <p className="font-mono text-[11px] text-faint">wss://ws-subscriptions-clob.polymarket.com/ws/market</p>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {ws?.age_ms != null && <MetricChip text={`Tick Age: ${ws.age_ms}ms`} />}
           <MetricChip text={`Ticks: ${ws?.tick_count ?? 0}`} />
           {ws?.reconnect_count ? <MetricChip text={`Reconnects: ${ws.reconnect_count}`} /> : null}
         </div>

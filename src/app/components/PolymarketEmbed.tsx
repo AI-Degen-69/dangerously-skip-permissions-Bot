@@ -1,66 +1,12 @@
-import { Activity, ArrowUpRight, Radio, TrendingDown, TrendingUp } from 'lucide-react'
+import { Activity, ArrowUpRight, Radio } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 
 import { useBotConfig, type BotConfigView, type Interval, type MarketView, type PositionView, type WsStatus } from '../lib/bot'
 import { cx } from '../lib/cx'
 import { reasonLabel } from '../lib/labels'
 import { Badge, Card } from './ui'
-
-export function getWsLatencyStatus(ws?: WsStatus | null) {
-  if (!ws || ws.state === 'disconnected') {
-    return {
-      label: 'Disconnected',
-      rawMs: null,
-      tone: 'neutral' as const,
-      badgeClass: 'bg-surface-2 text-muted',
-      dotClass: 'bg-muted',
-      colorClass: 'text-muted',
-    }
-  }
-  if (ws.state === 'fallback_active' || ws.state === 'stale') {
-    const ageMs = ws.age_ms ?? 3000
-    return {
-      label: `Stale (${(ageMs / 1000).toFixed(1)}s)`,
-      rawMs: ageMs,
-      tone: 'danger' as const,
-      badgeClass: 'bg-danger-soft text-danger',
-      dotClass: 'bg-danger',
-      colorClass: 'text-danger',
-    }
-  }
-  const ageMs = ws.age_ms
-  // Green range: < 150ms
-  if (ageMs == null || ageMs < 150) {
-    return {
-      label: ageMs == null ? '<40ms' : `${ageMs}ms`,
-      rawMs: ageMs,
-      tone: 'success' as const,
-      badgeClass: 'bg-success-soft text-success',
-      dotClass: 'bg-success',
-      colorClass: 'text-success',
-    }
-  }
-  // Yellow range: 150ms - 500ms
-  if (ageMs <= 500) {
-    return {
-      label: `${ageMs}ms`,
-      rawMs: ageMs,
-      tone: 'warning' as const,
-      badgeClass: 'bg-warning-soft text-warning',
-      dotClass: 'bg-warning',
-      colorClass: 'text-warning',
-    }
-  }
-  // Red range: > 500ms
-  return {
-    label: `${ageMs}ms`,
-    rawMs: ageMs,
-    tone: 'danger' as const,
-    badgeClass: 'bg-danger-soft text-danger',
-    dotClass: 'bg-danger',
-    colorClass: 'text-danger',
-  }
-}
+import { LiveWindowStrip } from './LiveWindowStrip'
+import { OpenPositionsStrip } from './OpenPositionsStrip'
 
 // Polymarket's official embed only plots last-trade prints, so a market this
 // quiet is stuck at its listing price forever. These panels keep the Polymarket
@@ -132,7 +78,6 @@ const useOddsSeries = (market: MarketView): OddsPoint[] => {
   return points
 }
 
-const priceCents = (value: number | null) => (value === null ? '-' : `${Math.round(value * 100)}¢`)
 const clock = (ms: number) => new Date(ms).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
 // Elapsed time into the window, e.g. 5:00 — "passed", not "remaining".
 const mmss = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`
@@ -334,8 +279,6 @@ function MarketChartPanel({
       ? `depth $${(upDepth / 1000).toFixed(1)}k / $${(downDepth / 1000).toFixed(1)}k`
       : 'best bid/ask'
 
-  const wsLatency = getWsLatencyStatus(ws)
-
   return (
     <Card aria-label={`Live odds for ${slug}`} className={cx('flex flex-col p-5', wide && 'lg:col-span-2')}>
       <div className="flex items-center justify-between gap-2">
@@ -344,16 +287,6 @@ function MarketChartPanel({
           Live odds · via Polymarket
         </p>
         <div className="flex items-center gap-2">
-          <span
-            className={cx(
-              'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-medium tabular-nums',
-              wsLatency.badgeClass,
-            )}
-            title={`WebSocket latency: ${wsLatency.rawMs != null ? `${wsLatency.rawMs}ms` : '<40ms'}`}
-          >
-            <span className={cx('size-1.5 rounded-full', wsLatency.dotClass)} />
-            WSS {wsLatency.label}
-          </span>
           <a
             href={eventUrl}
             target="_blank"
@@ -445,32 +378,12 @@ function MarketChartPanel({
         />
       </dl>
 
-      <div className="mt-2.5 grid grid-cols-2 gap-2">
-        {(['Up', 'Down'] as const).map((outcome) => {
-          const leading = market.side === outcome
-          const holding = positions.some((p) => p.side === outcome)
-          return (
-            <div
-              key={outcome}
-              className={cx(
-                'rounded-tile border px-3 py-1.5',
-                holding || leading ? 'border-accent/40 bg-accent-soft' : 'border-line bg-surface-2/50',
-              )}
-            >
-              <p className="flex items-center gap-1.5 text-[11px] text-muted">
-                {outcome === 'Up' ? <TrendingUp className="size-3.5" /> : <TrendingDown className="size-3.5" />}
-                {outcome}
-                {holding ? <span className="text-[10px] font-medium text-accent">held</span> : leading && <span className="text-[10px] text-faint">leading</span>}
-              </p>
-              <p className="mt-0.5 text-[12.5px] font-medium tabular-nums">
-                {priceCents(market.quotes[outcome].bid)} / {priceCents(market.quotes[outcome].ask)}
-              </p>
-            </div>
-          )
-        })}
-      </div>
-
       <OddsChart market={market} points={points} />
+
+      <div className="mt-3 space-y-2">
+        <LiveWindowStrip markets={[market]} ws={ws} />
+        <OpenPositionsStrip positions={positions} />
+      </div>
     </Card>
   )
 }
@@ -500,15 +413,7 @@ function OddsChart({ market, points }: { market: MarketView; points: OddsPoint[]
       role="img"
       aria-label={`Implied Up odds ${upPct.toFixed(0)}% this window`}
     >
-      <div className="flex items-center justify-between text-[11px] text-faint">
-        <span>
-          Implied Up · <span className="font-semibold tabular-nums text-fg">{upPct.toFixed(0)}%</span>
-        </span>
-        <span>
-          Down <span className="font-semibold tabular-nums text-fg">{(100 - upPct).toFixed(0)}%</span>
-        </span>
-      </div>
-      <div className="relative mt-1 flex-1">
+      <div className="relative flex-1">
       <svg viewBox={`0 0 ${W} ${H}`} className="absolute inset-0 h-full w-full" preserveAspectRatio="none" aria-hidden>
         <defs>
           {/* One fill, clipped to whichever side of the price-to-beat line it is on. */}
