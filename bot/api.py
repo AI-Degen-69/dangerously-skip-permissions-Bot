@@ -1198,7 +1198,7 @@ EDITABLE = {
     "entry.clipSharesDefault": [1, 50],
     "entry.maxShares": [5, 100],
     "entry.minFillPrice": [0.01, 0.50],
-    "entry.maxFillPrice": [0.70, 0.99],
+    "entry.maxFillPrice": [0.40, 0.99],
     "entry.benchmarkPairCost": [0.80, 0.99],
     "entry.targetPairCost": [0.80, 0.99],
     "entry.maxPairCost": [0.90, 0.999],
