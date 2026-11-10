@@ -1,0 +1,360 @@
+{
+  "event_slug": "btc-updown-5m-1794282000",
+  "market": "Bitcoin Up or Down - November 9, 10:40PM-10:45PM ET",
+  "trades": 19,
+  "cost_usd": 128.81,
+  "payout_usd": 130.0,
+  "net_usd": 1.19,
+  "winner": "Down",
+  "resolvedAt": "2026-11-10T03:49:50.756319+00:00",
+  "fills": [
+    {
+      "minute": 0,
+      "ts": 1794281992366,
+      "outcome": "Down",
+      "price": 0.41,
+      "shares": 10.0,
+      "usd": 4.1,
+      "reason": "straddle-open",
+      "detail": {
+        "minute": 0,
+        "role": "MAKER",
+        "subReason": "maker-dip-ladder",
+        "feeUsd": 0.0,
+        "pairCost": null,
+        "deficit": 0.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 0,
+      "ts": 1794281992878,
+      "outcome": "Down",
+      "price": 0.37,
+      "shares": 10.0,
+      "usd": 3.7,
+      "reason": "hedge-leg",
+      "detail": {
+        "minute": 0,
+        "role": "MAKER",
+        "subReason": "maker-dip-ladder",
+        "feeUsd": 0.0,
+        "pairCost": null,
+        "deficit": 0.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 0,
+      "ts": 1794281994709,
+      "outcome": "Up",
+      "price": 0.6,
+      "shares": 20.0,
+      "usd": 12.0,
+      "reason": "rescue-hedge",
+      "detail": {
+        "minute": 0,
+        "role": "MAKER",
+        "subReason": "rescue-equalizer",
+        "feeUsd": 0.0,
+        "pairCost": 0.99,
+        "deficit": 20.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 0,
+      "ts": 1794282015624,
+      "outcome": "Up",
+      "price": 0.45,
+      "shares": 10.0,
+      "usd": 4.5,
+      "reason": "maker-dip-ladder",
+      "detail": {
+        "minute": 0,
+        "role": "MAKER",
+        "subReason": "maker-dip-ladder",
+        "feeUsd": 0.0,
+        "pairCost": 0.94,
+        "deficit": 0.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 0,
+      "ts": 1794282016138,
+      "outcome": "Down",
+      "price": 0.54,
+      "shares": 10.0,
+      "usd": 5.4,
+      "reason": "rescue-hedge",
+      "detail": {
+        "minute": 0,
+        "role": "MAKER",
+        "subReason": "rescue-equalizer",
+        "feeUsd": 0.0,
+        "pairCost": 0.99,
+        "deficit": 10.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 0,
+      "ts": 1794282016656,
+      "outcome": "Up",
+      "price": 0.45,
+      "shares": 10.0,
+      "usd": 4.5,
+      "reason": "maker-dip-ladder",
+      "detail": {
+        "minute": 0,
+        "role": "MAKER",
+        "subReason": "maker-dip-ladder",
+        "feeUsd": 0.0,
+        "pairCost": 0.965,
+        "deficit": 0.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 0,
+      "ts": 1794282017175,
+      "outcome": "Down",
+      "price": 0.54,
+      "shares": 10.0,
+      "usd": 5.4,
+      "reason": "rescue-hedge",
+      "detail": {
+        "minute": 0,
+        "role": "MAKER",
+        "subReason": "rescue-equalizer",
+        "feeUsd": 0.0,
+        "pairCost": 0.99,
+        "deficit": 10.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 0,
+      "ts": 1794282019328,
+      "outcome": "Up",
+      "price": 0.4,
+      "shares": 10.0,
+      "usd": 4.0,
+      "reason": "maker-dip-ladder",
+      "detail": {
+        "minute": 0,
+        "role": "MAKER",
+        "subReason": "maker-dip-ladder",
+        "feeUsd": 0.0,
+        "pairCost": 0.965,
+        "deficit": 0.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 0,
+      "ts": 1794282019844,
+      "outcome": "Down",
+      "price": 0.58,
+      "shares": 10.0,
+      "usd": 5.8,
+      "reason": "rescue-hedge",
+      "detail": {
+        "minute": 0,
+        "role": "MAKER",
+        "subReason": "rescue-equalizer",
+        "feeUsd": 0.0,
+        "pairCost": 0.988,
+        "deficit": 10.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 0,
+      "ts": 1794282023050,
+      "outcome": "Up",
+      "price": 0.36,
+      "shares": 10.0,
+      "usd": 3.6,
+      "reason": "maker-dip-ladder",
+      "detail": {
+        "minute": 0,
+        "role": "MAKER",
+        "subReason": "maker-dip-ladder",
+        "feeUsd": 0.0,
+        "pairCost": 0.9647,
+        "deficit": 0.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 0,
+      "ts": 1794282023791,
+      "outcome": "Down",
+      "price": 0.64,
+      "shares": 10.0,
+      "usd": 6.56,
+      "reason": "rescue-hedge",
+      "detail": {
+        "minute": 0,
+        "role": "TAKER",
+        "subReason": "rescue-equalizer",
+        "feeUsd": 0.1613,
+        "pairCost": 0.9927,
+        "deficit": 10.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 1,
+      "ts": 1794282075698,
+      "outcome": "Up",
+      "price": 0.3,
+      "shares": 15.0,
+      "usd": 4.5,
+      "reason": "maker-dip-ladder",
+      "detail": {
+        "minute": 1,
+        "role": "MAKER",
+        "subReason": "maker-dip-ladder",
+        "feeUsd": 0.0,
+        "pairCost": 0.9573,
+        "deficit": 0.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 1,
+      "ts": 1794282082709,
+      "outcome": "Down",
+      "price": 0.68,
+      "shares": 15.0,
+      "usd": 10.2,
+      "reason": "rescue-hedge",
+      "detail": {
+        "minute": 1,
+        "role": "MAKER",
+        "subReason": "rescue-equalizer",
+        "feeUsd": 0.0,
+        "pairCost": 0.9901,
+        "deficit": 15.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 1,
+      "ts": 1794282089751,
+      "outcome": "Up",
+      "price": 0.28,
+      "shares": 15.0,
+      "usd": 4.2,
+      "reason": "maker-dip-ladder",
+      "detail": {
+        "minute": 1,
+        "role": "MAKER",
+        "subReason": "maker-dip-ladder",
+        "feeUsd": 0.0,
+        "pairCost": 0.9632,
+        "deficit": 0.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 1,
+      "ts": 1794282090272,
+      "outcome": "Down",
+      "price": 0.73,
+      "shares": 15.0,
+      "usd": 10.95,
+      "reason": "rescue-hedge",
+      "detail": {
+        "minute": 1,
+        "role": "MAKER",
+        "subReason": "rescue-equalizer",
+        "feeUsd": 0.0,
+        "pairCost": 0.9934,
+        "deficit": 15.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 1,
+      "ts": 1794282095491,
+      "outcome": "Up",
+      "price": 0.22,
+      "shares": 20.0,
+      "usd": 4.4,
+      "reason": "maker-dip-ladder",
+      "detail": {
+        "minute": 1,
+        "role": "MAKER",
+        "subReason": "maker-dip-ladder",
+        "feeUsd": 0.0,
+        "pairCost": 0.9581,
+        "deficit": 0.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 1,
+      "ts": 1794282095997,
+      "outcome": "Down",
+      "price": 0.77,
+      "shares": 20.0,
+      "usd": 15.4,
+      "reason": "rescue-hedge",
+      "detail": {
+        "minute": 1,
+        "role": "MAKER",
+        "subReason": "rescue-equalizer",
+        "feeUsd": 0.0,
+        "pairCost": 0.9928,
+        "deficit": 20.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 1,
+      "ts": 1794282097015,
+      "outcome": "Up",
+      "price": 0.19,
+      "shares": 20.0,
+      "usd": 3.8,
+      "reason": "maker-dip-ladder",
+      "detail": {
+        "minute": 1,
+        "role": "MAKER",
+        "subReason": "maker-dip-ladder",
+        "feeUsd": 0.0,
+        "pairCost": 0.9637,
+        "deficit": 0.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 1,
+      "ts": 1794282097589,
+      "outcome": "Down",
+      "price": 0.79,
+      "shares": 20.0,
+      "usd": 15.8,
+      "reason": "rescue-hedge",
+      "detail": {
+        "minute": 1,
+        "role": "MAKER",
+        "subReason": "rescue-equalizer",
+        "feeUsd": 0.0,
+        "pairCost": 0.9908,
+        "deficit": 20.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    }
+  ],
+  "strategy": "hapcs-v1",
+  "strategy_symbol": "\ud83c\udfaf HAPCS-v1",
+  "maker_fills": 18,
+  "taker_fills": 1,
+  "fees_usd": 0.16,
+  "pair_cost": 0.9908
+}

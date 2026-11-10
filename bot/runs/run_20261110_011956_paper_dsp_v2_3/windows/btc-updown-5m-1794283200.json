@@ -1,0 +1,17 @@
+{
+  "event_slug": "btc-updown-5m-1794283200",
+  "market": "Bitcoin Up or Down - November 9, 11:00PM-11:05PM ET",
+  "trades": 0,
+  "cost_usd": 0.0,
+  "payout_usd": 0.0,
+  "net_usd": 0.0,
+  "winner": "Up",
+  "resolvedAt": "2026-11-10T04:10:20.070227+00:00",
+  "fills": [],
+  "strategy": "hapcs-v1",
+  "strategy_symbol": "\ud83c\udfaf HAPCS-v1",
+  "maker_fills": 0,
+  "taker_fills": 0,
+  "fees_usd": 0.0,
+  "pair_cost": null
+}

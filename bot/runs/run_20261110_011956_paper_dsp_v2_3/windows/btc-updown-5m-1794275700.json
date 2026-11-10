@@ -1,0 +1,108 @@
+{
+  "event_slug": "btc-updown-5m-1794275700",
+  "market": "Bitcoin Up or Down - November 9, 8:55PM-9:00PM ET",
+  "trades": 5,
+  "cost_usd": 28.6,
+  "payout_usd": 20.0,
+  "net_usd": -8.6,
+  "winner": "Up",
+  "resolvedAt": "2026-11-10T02:02:52.963002+00:00",
+  "fills": [
+    {
+      "minute": 0,
+      "ts": 1794275690862,
+      "outcome": "Up",
+      "price": 0.42,
+      "shares": 10.0,
+      "usd": 4.2,
+      "reason": "straddle-open",
+      "detail": {
+        "minute": 0,
+        "role": "MAKER",
+        "subReason": "maker-dip-ladder",
+        "feeUsd": 0.0,
+        "pairCost": null,
+        "deficit": 0.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 0,
+      "ts": 1794275691423,
+      "outcome": "Up",
+      "price": 0.41,
+      "shares": 10.0,
+      "usd": 4.1,
+      "reason": "hedge-leg",
+      "detail": {
+        "minute": 0,
+        "role": "MAKER",
+        "subReason": "maker-dip-ladder",
+        "feeUsd": 0.0,
+        "pairCost": null,
+        "deficit": 0.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 0,
+      "ts": 1794275692047,
+      "outcome": "Down",
+      "price": 0.58,
+      "shares": 20.0,
+      "usd": 11.6,
+      "reason": "rescue-hedge",
+      "detail": {
+        "minute": 0,
+        "role": "MAKER",
+        "subReason": "rescue-equalizer",
+        "feeUsd": 0.0,
+        "pairCost": 0.995,
+        "deficit": 20.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 0,
+      "ts": 1794275710470,
+      "outcome": "Down",
+      "price": 0.45,
+      "shares": 10.0,
+      "usd": 4.5,
+      "reason": "maker-dip-ladder",
+      "detail": {
+        "minute": 0,
+        "role": "MAKER",
+        "subReason": "maker-dip-ladder",
+        "feeUsd": 0.0,
+        "pairCost": 0.9517,
+        "deficit": 0.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 0,
+      "ts": 1794275711031,
+      "outcome": "Down",
+      "price": 0.42,
+      "shares": 10.0,
+      "usd": 4.2,
+      "reason": "maker-dip-ladder",
+      "detail": {
+        "minute": 0,
+        "role": "MAKER",
+        "subReason": "maker-dip-ladder",
+        "feeUsd": 0.0,
+        "pairCost": 0.9225,
+        "deficit": 0.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    }
+  ],
+  "strategy": "hapcs-v1",
+  "strategy_symbol": "\ud83c\udfaf HAPCS-v1",
+  "maker_fills": 5,
+  "taker_fills": 0,
+  "fees_usd": 0.0,
+  "pair_cost": 0.9225
+}

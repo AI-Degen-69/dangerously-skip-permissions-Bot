@@ -1,0 +1,54 @@
+{
+  "event_slug": "btc-updown-5m-1794282900",
+  "market": "Bitcoin Up or Down - November 9, 10:55PM-11:00PM ET",
+  "trades": 2,
+  "cost_usd": 59.4,
+  "payout_usd": 60.0,
+  "net_usd": 0.6,
+  "winner": "Up",
+  "resolvedAt": "2026-11-10T04:05:21.341697+00:00",
+  "fills": [
+    {
+      "minute": 0,
+      "ts": 1794282890391,
+      "outcome": "Down",
+      "price": 0.45,
+      "shares": 60.0,
+      "usd": 27.0,
+      "reason": "straddle-open",
+      "detail": {
+        "minute": 0,
+        "role": "MAKER",
+        "subReason": "maker-dip-ladder",
+        "feeUsd": 0.0,
+        "pairCost": null,
+        "deficit": 0.0,
+        "strategy": "dangerously-skip-permissions-v2.2"
+      }
+    },
+    {
+      "minute": 0,
+      "ts": 1794282890917,
+      "outcome": "Up",
+      "price": 0.54,
+      "shares": 60.0,
+      "usd": 32.4,
+      "reason": "hedge-leg",
+      "detail": {
+        "minute": 0,
+        "role": "MAKER",
+        "subReason": "rescue-equalizer",
+        "feeUsd": 0.0,
+        "pairCost": 0.99,
+        "deficit": 60.0,
+        "strategy": "dangerously-skip-permissions-v2.2"
+      }
+    }
+  ],
+  "strategy": "hapcs-v1",
+  "strategy_symbol": "\ud83c\udfaf HAPCS-v1",
+  "maker_fills": 2,
+  "taker_fills": 0,
+  "fees_usd": 0.0,
+  "pair_cost": 0.99
+}

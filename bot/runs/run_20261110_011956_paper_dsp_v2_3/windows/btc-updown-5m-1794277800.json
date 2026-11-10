@@ -1,0 +1,90 @@
+{
+  "event_slug": "btc-updown-5m-1794277800",
+  "market": "Bitcoin Up or Down - November 9, 9:30PM-9:35PM ET",
+  "trades": 4,
+  "cost_usd": 23.2,
+  "payout_usd": 20.0,
+  "net_usd": -3.2,
+  "winner": "Down",
+  "resolvedAt": "2026-11-10T02:38:53.303371+00:00",
+  "fills": [
+    {
+      "minute": 0,
+      "ts": 1794277794515,
+      "outcome": "Up",
+      "price": 0.44,
+      "shares": 10.0,
+      "usd": 4.4,
+      "reason": "straddle-open",
+      "detail": {
+        "minute": 0,
+        "role": "MAKER",
+        "subReason": "maker-dip-ladder",
+        "feeUsd": 0.0,
+        "pairCost": null,
+        "deficit": 0.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 0,
+      "ts": 1794277795684,
+      "outcome": "Up",
+      "price": 0.43,
+      "shares": 10.0,
+      "usd": 4.3,
+      "reason": "hedge-leg",
+      "detail": {
+        "minute": 0,
+        "role": "MAKER",
+        "subReason": "maker-dip-ladder",
+        "feeUsd": 0.0,
+        "pairCost": null,
+        "deficit": 0.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 0,
+      "ts": 1794277796192,
+      "outcome": "Down",
+      "price": 0.56,
+      "shares": 20.0,
+      "usd": 11.2,
+      "reason": "rescue-hedge",
+      "detail": {
+        "minute": 0,
+        "role": "MAKER",
+        "subReason": "rescue-equalizer",
+        "feeUsd": 0.0,
+        "pairCost": 0.995,
+        "deficit": 20.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    },
+    {
+      "minute": 0,
+      "ts": 1794277802174,
+      "outcome": "Up",
+      "price": 0.33,
+      "shares": 10.0,
+      "usd": 3.3,
+      "reason": "maker-dip-ladder",
+      "detail": {
+        "minute": 0,
+        "role": "MAKER",
+        "subReason": "maker-dip-ladder",
+        "feeUsd": 0.0,
+        "pairCost": 0.96,
+        "deficit": 0.0,
+        "strategy": "dangerously-skip-permissions-v2.3"
+      }
+    }
+  ],
+  "strategy": "hapcs-v1",
+  "strategy_symbol": "\ud83c\udfaf HAPCS-v1",
+  "maker_fills": 4,
+  "taker_fills": 0,
+  "fees_usd": 0.0,
+  "pair_cost": 0.96
+}

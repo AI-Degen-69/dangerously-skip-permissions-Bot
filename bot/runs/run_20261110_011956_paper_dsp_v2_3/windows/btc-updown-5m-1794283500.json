@@ -1,0 +1,54 @@
+{
+  "event_slug": "btc-updown-5m-1794283500",
+  "market": "Bitcoin Up or Down - November 9, 11:05PM-11:10PM ET",
+  "trades": 2,
+  "cost_usd": 56.4,
+  "payout_usd": null,
+  "net_usd": null,
+  "winner": null,
+  "pending": true,
+  "fills": [
+    {
+      "minute": 0,
+      "ts": 1794283490494,
+      "outcome": "Down",
+      "price": 0.35,
+      "shares": 60.0,
+      "usd": 21.0,
+      "reason": "straddle-open",
+      "detail": {
+        "minute": 0,
+        "role": "MAKER",
+        "subReason": "maker-dip-ladder",
+        "feeUsd": 0.0,
+        "pairCost": null,
+        "deficit": 0.0,
+        "strategy": "dangerously-skip-permissions-v2.2"
+      }
+    },
+    {
+      "minute": 0,
+      "ts": 1794283490995,
+      "outcome": "Up",
+      "price": 0.59,
+      "shares": 60.0,
+      "usd": 35.4,
+      "reason": "hedge-leg",
+      "detail": {
+        "minute": 0,
+        "role": "MAKER",
+        "subReason": "hedge-equalizer",
+        "feeUsd": 0.0,
+        "pairCost": 0.94,
+        "deficit": 60.0,
+        "strategy": "dangerously-skip-permissions-v2.2"
+      }
+    }
+  ],
+  "strategy": "dangerously-skip-permissions-v2.2",
+  "strategy_symbol": "\u26a1 DSP-v2.2",
+  "maker_fills": 2,
+  "taker_fills": 0,
+  "fees_usd": 0.0,
+  "pair_cost": 0.94
+}
