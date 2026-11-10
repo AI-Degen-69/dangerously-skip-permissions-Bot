@@ -2,9 +2,9 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { Coins, Filter, RotateCcw, Scale, ShieldAlert, Zap } from 'lucide-react'
 
 import { Badge, Button, Card, Field, Input, PageHeader, Skeleton, useToast } from '../components/ui'
-import { useBotConfig, useBotControl, useSaveBotConfig, type BotConfigView } from '../lib/bot'
+import { useBotConfig, useBotControl, useSaveBotConfig, useStrategySetups, mergeStrategySetups, type BotConfigView, type StrategySetup } from '../lib/bot'
 import { cx } from '../lib/cx'
-import { DEFAULT_CONFIG, EDITABLE } from '../botDefaults'
+import { DEFAULT_CONFIG, EDITABLE, STRATEGY_PRESETS } from '../botDefaults'
 
 type Draft = Record<string, number>
 
@@ -323,6 +323,10 @@ export function Config() {
   const toast = useToast()
   const [draft, setDraft] = useState<Draft | null>(null)
 
+  const setupsQuery = useStrategySetups()
+  const allSetups = mergeStrategySetups(setupsQuery.data?.setups, STRATEGY_PRESETS as unknown as Record<string, StrategySetup>)
+  const strategyId = (query.data?.config as unknown as { strategy?: { id?: string } } | null)?.strategy?.id ?? control.data?.strategy?.id ?? setupsQuery.data?.activeSetupId
+  const activeSetup = allSetups.find((s) => s.id === strategyId) ?? allSetups[0]
   const config = query.data?.config ?? null
   const defaultValues = useMemo(() => flatten(DEFAULT_CONFIG as unknown as BotConfigView), [])
   const values = draft ?? (config ? flatten(config) : null)
@@ -351,7 +355,7 @@ export function Config() {
     <div className="mx-auto max-w-[1000px] p-5 sm:p-8">
       <PageHeader
         title="Configuration"
-        subtitle="Every knob the HAPCS-v1 loop reads. A running loop picks changes up on its next window."
+        subtitle={activeSetup ? `Every knob the ${activeSetup.symbol} loop reads. A running loop picks changes up on its next window.` : 'Every knob the loop reads. A running loop picks changes up on its next window.'}
         actions={
           <div className="flex items-center gap-2">
             {control.data && (
@@ -383,13 +387,12 @@ export function Config() {
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <h2 className="text-[14px] font-semibold text-fg">🎯 HAPCS-v1 Strategy Status</h2>
-                <Badge tone="accent">Hybrid Arbitrage Pairing & Certainty Sniping</Badge>
+                <h2 className="text-[14px] font-semibold text-fg">{activeSetup ? `${activeSetup.symbol} Strategy Status` : 'Strategy Status'}</h2>
+                {activeSetup && <Badge tone="accent">{activeSetup.name}</Badge>}
                 <Badge tone="success">0% Maker Fee</Badge>
               </div>
               <p className="mt-1 text-[12.5px] leading-relaxed text-muted">
-                Direction-agnostic volatility harvester. Accumulates both Up and Down into paired bundles below $1.00
-                (benchmark $0.965, hard ceiling ≤ $0.990). Pre-open order placement from T-310s through T-12s cutoff.
+                {activeSetup ? `${activeSetup.signature} — ${activeSetup.description}` : 'Direction-agnostic volatility harvester.'}
               </p>
             </div>
           </Card>

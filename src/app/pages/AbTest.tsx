@@ -18,6 +18,7 @@ import {
 } from '../lib/bot'
 import { Badge, Button, Card, PageHeader, useToast } from '../components/ui'
 import { cx } from '../lib/cx'
+import { tweakCards } from '../strategyCopy'
 
 const money = (val: number | null | undefined, digits = 2) =>
   val == null ? '—' : `${val < 0 ? '−' : val > 0 ? '+' : ''}$${Math.abs(val).toFixed(digits)}`
@@ -79,9 +80,8 @@ export function AbTest() {
   const isCandidateRunning = Boolean(
     control.data?.running &&
     ((control.data?.activeRunId && data?.candidate?.runId && control.data.activeRunId === data.candidate.runId) ||
-     (control.data?.strategy?.id && control.data.strategy.id.endsWith('v2.2')))
+     (control.data?.strategy?.id && (control.data.strategy.id.endsWith('v2.2') || control.data.strategy.id.endsWith('v2.3'))))
   )
-
   const handleStart = async () => {
     try {
       await startCandidate.mutateAsync()
@@ -104,6 +104,9 @@ export function AbTest() {
 
   const baseline = data?.baseline
   const candidate = data?.candidate
+  const candidateLabel = candidate?.name ?? control.data?.strategy?.name ?? 'Candidate'
+  const tw = tweakCards(candidate ?? null)
+  const baselineLabel = baseline?.name ?? 'Baseline'
   const stats = data?.statistics
   const hypotheses = data?.hypotheses
   const histogram = data?.histogram ?? []
@@ -124,7 +127,7 @@ export function AbTest() {
     <div className="space-y-6 pb-12">
       <PageHeader
         title="A/B Hypothesis Lab & Statistical Gate"
-        subtitle="Rigorous empirical testing of Baseline (DSP v2.0) vs Candidate (DSP v2.2 Confidence Sizing) at 95% confidence."
+        subtitle={`Rigorous empirical testing of ${baselineLabel} vs ${candidateLabel} at 95% confidence.`}
         actions={
           <div className="flex items-center gap-2.5">
             <Button
@@ -257,39 +260,39 @@ export function AbTest() {
         {/* The 3 Tested Tweaks Breakdown */}
         <div className="mt-4 border-t border-line pt-4">
           <p className="text-[12px] font-bold uppercase tracking-wider text-muted">
-            The 3 Core Improvements in Candidate Strategy B (DSP v2.2)
+            The 3 Core Improvements in Candidate Strategy B ({candidateLabel})
           </p>
           <div className="mt-2.5 grid gap-3 sm:grid-cols-3">
             <div className="rounded-[9px] border border-line bg-surface p-3">
               <div className="flex items-center justify-between">
                 <span className="font-mono text-[10.5px] font-bold text-accent">Tweak 1 · Hard Gate</span>
-                <Badge tone="success" className="text-[10px]">Max ≤ $0.995</Badge>
+                <Badge tone="success" className="text-[10px]">{tw[0].badge}</Badge>
               </div>
-              <p className="mt-1 text-[12.5px] font-semibold text-fg">Pre-Flight Arb Check & Cap</p>
+              <p className="mt-1 text-[12.5px] font-semibold text-fg">{tw[0].title}</p>
               <p className="mt-1 text-[11px] text-muted">
-                Hard ceiling (≤$0.995) + Pre-Flight Gate: Never buys an unhedged dip unless opposite ask allows an immediate hedge under $0.995.
+                {tw[0].body}
               </p>
             </div>
 
             <div className="rounded-[9px] border border-line bg-surface p-3">
               <div className="flex items-center justify-between">
                 <span className="font-mono text-[10.5px] font-bold text-accent">Tweak 2 · Intake</span>
-                <Badge tone="accent" className="text-[10px]">60 sh / 10 sh</Badge>
+                <Badge tone="accent" className="text-[10px]">{tw[1].badge}</Badge>
               </div>
-              <p className="mt-1 text-[12.5px] font-semibold text-fg">Bi-Modal Confidence Sizing</p>
+              <p className="mt-1 text-[12.5px] font-semibold text-fg">{tw[1].title}</p>
               <p className="mt-1 text-[11px] text-muted">
-                Sizes heavy (60 sh) on 100% risk-free atomic pairs and deficit equalizations, while micro-sizing speculative dips to 10 sh (≤$3.50 max loss).
+                {tw[1].body}
               </p>
             </div>
 
             <div className="rounded-[9px] border border-line bg-surface p-3">
               <div className="flex items-center justify-between">
                 <span className="font-mono text-[10.5px] font-bold text-accent">Tweak 3 · Sweep</span>
-                <Badge tone="info" className="text-[10px]">T-75s..15s Maker</Badge>
+                <Badge tone="info" className="text-[10px]">{tw[2].badge}</Badge>
               </div>
-              <p className="mt-1 text-[12.5px] font-semibold text-fg">Passive Maker Sweep</p>
+              <p className="mt-1 text-[12.5px] font-semibold text-fg">{tw[2].title}</p>
               <p className="mt-1 text-[11px] text-muted">
-                Fills remaining deficits with resting maker orders at 0% fee between T-75s and T-15s, avoiding taker fee drag.
+                {tw[2].body}
               </p>
             </div>
           </div>

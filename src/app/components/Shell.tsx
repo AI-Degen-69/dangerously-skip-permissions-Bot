@@ -35,6 +35,10 @@ export function Shell() {
   useEffect(() => setMobileOpen(false), [location.pathname])
 
   useEffect(() => {
+    document.title = strat ? `Up/Down desk — ${strat.symbol} ${strat.name}` : 'Up/Down desk — BTC paper bot'
+  }, [strat?.id, strat?.symbol, strat?.name])
+
+  useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
     if (theme === 'dark') {
       document.documentElement.classList.add('dark')

@@ -15,8 +15,9 @@ import { useId, useState } from 'react'
 import { Badge, Button, Card, EmptyState, PageHeader, Skeleton, useToast } from '../components/ui'
 import { BotControlTile } from '../components/BotControlTile'
 import { InteractivePnlChart } from '../components/InteractivePnlChart'
-import { BOT_ORIGIN, useBotControl, useBotPerf, useRedeemBot } from '../lib/bot'
-import type { BotPerf, PerfGate, PerfNote, PerfWindow } from '../lib/bot'
+import { BOT_ORIGIN, useBotControl, useBotPerf, useRedeemBot, useStrategySetups, mergeStrategySetups } from '../lib/bot'
+import { STRATEGY_PRESETS } from '../botDefaults'
+import type { BotPerf, PerfGate, PerfNote, PerfWindow, StrategySetup } from '../lib/bot'
 import { computeKpiStats } from '../lib/kpiStats'
 import { cx } from '../lib/cx'
 import { money2, relativeTime } from '../lib/format'
@@ -72,11 +73,12 @@ export function Dashboard() {
   const stats = computeKpiStats(windows, startingCapital, summary)
   const currentCapital = stats.currentCapital
   const gateJudged = settled.length >= (data?.targets.windows ?? 288)
-  const strategySymbol = data?.strategy?.symbol ?? control.data?.strategy?.symbol ?? '🎯 HAPCS-v1'
-  const strategyName =
-    data?.strategy?.name ??
-    control.data?.strategy?.name ??
-    'Hybrid Arbitrage Pairing & Certainty Sniping v1'
+  const setupsQuery = useStrategySetups()
+  const allSetups = mergeStrategySetups(setupsQuery.data?.setups, STRATEGY_PRESETS as unknown as Record<string, StrategySetup>)
+  const activeId = data?.strategy?.id ?? control.data?.strategy?.id ?? setupsQuery.data?.activeSetupId
+  const activeSetup = allSetups.find((s) => s.id === activeId) ?? allSetups[0]
+  const strategySymbol = data?.strategy?.symbol ?? control.data?.strategy?.symbol ?? activeSetup?.symbol ?? '—'
+  const strategyName = data?.strategy?.name ?? control.data?.strategy?.name ?? activeSetup?.name ?? '—'
 
   return (
     <div className="mx-auto max-w-[1200px] p-5 sm:p-8">

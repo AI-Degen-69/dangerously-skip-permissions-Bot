@@ -21,7 +21,8 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 
 import { Badge, Button, Card, PageHeader } from '../components/ui'
-import { BOT_ORIGIN } from '../lib/bot'
+import { BOT_ORIGIN, useBotControl, useStrategySetups, mergeStrategySetups, type StrategySetup } from '../lib/bot'
+import { STRATEGY_PRESETS } from '../botDefaults'
 
 // ----------------------------------------------------------------------
 // 🎯 HAPCS-v1 Strategy Documentation:
@@ -246,6 +247,11 @@ const TOC = [
 const TOC_IDS = TOC.flatMap((item) => [item.id, ...item.children.map((child) => child.id)])
 
 export function Strategy() {
+  const control = useBotControl()
+  const setupsQuery = useStrategySetups()
+  const allSetups = mergeStrategySetups(setupsQuery.data?.setups, STRATEGY_PRESETS as unknown as Record<string, StrategySetup>)
+  const pickedId = control.data?.strategy?.id ?? setupsQuery.data?.activeSetupId
+  const picked = allSetups.find((s) => s.id === pickedId) ?? allSetups[0]
   const [activeId, setActiveId] = useState<string>(TOC[0].id)
 
   useEffect(() => {
@@ -272,12 +278,12 @@ export function Strategy() {
   return (
     <div className="mx-auto max-w-[1180px] p-5 sm:p-8">
       <PageHeader
-        title="Strategy · 🎯 HAPCS-v1"
-        subtitle="Hybrid Arbitrage Pairing & Certainty Sniping v1 — recovered from 27,091 on-chain fills."
+        title={picked ? `Strategy · ${picked.symbol}` : 'Strategy'}
+        subtitle={picked ? `${picked.name} — ${picked.signature}` : 'Recovered from 27,091 on-chain fills.'}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone="accent" className="font-mono font-semibold">
-              🎯 HAPCS-v1 · Engine
+              {picked ? `${picked.symbol} · Engine` : 'Engine'}
             </Badge>
             <Badge tone="info" className="font-mono text-[11px]">
               API {BOT_ORIGIN}
@@ -291,6 +297,24 @@ export function Strategy() {
           </div>
         }
       />
+
+      {picked && (
+        <Card className="mt-5 border-accent/40 p-5">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone="success">Currently picked: {picked.symbol}</Badge>
+            <span className="text-[14px] font-semibold text-fg">{picked.name}</span>
+          </div>
+          <p className="mt-1 font-mono text-[11.5px] text-muted">{picked.signature}</p>
+          <p className="mt-2 text-[12.5px] leading-relaxed text-muted">{picked.description}</p>
+          <div className="mt-3 flex flex-wrap gap-2 font-mono text-[11.5px]">
+            <span className="rounded-[8px] border border-line bg-surface px-2 py-1">Clip {picked.entry.clipSharesDefault} / max {picked.entry.maxShares} sh</span>
+            <span className="rounded-[8px] border border-line bg-surface px-2 py-1">Max lead {picked.entry.maxShareLead} sh</span>
+            <span className="rounded-[8px] border border-line bg-surface px-2 py-1">Pair cap ${Number(picked.entry.maxPairCost).toFixed(3)}</span>
+            <span className="rounded-[8px] border border-line bg-surface px-2 py-1">Max buy {Math.round(Number(picked.entry.maxFillPrice) * 100)}¢</span>
+            <span className="rounded-[8px] border border-line bg-surface px-2 py-1">Cutoff {picked.entry.stopBeforeCloseSec}s</span>
+          </div>
+        </Card>
+      )}
 
       {/* Top Executive Banner */}
       <Card className="mt-5 border-accent/40 bg-accent-soft/15 p-6">
