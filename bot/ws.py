@@ -594,7 +594,6 @@ class LiveBookStreamer:
             self.prints.append(pr)
             self.print_count += 1
             self.last_print_ts = ts
-            self.last_tick_ts = max(self.last_tick_ts, time.time())
         if self.enable_trade_prints and self.tape_dir is not None:
             rec = dict(pr.to_dict())
             rec['slug_outcome'] = self.books[asset_id].outcome

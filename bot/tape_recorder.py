@@ -38,7 +38,7 @@ def dir_size_bytes(d: Path) -> int:
 def resolve_out_dir(run_id: str | None, out_dir: str | None) -> Path:
     if out_dir:
         return Path(out_dir)
-    base = Path('bot/runs') / (run_id or 'tape-manual')
+    base = ROOT / 'bot' / 'runs' / (run_id or 'tape-manual')
     return base / 'tape'
 
 

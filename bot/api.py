@@ -1628,6 +1628,9 @@ class Handler(BaseHTTPRequestHandler):
                 log_event("info", "entries-resumed")
                 self._send(200, {"ok": True, "killSwitch": False})
             elif self.path == "/api/bot/tape":
+                if is_view_only():
+                    self._send(400, {"error": "Cannot toggle tape while in view-only mode", "isViewOnly": True})
+                    return
                 enabled = body.get("enabled")
                 if not isinstance(enabled, bool):
                     self._send(400, {"error": "Body must be {enabled: boolean}"})

@@ -45,6 +45,21 @@ class PrintModelTests(unittest.TestCase):
         r = confirm_maker_buy(0.20, 10.0, prints, decision_ts=100.0)
         self.assertEqual(r.status, 'unconfirmed')
 
+    def test_print_before_decision_does_not_confirm(self):
+        prints = [{'price': 0.20, 'size': 50.0, 'side': 'SELL', 'ts': 99.0}]
+        r = confirm_maker_buy(0.20, 10.0, prints, decision_ts=100.0)
+        self.assertEqual(r.status, 'unconfirmed')
+
+    def test_old_raw_timestamp_does_not_confirm(self):
+        prints = [{'price': 0.20, 'size': 50.0, 'side': 'SELL', 'timestamp': '99000'}]
+        r = confirm_maker_buy(0.20, 10.0, prints, decision_ts=100.0)
+        self.assertEqual(r.status, 'unconfirmed')
+
+    def test_missing_timestamp_does_not_confirm(self):
+        prints = [{'price': 0.20, 'size': 50.0, 'side': 'SELL'}]
+        r = confirm_maker_buy(0.20, 10.0, prints, decision_ts=100.0)
+        self.assertEqual(r.status, 'unconfirmed')
+
     def test_taker_labelled_unverified(self):
         r = label_taker_fill(10.0)
         self.assertEqual(r.status, 'unverified-taker')

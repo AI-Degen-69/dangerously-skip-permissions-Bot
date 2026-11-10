@@ -38,20 +38,18 @@ def confirm_maker_buy(
             continue
         if sz <= 0:
             continue
-        pts = p.get('ts', p.get('timestamp_raw', 0.0))
-        try:
-            if decision_ts is not None and float(pts) < float(decision_ts) - 0.001:
-                pass
-            elif decision_ts is not None:
-                try:
-                    raw = p.get('timestamp_raw', '')
-                    ms = int(str(raw))
-                    if ms / 1000.0 < float(decision_ts) - 0.001:
-                        continue
-                except Exception:
-                    pass
-        except Exception:
-            pass
+        if decision_ts is not None:
+            try:
+                if p.get('ts') is not None:
+                    pts = float(p['ts'])
+                else:
+                    raw = p.get('timestamp_raw') or p.get('timestamp')
+                    pts = int(str(raw)) / 1000.0
+            except (TypeError, ValueError):
+                pts = None
+            # Unknown or older timestamp: do not count it (conservative).
+            if pts is None or pts < float(decision_ts) - 0.001:
+                continue
         side = _norm_side(p.get('side'))
         if side not in ('', 'UNKNOWN', 'SELL', 'ASK', 'SELLS'):
             if side in ('BUY', 'BID', 'BUYS'):
