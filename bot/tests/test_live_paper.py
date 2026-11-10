@@ -140,9 +140,9 @@ class LivePaperLoopTests(unittest.TestCase):
     def test_fix3_check_window_honors_kill_file_and_daily_loss(self):
         kill_file = self.tmp_path / "kill"
         kill_file.write_text("stop")
-        self.assertIn("kill-switch", check_window(0, 0.0, RiskState(), kill_path=kill_file))
+        self.assertIn("kill-switch", check_window(0, RiskState(), kill_path=kill_file))
         kill_file.unlink()
-        self.assertIn("daily loss cap", check_window(0, 0.0, RiskState(daily_loss_usd=-500.0), kill_path=kill_file))
+        self.assertIn("daily loss cap", check_window(0, RiskState(daily_loss_usd=-500.0), kill_path=kill_file))
 
     def test_settled_net_usd_ignores_malformed_and_pending_files(self):
         from bot.live_paper import _settled_net_usd
@@ -185,16 +185,15 @@ class LivePaperLoopTests(unittest.TestCase):
 
         self.assertEqual(_risk_reason_code("killed: kill-switch file present"), "kill-switch-engaged")
         self.assertEqual(_risk_reason_code("killed: daily loss cap $500.0"), "daily-loss-cap")
-        self.assertEqual(_risk_reason_code("window cost cap $4000"), "window-cost-cap")
         self.assertEqual(_risk_reason_code("window trade cap 500"), "window-trade-cap")
 
         st = RiskState(daily_loss_usd=-520.0)
-        det = _risk_detail("killed: daily loss cap $500", st, cost=100.0, trades=10)
+        det = _risk_detail("killed: daily loss cap $500", st, trades=10)
         self.assertEqual(det["lossUsd"], 520.0)
         self.assertEqual(det["capUsd"], 500.0)
 
         st2 = RiskState(daily_loss_usd=-1550.0)
-        det2 = _risk_detail("killed: daily loss cap $1500.0", st2, cost=100.0, trades=10)
+        det2 = _risk_detail("killed: daily loss cap $1500.0", st2, trades=10)
         self.assertEqual(det2["lossUsd"], 1550.0)
         self.assertEqual(det2["capUsd"], 1500.0)
 

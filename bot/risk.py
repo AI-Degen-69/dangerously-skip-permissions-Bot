@@ -1,8 +1,10 @@
-"""Risk: per-window caps, clip limiter, single-window invariant, kill-switch.
+"""Risk: per-window fill cap, clip limiter, single-window invariant, kill-switch.
 
 Frozen from CSV: 30-share default clip, 50 max, $3.8K max observed window.
 Paper default caps sit just above observed max so fidelity runs never clip,
 live micro-size must set DAILY_LOSS_CAP_USD explicitly (operator approves).
+There is no per-window spend ceiling: the fill cap and the daily loss cap bound
+the window (operator decision, 2026-11-10).
 """
 
 import json
@@ -37,7 +39,6 @@ def load_risk_config() -> dict:
 
 
 DAILY_LOSS_CAP_USD = 500.0  # operator to confirm before any live size
-MAX_USD_PER_WINDOW = 4000.0
 MAX_TRADES_PER_WINDOW = 500
 
 
@@ -48,11 +49,9 @@ def clip_shares(want: float, max_shares: float | None = None) -> float:
 
 def check_window(
     trades: int,
-    cost_usd: float,
     state: RiskState,
     kill_path: Path | str | None = None,
     daily_loss_cap: float | None = None,
-    max_usd: float | None = None,
     max_trades: int | None = None,
 ) -> str | None:
     if kill_path is not None and Path(kill_path).exists():
@@ -62,7 +61,7 @@ def check_window(
         return f"killed: {state.kill_reason}"
 
     rc = None
-    if max_trades is None or max_usd is None or daily_loss_cap is None:
+    if max_trades is None or daily_loss_cap is None:
         try:
             rc = load_risk_config()
         except Exception as ex:
@@ -76,12 +75,6 @@ def check_window(
             max_trades = int(val) if val is not None and int(val) > 0 else MAX_TRADES_PER_WINDOW
         except (ValueError, TypeError):
             max_trades = MAX_TRADES_PER_WINDOW
-    if max_usd is None:
-        try:
-            val = rc.get("maxUsdPerWindow")
-            max_usd = float(val) if val is not None and float(val) > 0 else MAX_USD_PER_WINDOW
-        except (ValueError, TypeError):
-            max_usd = MAX_USD_PER_WINDOW
     if daily_loss_cap is None:
         try:
             val = rc.get("dailyLossCapUsd")
@@ -91,8 +84,6 @@ def check_window(
 
     if trades >= max_trades:
         return f"window trade cap {max_trades}"
-    if cost_usd >= max_usd:
-        return f"window cost cap ${max_usd}"
     if state.daily_loss_usd <= -daily_loss_cap:
         state.killed = True
         state.kill_reason = f"daily loss cap ${daily_loss_cap}"

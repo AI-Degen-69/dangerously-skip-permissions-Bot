@@ -1210,7 +1210,6 @@ EDITABLE = {
     "entry.stopBeforeCloseSec": [5, 180],
     "entry.minSpacingMoveSec": [0.1, 5.0],
     "entry.minSpacingStaticSec": [0.5, 10.0],
-    "risk.maxUsdPerWindow": [500, 20000],
     "risk.maxFillsPerWindow": [50, 1000],
     "risk.dailyLossCapUsd": [50, 10000],
     "risk.maxConcurrentPositions": [1, 2],
@@ -1727,7 +1726,6 @@ class Handler(BaseHTTPRequestHandler):
         bankroll = float(cfg.get("bankrollUsd", BANKROLL_DEFAULT))
         calc_pct = round((daily_loss_cap / bankroll) * 100, 2) if bankroll > 0 else 50.0
         risk = {
-            "maxUsdPerWindow": 4000,
             "maxFillsPerWindow": 500,
             "dailyLossCapUsd": daily_loss_cap,
             "maxConcurrentPositions": 1,

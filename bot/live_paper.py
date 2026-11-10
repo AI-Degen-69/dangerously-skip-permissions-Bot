@@ -278,27 +278,20 @@ def _risk_reason_code(raw_reason: str) -> str:
         return "kill-switch-engaged"
     if "daily loss cap" in raw_reason:
         return "daily-loss-cap"
-    if "cost cap" in raw_reason:
-        return "window-cost-cap"
     if "trade cap" in raw_reason:
         return "window-trade-cap"
     return raw_reason
 
 
-def _risk_detail(raw_reason: str, state: RiskState, cost: float, trades: int) -> dict:
+def _risk_detail(raw_reason: str, state: RiskState, trades: int) -> dict:
     risk_cfg = load_cfg().get("risk", {})
     default_cap = float(risk_cfg.get("dailyLossCapUsd", 500.0))
-    cost_cap = float(risk_cfg.get("maxUsdPerWindow", 4000.0))
     trade_cap = int(risk_cfg.get("maxFillsPerWindow", 500))
 
     if "daily loss cap" in raw_reason:
         m = re.search(r"daily loss cap \$?([0-9.]+(?:[eE][+-]?\d+)?)", raw_reason)
         cap = float(m.group(1)) if m else default_cap
         return {"lossUsd": round(abs(state.daily_loss_usd), 2), "capUsd": cap}
-    if "cost cap" in raw_reason:
-        m = re.search(r"cost cap \$?([0-9.]+(?:[eE][+-]?\d+)?)", raw_reason)
-        cap = float(m.group(1)) if m else cost_cap
-        return {"costUsd": round(cost, 2), "capUsd": cap}
     if "trade cap" in raw_reason:
         m = re.search(r"trade cap (\d+)", raw_reason)
         cap = int(m.group(1)) if m else trade_cap
@@ -427,9 +420,9 @@ def trade_window(
                                   "imbalance": round(imbalance, 1)})
                 break
             state.daily_loss_usd = _current_daily_pnl(day_start)
-            if reason := check_window(len(fills), cost, state, KILL_PATH):
+            if reason := check_window(len(fills), state, KILL_PATH):
                 log_event("risk", _risk_reason_code(reason), slug,
-                          detail=_risk_detail(reason, state, cost, len(fills)))
+                          detail=_risk_detail(reason, state, len(fills)))
                 break
 
             if test_max_fills and len(fills) >= test_max_fills:

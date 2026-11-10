@@ -24,7 +24,6 @@ export const DEFAULT_CONFIG = {
     wholeLadderClips: true,
   },
   risk: {
-    maxUsdPerWindow: 4000,
     maxFillsPerWindow: 500,
     dailyLossCapUsd: 500,
     maxConcurrentPositions: 1,
@@ -48,7 +47,6 @@ export const EDITABLE: Record<string, [number, number]> = {
   'entry.stopBeforeCloseSec': [5, 180],
   'entry.minSpacingMoveSec': [0.1, 5.0],
   'entry.minSpacingStaticSec': [0.5, 10.0],
-  'risk.maxUsdPerWindow': [500, 20000],
   'risk.maxFillsPerWindow': [50, 1000],
   'risk.dailyLossCapUsd': [50, 10000],
   'risk.maxConcurrentPositions': [1, 2],

@@ -30,7 +30,6 @@
     "minSpacingStaticSec": 2.5
   },
   "risk": {
-    "maxUsdPerWindow": 4000,
     "maxFillsPerWindow": 500,
     "dailyLossCapUsd": 500,
     "maxConcurrentPositions": 1

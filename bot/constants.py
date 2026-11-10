@@ -338,7 +338,6 @@ MAKER_FEE = 0.0                # 0% maker fee on resting limit orders
 
 # Risk Guardrails
 DAILY_LOSS_CAP_USD = 500.0     # Maximum allowable daily loss
-MAX_USD_PER_WINDOW = 4000.0    # Maximum capital committed per 5-minute window
 MAX_TRADES_PER_WINDOW = 500    # Hard fill cap per window
 HEARTBEAT_STALE_S = 120        # Loop staleness threshold
 
