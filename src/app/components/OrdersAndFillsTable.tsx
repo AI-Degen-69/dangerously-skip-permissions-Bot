@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Badge, Card, EmptyState } from './ui'
 import { cx } from '../lib/cx'
 import type { BotTrade } from '../lib/bot'
-import { buildWindows, resolveWindowIndex, slotOfSlug } from '../lib/windows'
+import { buildWindows, resolveWindowIndex, slotOfSlug, windowSlotOf } from '../lib/windows'
 
 const money = (value: number | null | undefined) =>
   value === null || value === undefined ? '—' : `${value < 0 ? '−' : ''}$${Math.abs(value).toFixed(2)}`
@@ -53,12 +53,15 @@ export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsP
   const liveSlot = slotOfSlug(windowSlugs[0])
   const windowIndex = resolveWindowIndex(windows, liveSlot, pickedSlot)
   const activeWindow = windows[windowIndex]
-  const activeSlug = activeWindow?.slug
+  const activeSlot = activeWindow?.slot ?? null
   const isLiveView = activeWindow != null && activeWindow.slot === liveSlot
 
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
-      if (activeSlug && item.slug !== activeSlug) return false
+      // Rows belong to the window their timestamp falls in. Matching the market
+      // slug alone leaked fills the bot placed in its pre-open pipeline (a few
+      // seconds before the next window) into that next window's list.
+      if (activeSlot != null && windowSlotOf(item) !== activeSlot) return false
 
       const detail = item.detail as Record<string, unknown> | undefined
       const role = String(detail?.role ?? '').toLowerCase()
@@ -73,7 +76,7 @@ export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsP
 
       return true
     })
-  }, [items, typeFilter, sideFilter, activeSlug])
+  }, [items, typeFilter, sideFilter, activeSlot])
 
   const stepWindow = (delta: number) => {
     const next = windows[windowIndex + delta]
