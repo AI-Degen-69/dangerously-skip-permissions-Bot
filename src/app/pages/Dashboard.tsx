@@ -177,6 +177,7 @@ export function Dashboard() {
                   <span className={stats.roiPct >= 0 ? 'text-success' : 'text-danger'}>{stats.roiPct.toFixed(1)}% ROI</span>
                 </>
               }
+              hintText={`${stats.capitalReturnPct >= 0 ? '+' : ''}${stats.capitalReturnPct.toFixed(1)}% capital · ${stats.roiPct.toFixed(1)}% ROI`}
               tone={stats.netUsd >= 0 ? 'success' : 'danger'}
               badge={
                 <Badge tone={stats.netUsd >= 0 ? 'success' : 'danger'}>
@@ -197,6 +198,7 @@ export function Dashboard() {
                   {` (${stats.settled} settled)`}
                 </>
               }
+              hintText={`${stats.winsCount}W – ${stats.lossesCount}L (${stats.settled} settled)`}
               tone={stats.winRate >= 0.5 ? 'success' : 'danger'}
               badge={
                 stats.edgePct !== null ? (
@@ -222,6 +224,7 @@ export function Dashboard() {
                   <span className="text-danger">-{usd(Math.abs(stats.avgLossUsd))}</span>
                 </>
               }
+              hintText={`Avg Win +${usd(Math.abs(stats.avgWinUsd))} · Loss -${usd(Math.abs(stats.avgLossUsd))}`}
               tone={stats.expectancyUsd >= 0 ? 'success' : 'danger'}
               badge={
                 <Badge tone={stats.expectancyRatio >= 0 ? 'success' : 'danger'} className="font-mono text-[10.5px]">
@@ -243,6 +246,7 @@ export function Dashboard() {
                   <span className="text-danger">-{usd(Math.abs(stats.grossLossUsd))}</span>
                 </>
               }
+              hintText={`Gross: +${usd(Math.abs(stats.grossProfitUsd))} / -${usd(Math.abs(stats.grossLossUsd))}`}
               tone={stats.profitFactor >= 1.5 ? 'success' : stats.profitFactor >= 1.0 ? 'warning' : 'danger'}
               badge={
                 <Badge
@@ -277,6 +281,7 @@ export function Dashboard() {
                   <span className={TONE_TEXT[drawdownTone(stats.maxDrawdownPct)]}>-{stats.maxDrawdownPct.toFixed(1)}%</span>
                 </>
               }
+              hintText={`Sortino: ${stats.lossesCount === 0 && stats.settled > 0 && stats.netUsd > 0 ? '∞' : stats.sortinoRatio.toFixed(2)} · Max DD: -${stats.maxDrawdownPct.toFixed(1)}%`}
               tone={stats.sharpeRatio >= 1.0 ? 'success' : stats.sharpeRatio >= 0 ? 'neutral' : 'danger'}
               badge={
                 <Badge tone={drawdownTone(stats.maxDrawdownPct)}>
@@ -708,6 +713,7 @@ function Stat({
   value,
   unit,
   hint,
+  hintText,
   badge,
   tip,
   tone,
@@ -717,6 +723,7 @@ function Stat({
   value: string
   unit?: string
   hint: React.ReactNode
+  hintText?: string
   badge?: React.ReactNode
   tip?: string
   tone?: Tone
@@ -768,7 +775,11 @@ function Stat({
             {hint}
           </p>
         ) : (
-          <div className="mt-0.5 truncate text-[11.5px] text-faint">{hint}</div>
+          // The hint is composed markup, so the plain-text twin keeps the
+          // full value reachable when the card truncates it.
+          <div className="mt-0.5 truncate text-[11.5px] text-faint" title={hintText}>
+            {hint}
+          </div>
         )}
       </div>
     </Card>

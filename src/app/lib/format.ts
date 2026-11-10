@@ -6,6 +6,9 @@ export const money = (value: number) => currency.format(value)
 export const money2 = (value: number) => currency2.format(value)
 export const moneyCompact = (value: number) => compact.format(value)
 
+// Elapsed time into a window, e.g. 5:00 — "passed", not "remaining".
+export const mmss = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`
+
 export function relativeTime(ts: number, now = Date.now()): string {
   const diff = now - ts
   const minutes = Math.round(diff / 60_000)
