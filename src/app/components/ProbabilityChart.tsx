@@ -1,7 +1,7 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import type { MarketView } from '../lib/bot'
-import { projectX, projectY } from '../lib/chartMath'
+import { axisLabels, projectX, projectY } from '../lib/chartMath'
 import { mmss } from '../lib/format'
 import { Badge } from './ui'
 
@@ -140,15 +140,13 @@ export function ProbabilityChart({
     const marks = ticks
       .filter((tick) => tick.atSec > 0 && tick.atSec < spanSec)
       .map((tick) => ({ ...tick, x: xAt(tick.atSec) }))
-    const labels: { x: number; label: string; title: string; anchor: 'start' | 'middle' | 'end' }[] = [
-      { x: 0, label: '0:00', title: 'Window opens', anchor: 'start' },
-      { x: plotW, label: mmss(spanSec), title: 'Window closes', anchor: 'end' },
-    ]
-    for (const mark of marks) {
-      if (mark.x < LABEL_GAP / 2 || mark.x > plotW - LABEL_GAP / 2) continue
-      if (labels.some((l) => Math.abs(l.x - mark.x) < LABEL_GAP)) continue
-      labels.push({ x: mark.x, label: mark.label, title: mark.title, anchor: 'middle' })
-    }
+    const labels = axisLabels(
+      marks,
+      plotW,
+      LABEL_GAP,
+      { label: '0:00', title: 'Window opens' },
+      { label: mmss(spanSec), title: 'Window closes' },
+    )
     return { marks, labels }
   }, [ticks, plotW, span, market.startMs])
 
@@ -254,8 +252,8 @@ export function ProbabilityChart({
             <line x1={0} x2={plotW} y1={parityY} y2={parityY} stroke="var(--color-warning)" strokeDasharray="4 4" strokeWidth={1} />
 
             {/* Strategy-critical moments, drawn under the curve as x-axis ticks. */}
-            {axis.marks.map((mark) => (
-              <g key={`tick-${mark.atSec}`}>
+            {axis.marks.map((mark, index) => (
+              <g key={`tick-${index}-${mark.atSec}`}>
                 <title>{mark.title}</title>
                 <line
                   x1={mark.x}
