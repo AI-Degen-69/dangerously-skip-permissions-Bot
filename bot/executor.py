@@ -234,7 +234,6 @@ def evaluate_microstructure_ladder(
                     default_clip=clip,
                     max_clip=max_clip,
                     whole_ladder=whole_ladder,
-                    dip_curve=dip_curve,
                 )
                 role = "MAKER" if (bid is not None and ask is not None and (ask - bid) <= 0.01) else "TAKER"
                 exec_px = bid if role == "MAKER" and bid is not None else px
@@ -284,7 +283,6 @@ def evaluate_microstructure_ladder(
             whole_ladder=whole_ladder,
             is_v22=is_v22,
             is_v23=is_v23,
-            dip_curve=dip_curve,
         )
         # Tweak 3: Prioritize 0% maker fills during sweep equalization to eliminate adverse fee drag
         if in_sweep_phase and bid is not None:
@@ -463,7 +461,6 @@ def evaluate_microstructure_ladder(
                 is_v22=is_v22,
                 atomic_arb=is_atomic,
                 is_v23=is_v23,
-                dip_curve=dip_curve,
             )
             return MicrostructureDecision(
                 action="fill",

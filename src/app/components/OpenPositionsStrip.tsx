@@ -8,11 +8,16 @@ const money = (value: number | null | undefined) =>
 const cents = (value: number | null | undefined) =>
   value === null || value === undefined ? '—' : `${Math.round(value * 100)}¢`
 
+/** Three-decimal money: the last digit renders small and subscripted. */
 const money3 = (value: number | null | undefined) => {
-  if (value === null || value === undefined) return '—'
-  const s = value.toFixed(3)
-  const [whole, third] = s.split('.')
-  return `${whole}.${third.slice(0, 2)}<span class="text-[10px] align-sub leading-none opacity-70">${third[2]}</span>`
+  if (value === null || value === undefined) return <>—</>
+  const [whole, third] = value.toFixed(3).split('.')
+  return (
+    <>
+      {whole}.{third.slice(0, 2)}
+      <span className="text-[10px] align-sub leading-none opacity-70">{third[2]}</span>
+    </>
+  )
 }
 
 export interface OpenPositionsStripProps {
@@ -92,8 +97,9 @@ export function OpenPositionsStrip({ positions, pairCostCap = 0.99 }: OpenPositi
       >
         <span
           className={`font-mono text-lg font-extrabold leading-none tabular-nums ${pairCostTone(pairCost, pairCostCap)}`}
-          dangerouslySetInnerHTML={{ __html: money3(pairCost) }}
-        />
+        >
+          {money3(pairCost)}
+        </span>
       </div>
 
       {/* DN SIDE (MIRRORED) */}

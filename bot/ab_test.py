@@ -436,9 +436,10 @@ def start_candidate_test(candidate_id: str | None = None,
         "symbol": _reg["symbol"],
         "name": _reg["name"],
     }
-    entry = cfg.setdefault("entry", {})
-    entry.update(_reg["entry"])
-
+    # Replace, don't merge: a leftover dipCurve/maxUnhedgedUsd from the previous
+    # setup would otherwise keep sizing the new one (the curve shadows every
+    # other sizing branch in select_ladder_clip).
+    cfg["entry"] = dict(_reg["entry"])
     tmp = api.CONFIG_PATH.with_suffix(".tmp")
     tmp.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     tmp.replace(api.CONFIG_PATH)

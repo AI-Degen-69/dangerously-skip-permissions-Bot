@@ -5,12 +5,16 @@ import type { MarketView, WsStatus } from '../lib/bot'
 const cents = (value: number | null | undefined) =>
   value === null || value === undefined ? '-' : `${Math.round(value * 100)}¢`
 
+/** Mills-precision cents: the tenth-of-a-cent digit renders small and subscripted. */
 const cents3 = (value: number | null | undefined) => {
-  if (value === null || value === undefined) return '-'
+  if (value === null || value === undefined) return <>-</>
   const c = Math.round(value * 1000)
-  const whole = Math.floor(c / 10)
-  const third = c % 10
-  return `${whole}<span class="text-[10px] align-sub leading-none opacity-70">${third}</span>¢`
+  return (
+    <>
+      {Math.floor(c / 10)}
+      <span className="text-[10px] align-sub leading-none opacity-70">{c % 10}</span>¢
+    </>
+  )
 }
 
 export interface LiveWindowStripProps {
@@ -79,8 +83,9 @@ export function LiveWindowStrip({ markets, ws, pairCostCap = 0.99 }: LiveWindowS
       >
         <span
           className={`font-mono text-xl font-extrabold leading-none tabular-nums ${pairCostTone(pairBid, pairCostCap)}`}
-          dangerouslySetInnerHTML={{ __html: cents3(pairBid) }}
-        />
+        >
+          {cents3(pairBid)}
+        </span>
       </div>
 
       {/* DN SIDE (MIRRORED) */}
