@@ -112,6 +112,24 @@ def cfg_entry(key: str, default):
     return load_cfg().get("entry", {}).get(key, default)
 
 
+def tape_dir_if_enabled():
+    try:
+        enabled = bool(load_cfg().get("entry", {}).get("tapeEnabled", False))
+    except Exception:
+        return None
+    if not enabled:
+        return None
+    ws = get_current_workspace()
+    if ws is None:
+        return None
+    try:
+        td = ws.tape_dir
+        td.mkdir(parents=True, exist_ok=True)
+        return td
+    except Exception:
+        return None
+
+
 def log_event(kind: str, reason: str, slug: str | None = None, **kw) -> None:
     rec = {
         "ts": datetime.now(timezone.utc).isoformat(),
@@ -410,12 +428,23 @@ def trade_window(
     end_ms = (slot + WINDOW_S) * 1000
     started_ms = int(time.time() * 1000)
 
-    # Use pre-pipelined WebSocket streamer if supplied, otherwise spawn a fresh one
+    # Use pre-pipelined WebSocket streamer if supplied, otherwise spawn a fresh one.
+    # Tape (#35 prints + top-5 book) records into the run workspace when on.
+    _tape_dir = tape_dir_if_enabled()
+    _tape_on = _tape_dir is not None
     streamer = pre_streamer or LiveBookStreamer(
         up_token_id=spec.up_token_id,
         down_token_id=spec.down_token_id,
         rest_fallback_client=c,
+        enable_trade_prints=_tape_on,
+        tape_dir=_tape_dir,
     )
+    if pre_streamer is not None and _tape_on:
+        try:
+            streamer.enable_trade_prints = True
+            streamer.tape_dir = _tape_dir
+        except Exception:
+            pass
     streamer.start()
 
     write_state(slug, end_ms, started_ms, fills,
@@ -491,6 +520,23 @@ def trade_window(
             minute = min(max((now - slot) // 60, 0), 4)
 
             quotes = live_quote_pair(c, spec.up_token_id, spec.down_token_id, streamer=streamer)
+            try:
+                _depth_cap = float(entry.get("maxDepthShares", 0.0) or 0.0)
+            except Exception:
+                _depth_cap = 0.0
+            _resting = None
+            if _depth_cap > 0 and streamer is not None:
+                try:
+                    _resting = {}
+                    for _side, _tok in (("Up", spec.up_token_id), ("Down", spec.down_token_id)):
+                        try:
+                            _top = streamer.depth(str(_tok), levels=1)
+                            _bids = _top.get("bids") or []
+                            _resting[_side] = float(_bids[0][1]) if _bids else None
+                        except Exception:
+                            _resting[_side] = None
+                except Exception:
+                    _resting = None
             decision = evaluate_microstructure_ladder(
                 quotes=quotes,
                 inv=inv,
@@ -510,6 +556,8 @@ def trade_window(
                 in_sweep_phase=in_sweep_phase,
                 rescue_ceiling=rescue_ceiling,
                 rescue_max_pair_cost=rescue_max_pair_cost,
+                max_depth_shares=_depth_cap,
+                resting_size=_resting,
             )
 
             # Uncensored decision journal: every evaluation (fill or skip) with
@@ -867,10 +915,13 @@ def main() -> None:
             try:
                 next_spec = get_window(c, f"btc-updown-5m-{slot}")
                 print(f"[btc-updown-5m-{slot}] Phase 0: Pre-open pipeline active — initializing live streamer & order placements at T-310s…", flush=True)
+                _pre_tape = tape_dir_if_enabled()
                 active_streamer = LiveBookStreamer(
                     up_token_id=next_spec.up_token_id,
                     down_token_id=next_spec.down_token_id,
                     rest_fallback_client=c,
+                    enable_trade_prints=_pre_tape is not None,
+                    tape_dir=_pre_tape,
                 )
                 active_streamer.start()
             except Exception as ex:

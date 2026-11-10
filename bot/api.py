@@ -303,6 +303,28 @@ def start_loop_process(run_id: str | None = None) -> int:
         return proc.pid
 
 
+def tape_status() -> dict:
+    cfg = load_config()
+    enabled = bool(cfg.get("entry", {}).get("tapeEnabled", False))
+    run_id = get_active_run_id()
+    stats: dict = {"prints": 0, "books": 0, "printsBytes": 0, "bookBytes": 0, "mb": 0.0, "tapeDir": None}
+    if run_id:
+        try:
+            ws = resolve_run_workspace(run_id)
+            if ws:
+                stats = ws.tape_stats()
+        except Exception:
+            pass
+    return {
+        "enabled": enabled,
+        "runId": run_id,
+        "tapeDir": stats.get("tapeDir"),
+        "prints": stats.get("prints", 0),
+        "books": stats.get("books", 0),
+        "mb": stats.get("mb", 0.0),
+    }
+
+
 # ---------------------------------------------------------------- live reads
 
 _client = None
@@ -1347,7 +1369,10 @@ class Handler(BaseHTTPRequestHandler):
                         "name": strat_name,
                         "signature": strat_sig,
                     },
+                    "tape": tape_status(),
                 })
+            elif url.path == "/api/bot/tape":
+                self._send(200, tape_status())
             elif url.path == "/api/bot/strategy-setups":
                 from bot import constants as C
                 cfg = load_config()
@@ -1602,6 +1627,21 @@ class Handler(BaseHTTPRequestHandler):
                 KILL_PATH.unlink(missing_ok=True)
                 log_event("info", "entries-resumed")
                 self._send(200, {"ok": True, "killSwitch": False})
+            elif self.path == "/api/bot/tape":
+                if is_view_only():
+                    self._send(400, {"error": "Cannot toggle tape while in view-only mode", "isViewOnly": True})
+                    return
+                enabled = body.get("enabled")
+                if not isinstance(enabled, bool):
+                    self._send(400, {"error": "Body must be {enabled: boolean}"})
+                    return
+                cfg = load_config()
+                cfg.setdefault("entry", {})["tapeEnabled"] = enabled
+                tmp_cfg = CONFIG_PATH.with_suffix(".tmp")
+                tmp_cfg.write_text(json.dumps(cfg, indent=2))
+                tmp_cfg.replace(CONFIG_PATH)
+                log_event("info", "tape-toggled", detail={"enabled": enabled})
+                self._send(200, tape_status())
             elif self.path == "/api/bot/redeem":
                 if is_view_only():
                     self._send(400, {

@@ -45,6 +45,7 @@ STRATEGY_SETUPS = {
             "minSpacingStaticSec": 2.5,
             "includeTakerFee": True,
             "wholeLadderClips": True,
+            "maxDepthShares": 0.0,
         },
     },
     "dangerously-skip-permissions": {
@@ -78,6 +79,7 @@ STRATEGY_SETUPS = {
             "minSpacingStaticSec": 2.5,
             "includeTakerFee": True,
             "wholeLadderClips": True,
+            "maxDepthShares": 0.0,
         },
     },
     "dangerously-skip-permissions-v2.1": {
@@ -110,6 +112,7 @@ STRATEGY_SETUPS = {
             "minSpacingStaticSec": 2.5,
             "includeTakerFee": True,
             "wholeLadderClips": True,
+            "maxDepthShares": 0.0,
         },
     },
     "dangerously-skip-permissions-v2.2": {
@@ -142,6 +145,7 @@ STRATEGY_SETUPS = {
             "minSpacingStaticSec": 2.5,
             "includeTakerFee": True,
             "wholeLadderClips": True,
+            "maxDepthShares": 0.0,
         },
     },
     "dangerously-skip-permissions-v2.3": {
@@ -177,6 +181,7 @@ STRATEGY_SETUPS = {
             "minSpacingStaticSec": 2.5,
             "includeTakerFee": True,
             "wholeLadderClips": True,
+            "maxDepthShares": 0.0,
         },
     },
     "dangerously-skip-permissions-v2.4": {
@@ -213,6 +218,7 @@ STRATEGY_SETUPS = {
             "minSpacingStaticSec": 2.5,
             "includeTakerFee": True,
             "wholeLadderClips": True,
+            "maxDepthShares": 0.0,
         },
     },
     "dangerously-skip-permissions-v2.5": {
@@ -307,6 +313,10 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
     cap = float(e.get("maxPairCost", 0.985))
     rescue = float(e.get("rescuePairCostMax", 0.995))
     cutoff = e.get("stopBeforeCloseSec", 75)
+    try:
+        depth_cap = float(e.get("maxDepthShares", 0.0) or 0.0)
+    except Exception:
+        depth_cap = 0.0
     exposure = float(lead) * float(e.get("maxFillPrice", 0.45))
     risk = float(f.get("dollarRisk", 4.50))
     sizing = f.get("sizing", "ladder")
@@ -377,12 +387,13 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         if sweep else ""
     )
     heavy_txt = " No heavy bulk fills." if not heavy else ""
+    depth_txt = f" Maker clips capped to resting depth ({depth_cap:g} sh max)." if depth_cap > 0 else ""
 
     gap_cap_txt = f"Dollar Gap Cap (${dollar_cap:.2f})" if dollar_cap > 0 else f"Gap Cap ({lead:g} sh)"
     signature = f"{sig_size} - {sig_gate} - {gap_cap_txt} - Under-${rescue:.3f} Cap"
     description = (
         f"Buys dips {dip_txt}; entries follow {gate_txt}; "
-        f"never {gap_txt}.{sweep_txt}{heavy_txt}"
+        f"never {gap_txt}.{sweep_txt}{heavy_txt}{depth_txt}"
     ).strip()
     highlights = {
         "dipClips": dip_txt,
@@ -391,6 +402,7 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         "heavyFills": ("%g sh atomic pairs" % mx) if heavy else "None",
         "netGapCap": (f"never ${dollar_cap:.2f} of unhedged cost" if dollar_cap > 0
                       else f"never {lead:g} sh+ (~${exposure:.2f} at ceiling)") + ("; paired volume uncapped" if uncapped else ""),
+        "depthCap": (f"{depth_cap:g} sh" if depth_cap > 0 else "Off"),
         "maxBuy": f"{hi_c}c",
         "cutoff": f"{cutoff:g}s before close",
     }

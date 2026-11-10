@@ -134,6 +134,44 @@ class TokenBook:
 
 
 @dataclass
+class TradePrint:
+    """A single matched trade observed on the CLOB market channel.
+
+    Schema proof (docs.polymarket.com → Market Channel, verified 2026-11-10):
+    ``event_type`` is ``last_trade_price`` on ``wss://ws-subscriptions-clob.polymarket.com/ws/market``
+    with the same ``assets_ids`` subscription as the book feed. Required fields are
+    ``asset_id``, ``market`` (condition id), ``price``, ``size``, ``side``, ``timestamp``
+    (all strings); ``fee_rate_bps`` and ``transaction_hash`` are optional.
+
+    ``side`` is **from the taker's perspective** (AsyncAPI: BUY | SELL). A resting
+    BUY (maker bid) is therefore only filled by a taker ``SELL`` print, and a
+    resting SELL only by a taker ``BUY`` print. Getting this backwards silently
+    inverts the whole fill-verification result.
+    """
+
+    ts: float  # epoch seconds (converted from ms string when available)
+    asset_id: str
+    price: float
+    size: float
+    side: str  # "BUY" | "SELL" (taker side)
+    timestamp_raw: str = ""
+    fee_rate_bps: str = ""
+    market: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "ts": self.ts,
+            "asset_id": self.asset_id,
+            "price": round(self.price, 4),
+            "size": self.size,
+            "side": self.side,
+            "timestamp": self.timestamp_raw,
+            "fee_rate_bps": self.fee_rate_bps,
+            "market": self.market,
+        }
+
+
+@dataclass
 class StreamTick:
     ts: float  # epoch seconds
     time_str: str  # HH:MM:SS.mmm
@@ -177,6 +215,9 @@ class LiveBookStreamer:
         endpoint: str = WS_ENDPOINT,
         on_tick: Callable[[StreamTick], None] | None = None,
         rest_poll_interval: float = DEFAULT_REST_POLL_INTERVAL_S,
+        enable_trade_prints: bool = False,
+        tape_dir: str | Path | None = None,
+        on_print: Callable[["TradePrint"], None] | None = None,
     ):
         self.up_token_id = str(up_token_id)
         self.down_token_id = str(down_token_id)
@@ -196,6 +237,18 @@ class LiveBookStreamer:
         self.last_tick_ts: float = 0.0
         self.reconnect_count: int = 0
         self.tick_count: int = 0
+        # --- Trade-print (last_trade_price) observation path (issue #35) ---
+        # Quote path (book / price_change / snapshot / rest_poll) is unchanged
+        # when enable_trade_prints is False. When True, prints are stored,
+        # queryable via depth()/get_recent_prints(), and optionally appended
+        # to tape_dir/prints.jsonl + tape_dir/book.jsonl.
+        self.enable_trade_prints = bool(enable_trade_prints)
+        self.on_print = on_print
+        self.tape_dir = Path(tape_dir) if tape_dir is not None else None
+        self.prints: collections.deque[TradePrint] = collections.deque(maxlen=buffer_size * 10)
+        self.print_count: int = 0
+        self.last_print_ts: float = 0.0
+        self._last_book_line: dict[str, str] = {}
 
         self._thread: threading.Thread | None = None
         self._fallback_thread: threading.Thread | None = None
@@ -400,12 +453,20 @@ class LiveBookStreamer:
         if isinstance(data, list):
             for item in data:
                 if isinstance(item, dict):
-                    self._handle_snapshot_or_item(item)
+                    if item.get("event_type") == "last_trade_price":
+                        self._handle_trade_print(item)
+                    else:
+                        self._handle_snapshot_or_item(item)
         elif isinstance(data, dict):
-            if "price_changes" in data:
+            if data.get("event_type") == "last_trade_price":
+                self._handle_trade_print(data)
+            elif "price_changes" in data:
                 for change in data.get("price_changes", []):
                     if isinstance(change, dict):
-                        self._handle_price_change(change)
+                        if change.get("event_type") == "last_trade_price":
+                            self._handle_trade_print(change)
+                        else:
+                            self._handle_price_change(change)
             elif "bids" in data or "asks" in data or data.get("event_type") == "book":
                 self._handle_snapshot_or_item(data)
             elif data.get("event_type") == "price_change":
@@ -446,6 +507,10 @@ class LiveBookStreamer:
                 self.on_tick(tick)
             except Exception:
                 pass
+        try:
+            self._maybe_append_book_tape(asset_id)
+        except Exception:
+            pass
 
     def _handle_price_change(self, change: dict) -> None:
         asset_id = str(change.get("asset_id", ""))
@@ -487,6 +552,85 @@ class LiveBookStreamer:
                 self.on_tick(tick)
             except Exception:
                 pass
+        try:
+            self._maybe_append_book_tape(asset_id)
+        except Exception:
+            pass
+
+    def _parse_print_ts(self, raw: object) -> tuple:
+        try:
+            ms = int(str(raw))
+            return (ms / 1000.0, str(raw))
+        except Exception:
+            now = time.time()
+            return (now, str(raw) if raw else '')
+
+    def _append_tape_line(self, kind: str, record: dict) -> None:
+        if self.tape_dir is None:
+            return
+        try:
+            self.tape_dir.mkdir(parents=True, exist_ok=True)
+            fname = 'prints.jsonl' if kind == 'prints' else 'book.jsonl'
+            with (self.tape_dir / fname).open('a', encoding='utf-8') as f:
+                f.write(json.dumps(record) + chr(10))
+        except Exception:
+            pass
+
+    def _handle_trade_print(self, item: dict) -> None:
+        asset_id = str(item.get('asset_id', ''))
+        if asset_id not in self.books:
+            return
+        try:
+            price = float(item.get('price', 0.0))
+            size = float(item.get('size', 0.0))
+        except Exception:
+            return
+        if not (0.0 < price < 1.0 and size > 0):
+            return
+        side = str(item.get('side', '')).upper() or 'UNKNOWN'
+        ts, raw = self._parse_print_ts(item.get('timestamp'))
+        pr = TradePrint(ts=ts, asset_id=asset_id, price=price, size=size, side=side, timestamp_raw=raw, fee_rate_bps=str(item.get('fee_rate_bps', '')), market=str(item.get('market', '')))
+        with self._lock:
+            self.prints.append(pr)
+            self.print_count += 1
+            self.last_print_ts = ts
+        if self.enable_trade_prints and self.tape_dir is not None:
+            rec = dict(pr.to_dict())
+            rec['slug_outcome'] = self.books[asset_id].outcome
+            self._append_tape_line('prints', rec)
+        cb = self.on_print
+        if cb is not None:
+            try:
+                cb(pr)
+            except Exception:
+                pass
+
+    def _maybe_append_book_tape(self, asset_id: str) -> None:
+        if not self.enable_trade_prints or self.tape_dir is None:
+            return
+        if asset_id not in self.books:
+            return
+        top = self.depth(asset_id, levels=5)
+        flat = json.dumps(top, sort_keys=True)
+        if self._last_book_line.get(asset_id) == flat:
+            return
+        self._last_book_line[asset_id] = flat
+        book = self.books[asset_id]
+        self._append_tape_line('book', {'ts': book.last_update_ts, 'asset_id': asset_id, 'outcome': book.outcome, 'bids': top['bids'], 'asks': top['asks']})
+
+    def depth(self, asset_id: str, levels: int = 5) -> dict:
+        with self._lock:
+            book = self.books.get(str(asset_id))
+            if book is None:
+                return {'bids': [], 'asks': []}
+            bids = sorted(book.bids.items(), reverse=True)[:max(1, levels)]
+            asks = sorted(book.asks.items())[:max(1, levels)]
+            return {'bids': [[round(p, 3), s] for p, s in bids], 'asks': [[round(p, 3), s] for p, s in asks]}
+
+    def get_recent_prints(self, limit: int = 100) -> list:
+        with self._lock:
+            recent = list(self.prints)[-max(1, limit):]
+            return [p.to_dict() for p in recent]
 
     def get_status(self) -> dict:
         """Inspect current connection health and book snapshot."""
@@ -517,6 +661,7 @@ class LiveBookStreamer:
                 "age_ms": age_ms,
                 "reconnect_count": self.reconnect_count,
                 "tick_count": self.tick_count,
+                "print_count": self.print_count,
                 "up_book": self.books[self.up_token_id].to_dict(),
                 "down_book": self.books[self.down_token_id].to_dict(),
             }

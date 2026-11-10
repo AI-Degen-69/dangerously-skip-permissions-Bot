@@ -238,6 +238,15 @@ export interface RunItem {
   configSnapshot?: { strategy?: { id?: string; symbol?: string; name?: string } } & Record<string, unknown>
 }
 
+export interface TapeStatus {
+  enabled: boolean
+  runId: string | null
+  tapeDir: string | null
+  prints: number
+  books: number
+  mb: number
+}
+
 export interface BotControl {
   running: boolean
   pid: number | null
@@ -248,6 +257,7 @@ export interface BotControl {
   selectedRunId?: string | null
   isViewOnly?: boolean
   strategy?: StrategyInfo
+  tape?: TapeStatus
 }
 
 export interface PerfGate {
@@ -578,6 +588,18 @@ export const useResumeRun = () =>
 
 export const useStopBot = () =>
   useBotMutation(() => send<{ running: boolean; pid: number | null }>('/stop', 'POST'))
+
+export const useBotTape = () =>
+  useQuery({
+    queryKey: ['bot', 'tape'],
+    queryFn: () => getJson<TapeStatus>('/tape'),
+    placeholderData: (prev) => prev,
+    refetchInterval: 5_000,
+    retry: false,
+  })
+
+export const useSetTapeEnabled = () =>
+  useBotMutation((enabled: boolean) => send<TapeStatus>('/tape', 'POST', { enabled }))
 
 export const useRedeemBot = () =>
   useBotMutation(() =>
