@@ -61,7 +61,7 @@ export function tweakCards(candidate: AbTestDistributionStats | null | undefined
     (empty
       ? 'Waiting for a candidate run — its live sizing will appear here.'
       : sizing === 'constant-risk'
-        ? `Every dip sized as $${risk.toFixed(2)} / price (${clip} at ${hiC}c up to ${mx} at 10c), dips at ${hiC}c or cheaper only. No heavy bulk fills; net gap capped at ${lead} while total paired volume ${uncapped ? 'has no cap' : 'is capped'}.`
+        ? `Every dip sized as $${risk.toFixed(2)} / price (${clip} at ${hiC}c up to ${mx} at 10c), dips at ${hiC}c or cheaper only. No heavy bulk fills; unhedged gap vetoed at ${lead} while total paired volume ${uncapped ? 'has no cap' : 'is capped'}.`
         : sizing === 'confidence'
           ? `Sizes heavy (${mx} sh) on 100% risk-free atomic pairs and deficit equalizations, while micro-sizing speculative dips to ${clip} sh.`
           : `Dip clips of ${clip} sh (max ${mx} sh), dips at ${hiC}c or cheaper.`)

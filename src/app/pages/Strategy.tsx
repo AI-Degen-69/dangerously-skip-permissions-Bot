@@ -308,7 +308,7 @@ export function Strategy() {
           <p className="mt-2 text-[12.5px] leading-relaxed text-muted">{picked.description}</p>
           <div className="mt-3 flex flex-wrap gap-2 font-mono text-[11.5px]">
             <span className="rounded-[8px] border border-line bg-surface px-2 py-1">Clip {picked.entry.clipSharesDefault} / max {picked.entry.maxShares} sh</span>
-            <span className="rounded-[8px] border border-line bg-surface px-2 py-1">Max lead {picked.entry.maxShareLead} sh</span>
+            <span className="rounded-[8px] border border-line bg-surface px-2 py-1">Gap veto ≥{picked.entry.maxShareLead} sh</span>
             <span className="rounded-[8px] border border-line bg-surface px-2 py-1">Pair cap ${Number(picked.entry.maxPairCost).toFixed(3)}</span>
             <span className="rounded-[8px] border border-line bg-surface px-2 py-1">Max buy {Math.round(Number(picked.entry.maxFillPrice) * 100)}¢</span>
             <span className="rounded-[8px] border border-line bg-surface px-2 py-1">Cutoff {picked.entry.stopBeforeCloseSec}s</span>

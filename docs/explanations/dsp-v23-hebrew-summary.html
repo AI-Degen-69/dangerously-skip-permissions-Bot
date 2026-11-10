@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DSP-v2.3 — סיכום ממצאים מרכזיים</title>
+<style>
+*{box-sizing:border-box}
+body{font-family:'Segoe UI',Arial,sans-serif;background:#0f1419;color:#e8eef4;margin:0;padding:24px;line-height:1.7}
+.wrap{max-width:960px;margin:0 auto}
+h1{font-size:1.9rem;margin:0 0 4px}
+.sub{color:#9fb3c8;margin-bottom:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0}
+.card{background:#1a2330;border:1px solid #2b3a4f;border-radius:12px;padding:14px;text-align:center}
+.card .big{font-size:1.6rem;font-weight:800}
+.card .lbl{font-size:.85rem;color:#9fb3c8}
+.good{color:#4ade80}.bad{color:#f87171}.warn{color:#fbbf24}
+section{background:#151d29;border:1px solid #2b3a4f;border-radius:14px;padding:18px;margin:14px 0}
+h2{margin:0 0 10px;font-size:1.25rem;color:#7dd3fc}
+table{width:100%;border-collapse:collapse;font-size:.9rem;margin-top:10px}
+th,td{border:1px solid #2b3a4f;padding:8px;text-align:center}
+th{background:#1e2a3b;color:#7dd3fc}
+.bar{height:22px;border-radius:6px;background:#2b3a4f;position:relative;overflow:hidden;margin:6px 0}
+.bar>div{height:100%;border-radius:6px}
+.split{display:flex;gap:10px;flex-wrap:wrap}
+.split>div{flex:1;min-width:220px}
+.flow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center;margin:12px 0}
+.node{background:#1e2a3b;border:1px solid #3b82f6;border-radius:10px;padding:10px 14px;font-size:.9rem}
+.arrow{color:#3b82f6;font-size:1.4rem}
+.callout{border-right:4px solid #f59e0b;background:#221c10;padding:12px;border-radius:8px;margin:10px 0}
+ol li,ul li{margin:6px 0}
+.badge{display:inline-block;background:#1e3a2f;color:#4ade80;border-radius:20px;padding:2px 12px;font-size:.8rem;margin:2px}
+.badge.r{background:#3a1e2a;color:#f87171}
+.num{direction:ltr;unicode-bidi:isolate;display:inline-block}
+code{direction:ltr;unicode-bidi:isolate}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>⚡ DSP-v2.3 — סיכום ממצאים מרכזיים</h1>
+<div class="sub"><span class="num">57</span> חלונות · <span class="num">54</span> חתומים · ריצה חיה · יומן החלטות מלא <span class="num">(decisions.jsonl — 111,797</span> הערכות) · כל המספרים חושבו מהנתונים</div>
+
+<div class="grid">
+<div class="card"><div class="big bad"><span class="num">−$46.10</span></div><div class="lbl">רווח נקי (<span class="num">54</span> חתומים)</div></div>
+<div class="card"><div class="big good"><span class="num">+$90.00</span></div><div class="lbl">רווח נעול (זוגות מגודרים)</div></div>
+<div class="card"><div class="big bad"><span class="num">−$136.10</span></div><div class="lbl">הפסד שיורי (צד לא מגודר)</div></div>
+<div class="card"><div class="big"><span class="num">35 / 19</span></div><div class="lbl">ניצחונות / הפסדים <span class="num">(65%)</span></div></div>
+</div>
+
+<section>
+<h2>1. מאיפה הכסף בא ולאן הלך</h2>
+<div class="split">
+<div>
+<div class="lbl">מנוע מגודר (עובד): <span class="num">+$55</span></div>
+<div class="bar"><div style="width:100%;background:#22c55e"></div></div>
+<div class="lbl">זנב לא מגודר (הורג): <span class="num">−$82</span></div>
+<div class="bar"><div style="width:100%;background:#ef4444"></div></div>
+<div class="lbl">עמלות: <span class="num">$7.18</span> בלבד — זניח</div>
+</div>
+<div>
+<p><b>כל 19 ההפסדים הם הפסדי-שייר, אפס הפסדי-ספרד.</b> כל חלון מפסיד נסגר עם עודף מניות (עד <span class="num">20</span>) בצד המפסיד; כל <span class="num">35</span> החלונות המרוויחים נסגרו מאוזנים.</p>
+<p>נוסחה מדויקת: <b>הפסד שיורי = עודף × מחיר ממוצע של הצד המוביל</b><br>דוגמה: חלון <span class="num">…4200</span> — <span class="num">עודף 20 × $0.473 = −$9.47</span>, נעול <span class="num">+$0.77</span>, נטו <span class="num">−$8.70</span>.</p>
+</div>
+</div>
+</section>
+
+<section>
+<h2>2. למה v2.3 הפסידה כש-v2.2 הרוויחה?</h2>
+<table>
+<tr><th></th><th><span class="num">v2.2 (+$18)</span></th><th><span class="num">v2.3 (−$46)</span></th></tr>
+<tr><td>חלונות לא מאוזנים</td><td><span class="badge"><span class="num">0/32</span></span></td><td><span class="badge r"><span class="num">19/54</span></span></td></tr>
+<tr><td>גודל קליפים</td><td>הכל <span class="num">50</span> (אטומי)</td><td><span class="num">10</span> (דיפים, לא אטומי)</td></tr>
+<tr><td>מחיר כניסה ראשונה</td><td><span class="num">0.47–0.55</span></td><td>תמיד <span class="num">≤ 0.45</span></td></tr>
+<tr><td>רווח נעול</td><td><span class="num">+$18</span></td><td class="good"><span class="num">+$90</span> (המנוע השתפר!)</td></tr>
+<tr><td>שיורי</td><td><span class="num">$0</span></td><td class="bad"><span class="num">−$136</span></td></tr>
+</table>
+<div class="callout"><b>שורש הבעיה — חור בין שני שומרים:</b> שומר ההקפאה אסר קניית-מוביל מעודף <span class="num">15</span>, שומר הווטו חסם רק מעל <span class="num">15+5=20</span> — וקליפים של <span class="num">10</span> קופצים מעודף <span class="num">10</span> ישר ל-<span class="num">20</span> בדיוק, בלי לדרוך באזור האסור. הלוג מוכיח: <span class="num">139</span> קניות כאלה (מוביל + <span class="num">10</span> כשהעודף <span class="num">10</span>), רובן בדקה הראשונה. התיקון: ידית-רווח יחידה — דילוג אם <span class="num">עודף + כמות ≥ 20</span>, בלי החרגה נסתרת (תווית <span class="num">unhedged-cap</span> בלוג).</div>
+<div class="flow">
+<div class="node">כניסה רק בצד הזול <span class="num">(≤45¢)</span></div><div class="arrow">←</div>
+<div class="node">אין שער גידור</div><div class="arrow">←</div>
+<div class="node">דפיציט לא נסגר ב-<span class="num">sweep</span></div><div class="arrow">←</div>
+<div class="node">עודף <span class="num">20 × ~$0.45 ≈ −$9</span></div>
+</div>
+<p><b>טביעת אצבע של זמן:</b> כל <span class="num">69</span> המילויים של דקות <span class="num">M3+</span> שייכים לחלונות מרוויחים; <b>לכל <span class="num">19</span> החלונות המפסידים יש אפס מילויי <span class="num">M3+</span></b> — הלוג מוכיח שהציטוטים זרמו עד הדקה האחרונה (לא "ספר שנסגר"), והסגירה נכשלה על מחיר: צד מפסיד ב-<span class="num">0.97–1.00</span> מול כל התקורות.</p>
+</section>
+
+<section>
+<h2>3. מה עושים — v2.4 (מדורג, אחרי מדידה)</h2>
+<div class="callout">כיוון (אופרטור): v2.3 ממלאת לאורך כל החלון — אין מסלול אטומי, אין שער סירוב-כניסה. שער הגידור המקדים, יישור כפוי ב-<span class="num">$1.00</span> <b>והקפאת-כניסות</b> ירדו מהרשימה (ההקפאה נמדדה: קניית-דיפ אחת אחרי החלטה ב-<span class="num">19</span> מפסידים — חוסכת כ-$<span class="num">0</span>).</div>
+<ol>
+<li><b>ידית-רווח יחידה <span class="num">20 → 11</span> (מקסימום החזקה <span class="num">10</span>)</b> — השינוי היחיד ב-<span class="num">v2.4</span>. (<span class="num">9</span> היה חוסם כל דיפ-פתיחה של <span class="num">10</span> — הרעבה; <span class="num">11</span> משאיר <span class="num">0+10</span> פתוח וחוסם <span class="num">10+10</span>.) חותך כמעט חצי מהזנב (<span class="num">−$136 → ≈−$70</span> בקצב סטרנד זהה) בלי לשנות פילוסופיה. <span class="badge">בינוני-גבוה</span></li>
+<li><b>תקרת חילוץ <span class="num">0.995 → 1.00</span> בשתי הדקות האחרונות (הימור נפרד)</b> — לסגור עודף <span class="num">20</span> במחיר-זוג <span class="num">1.00</span> עולה סנטים מול סטרנד של <span class="num">−$8.70</span>; הציטוטים קיימים (הלוג הוכיח). נשפט בנפרד על <span class="num">60</span> חלונות. <span class="badge">בינוני</span></li>
+<li><b>היגיינה: <code>freezeLead</code> נמחק, <code>endswith</code> הוחלף בדגלי-יכולת</b> — הגדרה אחת לעודף, אותו מספר בדשבורד ובמנוע. <span class="badge">בוצע</span></li>
+</ol>
+<p>לא ב-<span class="num">v2.4</span>: הקפאת כניסות (חוסכת $0), אטומי/סירוב (נגד העיצוב), יישור כפוי (שטיפה), תקרות נפח (נפח מנצח — חלון אחד סגר עודף <span class="num">60</span> והרוויח <span class="num">+$3.60</span>).</p>
+</section>
+
+<section>
+<h2>4. מה הורגים (לא מנופים)</h2>
+<ul>
+<li><b>עמלות</b> — <span class="num">$7.18</span> בלבד מול הפסד <span class="num">$136</span>. אין מנוף עמלות.</li>
+<li><b>מגבלות סיכון</b> — אף תקרה לא נכפתה באף חלון — והן גם לא מגנות מסטרנד של <span class="num">$9</span>.</li>
+<li><b>מחירי חילוץ גבוהים</b> — המנצחים משלמים <span class="num">0.992</span> חציוני לזוג; המפסידים מתים מעודף לא-מגודר ב-<span class="num">0.955</span>. הבעיה כמות, לא מחיר.</li>
+</ul>
+</section>
+
+<section>
+<h2>5. מה לא ניתן לדעת מהנתונים (להגינות)</h2>
+<ul>
+<li><b>נפתר:</b> הציטוטים זרמו עד הדקה האחרונה בכל חלון (הלוג) — לא "ספר שנסגר". הסגירה נכשלת על מחיר.</li>
+<li><b>נפתר:</b> שיעור הסירובים האמיתי — <span class="num">111,797</span> הערכות מתועדות, <span class="num">0</span> פגומות (<span class="num">~96%</span> דילוגי-תקרה).</li>
+<li>עומק ספר ותור — המודל הנייר מניח מילוי-<span class="num">maker</span> במגע, בלי תור/עומק/חלקיות. כל מסקנת רווח מותנית בכך.</li>
+<li>מדגם: <span class="num">n=57</span> חלונות + לוג החלטות. כל מסקנת פרמטר נבחנת על <span class="num">60</span> החלונות הבאים.</li>
+</ul>
+</section>
+
+<section>
+<h2>6. תחזיות לבדיקה (<span class="num">60</span> החלונות הבאים של <span class="num">v2.4 =</span> ידית <span class="num">9</span>)</h2>
+<table>
+<tr><th>#</th><th>תחזית</th><th>סף</th></tr>
+<tr><td>1</td><td>עודף מקסימלי</td><td><span class="num">≤ 10</span> בכל חלון (היה <span class="num">20</span> ב-<span class="num">19/19</span> מפסידים)</td></tr>
+<tr><td>2</td><td>הפסד בודד גרוע ביותר</td><td><span class="num">≥ −$5.00</span> (היה <span class="num">−$8.70</span>)</td></tr>
+<tr><td>3</td><td>זנב נחתך בחצי בקצב סטרנד זהה</td><td></td></tr>
+<tr><td>4</td><td>רווח נעול נשמר</td><td><span class="num">≥ $40</span> ל-<span class="num">30</span> חלונות</td></tr>
+<tr><td>5</td><td>נטו חיובי, <span class="num">win-rate ≥ 65%</span></td><td></td></tr>
+<tr><td>6</td><td>ווטו <span class="num">unhedged-cap</span> מופיע בלוג (הידית נושכת); אפס החזקות <span class="num">≥ 11</span></td><td></td></tr>
+</table>
+<div class="sub" style="margin-top:12px">מקור מלא: <code>docs/strategies/DSP_V2_3_ANALYSIS.md §11</code> · טסטים: <span class="num">120</span> עוברים · מנוע: ידית-רווח יחידה (<span class="num">unhedged-cap</span>).</div>
+</section>
+</div>
+</body>
+</html>

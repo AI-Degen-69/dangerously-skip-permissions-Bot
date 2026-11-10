@@ -6,9 +6,9 @@
   "mode": "paper",
   "bankrollUsd": 1000,
   "strategy": {
-    "id": "dangerously-skip-permissions-v2.3",
-    "symbol": "\u26a1 DSP-v2.3",
-    "name": "Dangerously Skip Permissions v2.3 (Constant-Risk Sizing)"
+    "id": "dangerously-skip-permissions-v2.4",
+    "symbol": "\u26a1 DSP-v2.4",
+    "name": "Dangerously Skip Permissions v2.4 (Single-Knob Gap Veto)"
   },
   "entry": {
     "startAfterOpenSec": 4,
@@ -20,8 +20,7 @@
     "benchmarkPairCost": 0.965,
     "targetPairCost": 0.965,
     "maxPairCost": 0.985,
-    "maxShareLead": 15.0,
-    "freezeLead": 15.0,
+    "maxShareLead": 11.0,
     "rescuePairCostMax": 0.995,
     "rescueCeilingPrice": 0.985,
     "includeTakerFee": true,

@@ -147,7 +147,6 @@ def evaluate_microstructure_ladder(
     max_share_lead: float = C.MAX_SHARE_LEAD,
     target_pair_cost: float | None = None,  # backward compat
     in_sweep_phase: bool = False,
-    freeze_lead: float = C.FREEZE_LEAD,
     rescue_max_pair_cost: float = C.RESCUE_PAIR_COST_MAX,
     rescue_ceiling: float = C.RESCUE_CEILING_PRICE,
     **kwargs,  # absorbs legacy kwargs
@@ -157,7 +156,7 @@ def evaluate_microstructure_ladder(
     Supports both setups:
     - 'hapcs-v1': Aggressive dual-regime with M4 certainty sniping up to 97.5¢ and 12s cutoff.
     - 'dangerously-skip-permissions': Reconstructed from wallet 0xc533…69a9 ($1.42M vol/wk).
-      Focuses on deep dips [7¢–45¢], 75s early cutoff, strict 15-share lead freeze,
+      Focuses on deep dips [7¢–45¢], 75s early cutoff, strict unhedged-gap veto,
       and Tiered Rescue Pairing up to $1.025 so 80¢–92¢ deficit-closing hedges
       are executed rather than left unhedged to face 100% loss at resolution.
     """
@@ -174,24 +173,23 @@ def evaluate_microstructure_ladder(
     saw_ceiling = False
     saw_dust = False
     saw_pair_cap = False
+    saw_unhedged_cap = False
     # DSP family (v2.0, v2.1, v2.2, ...) shares the same recovery-engine rules.
     is_dsp = strategy_id.startswith("dangerously-skip-permissions")
     is_v22 = strategy_id.endswith("v2.2")
     is_v23 = strategy_id.endswith("v2.3")
     is_confidence = is_v22 or is_v23
-    # v2.2: hard cap on unhedged lead = 20 sh (2 micro-clips). v2.1 = 30 sh. Baseline = 45 sh.
-    # v2.3: net imbalance cap = 15 sh (matches freeze_lead). This caps the NET
-    # difference only, NOT total paired volume, so choppy windows can re-trigger
-    # Dip -> Equalize micro-cycles indefinitely (200-500 paired shares total)
-    # while unhedged risk at any second stays <= 15 sh (<= $4.50 at these prices).
-    if is_v22:
-        lead_cap = min(max_share_lead, 20.0)
-    elif is_v23:
-        lead_cap = min(max_share_lead, 15.0)
-    elif strategy_id.endswith("v2.1"):
-        lead_cap = min(max_share_lead, 30.0)
-    else:
-        lead_cap = max_share_lead
+    # SINGLE unhedged-gap knob: max_share_lead is a strict veto, identical for
+    # every strategy version. A fill that would leave this side's lead AT OR
+    # ABOVE max_share_lead is skipped, so unhedged inventory strictly never
+    # reaches the knob value (knob 20 -> at most 19 sh held, 20 unreachable).
+    # This caps the NET difference only, NOT total paired volume, so choppy
+    # windows can re-trigger Dip -> Equalize micro-cycles indefinitely
+    # while unhedged risk at any second stays strictly below the knob.
+    # (There used to be a hidden +5.0 overshoot allowance here that let the
+    # gap land on lead_cap+5; it is gone. What the dashboard shows is what
+    # the engine enforces.)
+    lead_cap = max_share_lead
     rescue_cap = rescue_max_pair_cost if (is_dsp or in_sweep_phase) else max_pair_cost
 
     # 1. Phase 3: Resolution Certainty Snipe in Minute 4 [0.90, 0.975]
@@ -307,9 +305,11 @@ def evaluate_microstructure_ladder(
         return MicrostructureDecision(action="skip", outcome=preferred, reason="sweep-balanced", sub_reason="sweep-balanced")
 
     # Anti-Runaway Deficit Lock & Strict Leading-Side Freeze:
-    # If one side leads by >= freeze_lead (15.0 shares in DSP), STRICTLY FREEZE buying the leading side!
-    # Candidates must ONLY be the lagging side until balance is restored.
-    fl = freeze_lead if is_dsp else max_share_lead
+    # If one side leads by >= the single gap knob (max_share_lead), STRICTLY
+    # FREEZE buying the leading side! Candidates must ONLY be the lagging
+    # side until balance is restored. (The old separate freezeLead setting was
+    # merged into max_share_lead: one setting does all of this.)
+    fl = max_share_lead
     if up_def >= fl:
         candidates = ("Up",)   # Down leads -> ONLY Up allowed!
     elif down_def >= fl:
@@ -381,13 +381,13 @@ def evaluate_microstructure_ladder(
             )
             est_usd, _ = compute_fill_usd(shares, px, role=role, include_fee=(role == "TAKER"))
             proj_pc = _projected_pair_cost(inv, side, shares, est_usd)
-            # Strict hard ceiling on one-sided lead: NEVER exceed max_share_lead.
+            # Strict hard ceiling on one-sided lead: a fill that would leave
+            # this side's lead at or above the knob is vetoed, so the knob
+            # value itself is unreachable (set 20 -> 20 never held).
             # v2.2 atomic pairs bypass this (one-shot 60/60 then hold).
-            # v2.3 NEVER bypasses: net imbalance stays <= 15 sh so micro-cycles
-            # can re-trigger all window while total paired volume compounds.
             atomic_bypass = bool(is_atomic and is_v22)
-            if not atomic_bypass and (lead >= lead_cap or (lead + shares > lead_cap + 5.0)):
-                saw_pair_cap = True
+            if not atomic_bypass and (lead + shares >= lead_cap):
+                saw_unhedged_cap = True
                 continue
             # Sub-$1.00 pair-cost gate: <= max_pair_cost when closing deficit, <= bench_pc otherwise
             allowed_pc = max_pair_cost if deficit > 0 else bench_pc
@@ -442,6 +442,8 @@ def evaluate_microstructure_ladder(
         return MicrostructureDecision(action="skip", outcome=preferred, reason="extreme-price-skip", sub_reason="ceiling-price-skip")
     if saw_dust:
         return MicrostructureDecision(action="skip", outcome=preferred, reason="dust-quote", sub_reason="below-price-floor")
+    if saw_unhedged_cap:
+        return MicrostructureDecision(action="skip", outcome=preferred, reason="unhedged-cap-skip", sub_reason="unhedged-cap")
     if saw_pair_cap:
         return MicrostructureDecision(action="skip", outcome=preferred, reason="extreme-price-skip", sub_reason="pair-cost-cap")
     return MicrostructureDecision(action="skip", outcome=preferred, reason="no-liquidity", sub_reason="no-liquidity")

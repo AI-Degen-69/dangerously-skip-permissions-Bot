@@ -39,7 +39,6 @@ STRATEGY_SETUPS = {
             "targetPairCost": 0.965,
             "maxPairCost": 0.990,
             "maxShareLead": 90.0,
-            "freezeLead": 25.0,
             "rescuePairCostMax": 1.080,
             "rescueCeilingPrice": 0.985,
             "minSpacingMoveSec": 0.5,
@@ -73,7 +72,6 @@ STRATEGY_SETUPS = {
             "targetPairCost": 0.965,
             "maxPairCost": 0.985,
             "maxShareLead": 45.0,
-            "freezeLead": 15.0,
             "rescuePairCostMax": 1.080,
             "rescueCeilingPrice": 0.985,
             "minSpacingMoveSec": 0.5,
@@ -106,7 +104,6 @@ STRATEGY_SETUPS = {
             "targetPairCost": 0.965,
             "maxPairCost": 0.985,
             "maxShareLead": 45.0,
-            "freezeLead": 15.0,
             "rescuePairCostMax": 0.995,
             "rescueCeilingPrice": 0.985,
             "minSpacingMoveSec": 0.5,
@@ -139,7 +136,6 @@ STRATEGY_SETUPS = {
             "targetPairCost": 0.965,
             "maxPairCost": 0.985,
             "maxShareLead": 30.0,
-            "freezeLead": 15.0,
             "rescuePairCostMax": 0.995,
             "rescueCeilingPrice": 0.985,
             "minSpacingMoveSec": 0.5,
@@ -154,12 +150,12 @@ STRATEGY_SETUPS = {
         "name": "Dangerously Skip Permissions v2.3 (Constant-Risk Sizing)",
         "signature": (
             "Constant Dollar-Risk Sizing ($4.50) · Dip Buys ≤45¢ (10–45 sh) · "
-            "Net Imbalance Cap (15 sh) · Total Paired Volume Uncapped · Strict Sub-$1.00 Pair Cap"
+            "Single Gap-Veto Knob (20 sh, max hold 19) · Total Paired Volume Uncapped · Strict Sub-$1.00 Pair Cap"
         ),
         "description": (
             "Constant dollar-risk candidate: Buys dips at 45¢ or cheaper only, sizing each dip as $4.50 / price "
-            "(10 sh at 45¢ up to 45 sh at 10¢) so no single dip risks more than $4.50. Net imbalance capped at 15 sh, "
-            "total paired volume uncapped: choppy windows re-trigger Dip -> Equalize micro-cycles "
+            "(10 sh at 45¢ up to 45 sh at 10¢) so no single dip risks more than $4.50. Unhedged gap vetoed at 20 sh "
+            "(never held; max hold 19), total paired volume uncapped: choppy windows re-trigger Dip -> Equalize micro-cycles "
             "(Dip Up -> Equalize Down -> Dip Down -> Equalize Up) to compound hundreds of paired shares. "
             "No pre-flight gate and no heavy 60-share fills — entries are governed by strict sub-$1.00 pair-cost gates "
             "(≤$0.965 fresh, ≤$0.985 closing a deficit, rescue ≤$0.995)."
@@ -174,8 +170,43 @@ STRATEGY_SETUPS = {
             "benchmarkPairCost": 0.965,
             "targetPairCost": 0.965,
             "maxPairCost": 0.985,
-            "maxShareLead": 15.0,
-            "freezeLead": 15.0,
+            "maxShareLead": 20.0,
+            "rescuePairCostMax": 0.995,
+            "rescueCeilingPrice": 0.985,
+            "minSpacingMoveSec": 0.5,
+            "minSpacingStaticSec": 2.5,
+            "includeTakerFee": True,
+            "wholeLadderClips": True,
+        },
+    },
+    "dangerously-skip-permissions-v2.4": {
+        "id": "dangerously-skip-permissions-v2.4",
+        "symbol": "⚡ DSP-v2.4",
+        "name": "Dangerously Skip Permissions v2.4 (Single-Knob Gap Veto)",
+        "signature": (
+            "Constant Dollar-Risk Sizing ($4.50) · Dip Buys ≤45¢ (10–45 sh) · "
+            "Single Gap-Veto Knob (11 sh, max hold 10) · Total Paired Volume Uncapped · Strict Sub-$1.00 Pair Cap"
+        ),
+        "description": (
+            "Single-knob candidate: identical to v2.3 except the unhedged-gap veto knob is 11 sh "
+            "(never held; max hold 10), so the worst strand is ~$4.50 instead of ~$8.70. Buys dips at 45¢ "
+            "or cheaper only, sizing each dip as $4.50 / price (10 sh at 45¢ up to 45 sh at 10¢). "
+            "Total paired volume uncapped: choppy windows re-trigger Dip -> Equalize micro-cycles "
+            "(Dip Up -> Equalize Down -> Dip Down -> Equalize Up) to compound hundreds of paired shares. "
+            "No pre-flight gate and no heavy 60-share fills — entries are governed by strict sub-$1.00 pair-cost gates "
+            "(≤$0.965 fresh, ≤$0.985 closing a deficit, rescue ≤$0.995)."
+        ),
+        "entry": {
+            "startAfterOpenSec": 4,
+            "stopBeforeCloseSec": 75,
+            "clipSharesDefault": 10.0,
+            "maxShares": 45.0,
+            "minFillPrice": 0.07,
+            "maxFillPrice": 0.45,
+            "benchmarkPairCost": 0.965,
+            "targetPairCost": 0.965,
+            "maxPairCost": 0.985,
+            "maxShareLead": 11.0,
             "rescuePairCostMax": 0.995,
             "rescueCeilingPrice": 0.985,
             "minSpacingMoveSec": 0.5,
@@ -265,7 +296,7 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         sig_gate = f"Pair Gates (fresh under ${tgt:.3f})"
 
     gap_txt = (
-        f"lopsided by at most {lead:g} sh (about ${exposure:.2f} if all bought at the {hi_c}c ceiling)"
+        f"{lead:g} sh or more unhedged on one side, ever (about ${exposure:.2f} if {lead:g} sh bought at the {hi_c}c ceiling)"
         + (" while total paired-up shares have no cap" if uncapped else "")
     )
     sweep_txt = (
@@ -284,7 +315,7 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         "pairGates": f"fresh under ${tgt:.3f} / close under ${cap:.3f} / rescue under ${rescue:.3f}",
         "preflightGate": ("On (entry + opposite ask under $%.3f)" % rescue) if preflight else "Off (pair-cost gates only)",
         "heavyFills": ("%g sh atomic pairs" % mx) if heavy else "None",
-        "netGapCap": f"{lead:g} sh (~${exposure:.2f} max)" + ("; paired volume uncapped" if uncapped else ""),
+        "netGapCap": f"never {lead:g} sh+ (~${exposure:.2f} at ceiling)" + ("; paired volume uncapped" if uncapped else ""),
         "maxBuy": f"{hi_c}c",
         "cutoff": f"{cutoff:g}s before close",
     }
@@ -311,8 +342,7 @@ ACTIVE_WINDOW_SBC = (HARD_CUTOFF_SBC, WINDOW_S + PRE_OPEN_PIPELINE_S)
 CLIP_SHARES_DEFAULT = 30.0     # 30.0 shares = dominant order signature (31.0% of tape)
 MAX_SHARES = 50.0              # 50.0 shares = deficit catch-up cap
 TARGET_DOLLAR_RISK_USD = 4.50  # DSP-v2.3 constant dollar-risk ceiling per unhedged dip clip
-MAX_SHARE_LEAD = 90.0          # 90.0 shares = hard ceiling on unhedged lead (3 clips max)
-FREEZE_LEAD = 15.0             # 15.0 shares = strict accumulation freeze on leading side
+MAX_SHARE_LEAD = 90.0          # strict unhedged-gap veto: a fill leaving lead >= this is skipped, so this value is never held
 
 # Microstructure Price Bands ($)
 STRADDLE_BAND = (0.34, 0.55)   # Opening straddle band [34¢–55¢] (median 43¢)

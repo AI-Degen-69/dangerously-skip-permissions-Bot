@@ -1,7 +1,7 @@
 """A/B Testing & Statistical Hypothesis Validation Module.
 
 Compares Baseline Strategy A (run_20261109_043441_paper_msr_v2: DSP v2.0)
-against Candidate Strategy B (DSP v2.1: Unified Triad).
+against Candidate Strategy B (the current running preset, DSP v2.4: Single-Knob Gap Veto).
 
 Calculates real-time sample progress, Welch's two-sample t-statistic, p-value,
 Cohen's d effect size, 95% confidence intervals, and histogram distributions.
@@ -203,7 +203,7 @@ def _build_histogram(baseline_pnls: list[float], candidate_pnls: list[float]) ->
 
 
 def _candidate_strategy_id(candidate_id: str | None) -> str:
-    """Read the strategy id recorded in the candidate run's meta, defaulting to v2.2."""
+    """Read the strategy id recorded in the candidate run's meta, defaulting to v2.4."""
     if candidate_id:
         try:
             meta_p = RUNS_DIR / candidate_id / "run_meta.json"
@@ -214,7 +214,7 @@ def _candidate_strategy_id(candidate_id: str | None) -> str:
                     return str(strat_id)
         except Exception:
             pass
-    return "dangerously-skip-permissions-v2.2"
+    return "dangerously-skip-permissions-v2.4"
 
 
 def _candidate_entry(candidate_id: str | None) -> dict[str, Any]:
@@ -302,7 +302,7 @@ def get_ab_test_data() -> dict[str, Any]:
                 if meta_p.exists():
                     m = json.loads(meta_p.read_text(encoding="utf-8"))
                     strat_id = m.get("configSnapshot", {}).get("strategy", {}).get("id", "")
-                    if "v2.2" in strat_id or "v2.3" in strat_id:
+                    if "dangerously-skip-permissions" in strat_id:
                         candidate_id = act_id
         except Exception:
             pass
@@ -425,7 +425,7 @@ def start_candidate_test() -> dict[str, Any]:
     
     # 1. Update config to the registry's Candidate parameters (single source of truth).
     from bot import constants as C
-    _reg = C.STRATEGY_SETUPS["dangerously-skip-permissions-v2.2"]
+    _reg = C.STRATEGY_SETUPS["dangerously-skip-permissions-v2.4"]
     cfg = api.load_config()
     cfg["strategy"] = {
         "id": _reg["id"],
@@ -444,7 +444,7 @@ def start_candidate_test() -> dict[str, Any]:
     time.sleep(0.5)
 
     # 3. Generate run ID and register candidate
-    run_id = f"run_{time.strftime('%Y%m%d_%H%M%S')}_paper_dsp_v2_2"
+    run_id = f"run_{time.strftime('%Y%m%d_%H%M%S')}_paper_dsp_v2_4"
     ab_state = {
         "baselineRunId": DEFAULT_BASELINE_ID,
         "candidateRunId": run_id,

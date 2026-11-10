@@ -215,7 +215,7 @@ export function BotControlTile() {
                 <Param label="Pair cap" value={`$${Number(setup.entry.maxPairCost).toFixed(3)}`} />
                 <Param label="Max buy" value={`${Math.round(Number(setup.entry.maxFillPrice) * 100)}¢`} />
                 <Param label="Clip / max" value={`${setup.entry.clipSharesDefault} / ${setup.entry.maxShares} sh`} />
-                <Param label="Max lead" value={`${setup.entry.maxShareLead} sh`} />
+                <Param label="Gap veto" value={`≥${setup.entry.maxShareLead} sh`} />
                 <Param label="Cutoff" value={`${setup.entry.stopBeforeCloseSec}s`} />
               </div>
             </div>

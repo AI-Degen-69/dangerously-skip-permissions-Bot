@@ -25,7 +25,7 @@ class TestDspV21Family(unittest.TestCase):
             max_fill=0.88,
             max_pair_cost=0.985,
             rescue_max_pair_cost=0.995,
-            freeze_lead=15.0,
+            max_share_lead=30.0,
         )
         self.assertNotEqual((dec.action, dec.outcome), ("fill", "Up"))
 

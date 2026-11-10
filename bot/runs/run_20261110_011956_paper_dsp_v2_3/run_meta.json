@@ -1,10 +1,10 @@
 {
   "runId": "run_20261110_011956_paper_dsp_v2_3",
   "startedAt": "2026-11-10T01:19:56.949845+00:00",
-  "status": "running",
+  "status": "completed",
   "mode": "paper",
   "label": "dsp_v2_3",
-  "endedAt": null,
+  "endedAt": "2026-11-10T06:17:08.417867+00:00",
   "configSnapshot": {
     "asset": "BTC",
     "intervals": [
@@ -27,8 +27,7 @@
       "benchmarkPairCost": 0.965,
       "targetPairCost": 0.965,
       "maxPairCost": 0.985,
-      "maxShareLead": 15.0,
-      "freezeLead": 15.0,
+      "maxShareLead": 20.0,
       "rescuePairCostMax": 0.995,
       "rescueCeilingPrice": 0.985,
       "includeTakerFee": true,
@@ -47,5 +46,10 @@
       "events": []
     }
   },
-  "summary": {}
+  "summary": {
+    "resolvedWindows": 57,
+    "wins": 37,
+    "losses": 20,
+    "netUsd": -49.2
+  }
 }
