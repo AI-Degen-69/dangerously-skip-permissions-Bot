@@ -296,7 +296,6 @@ const GROUPS: { title: string; note?: string; icon: typeof Coins; tone: Tone; fi
     tone: 'danger',
     fields: [
       { path: 'risk.dailyLossCapUsd', label: 'Daily loss cap (USD)', hint: '$500 daily stop-loss', step: 25 },
-      { path: 'risk.maxUsdPerWindow', label: 'Max USD per window', hint: '$4,000 window ceiling', step: 50 },
       { path: 'risk.maxFillsPerWindow', label: 'Max fills per window', hint: '500 trade cap', step: 10 },
       { path: 'risk.maxConcurrentPositions', label: 'Max open windows', hint: '1 active window max', step: 1 },
     ],

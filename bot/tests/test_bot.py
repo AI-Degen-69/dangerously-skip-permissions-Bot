@@ -66,17 +66,16 @@ class RiskTests(unittest.TestCase):
 
     def test_check_window_caps(self):
         st = RiskState()
-        self.assertIsNone(check_window(10, 100.0, st, max_usd=4000.0, max_trades=500, daily_loss_cap=500.0))
-        self.assertIn("trade cap", check_window(500, 100.0, RiskState(), max_trades=500))
-        self.assertIn("cost cap", check_window(10, 99999.0, RiskState(), max_usd=4000.0))
+        self.assertIsNone(check_window(10, st, max_trades=500, daily_loss_cap=500.0))
+        self.assertIn("trade cap", check_window(500, RiskState(), max_trades=500))
 
     def test_daily_loss_kills(self):
         st = RiskState(daily_loss_usd=-600.0)
-        reason = check_window(1, 10.0, st, daily_loss_cap=500.0)
+        reason = check_window(1, st, daily_loss_cap=500.0)
         self.assertTrue(st.killed)
         self.assertIn("killed", reason)
         # killed state blocks everything after
-        self.assertIn("killed", check_window(0, 0.0, st, daily_loss_cap=500.0))
+        self.assertIn("killed", check_window(0, st, daily_loss_cap=500.0))
 
     def test_daily_loss_configurable(self):
         import bot.risk as risk
@@ -86,13 +85,13 @@ class RiskTests(unittest.TestCase):
             with patch.object(risk, "CONFIG_PATH", cfg_file):
                 # Loss of $600 should not trigger a $1500 cap
                 st = RiskState(daily_loss_usd=-600.0)
-                reason = check_window(1, 10.0, st)
+                reason = check_window(1, st)
                 self.assertIsNone(reason)
                 self.assertFalse(st.killed)
 
                 # Loss of $1501 should trigger the $1500 cap
                 st2 = RiskState(daily_loss_usd=-1501.0)
-                reason2 = check_window(1, 10.0, st2)
+                reason2 = check_window(1, st2)
                 self.assertIsNotNone(reason2)
                 self.assertTrue(st2.killed)
                 self.assertIn("daily loss cap $1500", reason2)

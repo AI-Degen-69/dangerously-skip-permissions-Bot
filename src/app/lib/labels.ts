@@ -50,8 +50,7 @@ export const LABELS: Record<string, string> = {
   'kill-switch-file-present': 'Kill switch active',
   'entries-resumed': 'Entries resumed',
   'window-trade-cap': 'Window trade cap reached (500)',
-  'window-cost-cap': 'Window cost cap reached ($4,000)',
-  'daily-loss-cap': 'Daily loss limit hit — halted',
+  'daily-loss-cap': 'Daily loss limit hit - halted',
   'daily-loss-limit': 'Daily loss limit hit — halted',
   'single-window-locked': 'Another window already active',
   'single-window-violation': 'Single-window conflict — window refused',
@@ -182,9 +181,6 @@ export const REASON_METRICS: Record<string, MetricSpec[]> = {
   ],
   'daily-loss-cap': [
     { key: 'lossUsd', label: 'loss', threshold: 'capUsd', op: '>=', unit: 'usd' },
-  ],
-  'window-cost-cap': [
-    { key: 'costUsd', label: 'cost', threshold: 'capUsd', op: '>=', unit: 'usd' },
   ],
   'window-trade-cap': [
     { key: 'fills', label: 'fills', threshold: 'cap', op: '>=', unit: 'count' },

@@ -14,7 +14,7 @@ Branch: i6/decouple-trade-execution-loop | Issue: #6
 ## 3. Preserved Trading Invariants
 - Dual-sided straddle + hold-to-redeem architecture remains untouched.
 - Microprice lean calculation and confidence weighting formula must remain verbatim.
-- Window budget ($4,000 max cost) and daily stop loss ($500) remain strictly enforced via `check_window` and `assert_single_window`.
+- There is no per-window spend ceiling (operator decision, 2026-11-10); the window fill cap (500) and the daily stop loss ($500) remain strictly enforced via `check_window` and `assert_single_window`.
 - M1-M3 extreme price filtering ($0.15 < px < 0.85) and M4 late-window snipe regime remain intact.
 
 ## 4. Anti-Cheat & Code Standards

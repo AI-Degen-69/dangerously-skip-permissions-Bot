@@ -98,7 +98,6 @@ Allows adjusting strategy parameters and safety limits. All values are automatic
   - `stopBeforeCloseSec`: Cutoff before window expiry to hold to redeem (default: 15s).
   - `leanSource`: `microprice` (dynamic alpha) or `dumb` (neutral 50/50 straddle).
 - **Risk Settings:**
-  - `maxUsdPerWindow`: Total capital ceiling allocated to a single 5-minute window (default: $4,000).
   - `dailyLossCapUsd`: Cumulative daily stop-loss trigger (default: $500).
   - `maxConcurrentPositions`: Number of simultaneous windows traded (fixed at 1).
 - **Emergency Kill-Switch Card:**

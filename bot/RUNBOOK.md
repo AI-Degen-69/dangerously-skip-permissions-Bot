@@ -28,7 +28,7 @@ python bot/live_paper.py --slot <epoch>
   `maxShareLead` 90 (anti-runaway lead cap),
   `minSpacingMoveSec` 0.5, `minSpacingStaticSec` 2.5,
   `includeTakerFee` true, `wholeLadderClips` true.
-- `risk`: `maxUsdPerWindow` 4000, `maxFillsPerWindow` 500,
+- `risk`: `maxFillsPerWindow` 500,
   `dailyLossCapUsd` 500 (operator confirms before any live size),
   `maxConcurrentPositions` 1.
 - Editable from the desk Config page (clamped to safe MSR-v2 bounds).

@@ -497,7 +497,7 @@ def plan_window(event_slug: str, lean=None, state: RiskState | None = None) -> W
     st = state or RiskState()
     for minute, n in enumerate(counts):
         for i in range(n):
-            blocked = check_window(len(plan.fills), cost, st)
+            blocked = check_window(len(plan.fills), st)
             if blocked:
                 return plan
             outcome = pick_side(i, minute, lean)

@@ -409,7 +409,6 @@ export interface BotConfigView {
   }
   exit: { profitTargetCents: number; stallBandLow?: number; stallBandHigh?: number; acceptLossBelowCents?: number; stopLossBelowCents?: number }
   risk: {
-    maxUsdPerWindow?: number
     maxFillsPerWindow?: number
     dailyLossCapUsd?: number
     maxConcurrentPositions: number
