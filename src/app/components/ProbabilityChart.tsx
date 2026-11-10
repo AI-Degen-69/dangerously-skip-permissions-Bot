@@ -15,10 +15,26 @@ const CHART_MIN_H = 110
 const CHART_MAX_H = 190
 const Y_AXIS_GUTTER = 32
 const PAD = 10
+const AXIS_H = 13 // bottom band reserved for elapsed-time labels
+const LABEL_GAP = 26 // px a tick label needs so it never collides with its neighbour
 // Theme tokens: in the dark desk these resolve to the emerald/rose pair, and
 // the light theme keeps the chart in step with the badges around it.
 const UP_COLOR = 'var(--color-success)'
 const DOWN_COLOR = 'var(--color-danger)'
+
+/** A strategy-critical moment in the window, drawn as an x-axis tick on the chart. */
+export interface AxisTick {
+  atSec: number
+  label: string
+  title: string
+  tone: 'info' | 'danger' | 'muted'
+}
+
+const TICK_STROKE: Record<AxisTick['tone'], string> = {
+  info: 'var(--color-info)',
+  danger: 'var(--color-danger)',
+  muted: 'var(--color-line-strong)',
+}
 
 interface ChartPoint {
   t: number
@@ -40,7 +56,15 @@ interface Geometry {
 }
 
 /** Live probability trajectory: implied Up odds across the window, scrubbable by pointer or keyboard. */
-export function ProbabilityChart({ market, points }: { market: MarketView; points: OddsPoint[] }) {
+export function ProbabilityChart({
+  market,
+  points,
+  ticks = [],
+}: {
+  market: MarketView
+  points: OddsPoint[]
+  ticks?: AxisTick[]
+}) {
   const [hoverT, setHoverT] = useState<number | null>(null)
   const [box, setBox] = useState({ w: 0, h: 0 })
   const surfaceRef = useRef<HTMLDivElement>(null)
@@ -76,9 +100,10 @@ export function ProbabilityChart({ market, points }: { market: MarketView; point
   const span = Math.max(1, market.endMs - market.startMs)
   // Right gutter holds the y-axis labels; the plot uses the rest.
   const plotW = Math.max(40, box.w - Y_AXIS_GUTTER)
+  // The plot stops above the axis band so the elapsed-time labels have their own row.
+  const floorY = box.h - PAD - AXIS_H
 
   const geometry = useMemo<Geometry>(() => {
-    const floorY = box.h - PAD
     // Samples collected before the window opened (the next market is revealed
     // 15s early) clamp to the plot edges instead of landing off-canvas.
     const xFor = (t: number) => projectX(t, market.startMs, span, plotW)
@@ -102,9 +127,30 @@ export function ProbabilityChart({ market, points }: { market: MarketView; point
     }
     // `points` is mutated in place by the sampler, so its length and last
     // timestamp are the real change signals.
-  }, [points, points.length, points[points.length - 1]?.t, box.w, box.h, plotW, span, market.startMs])
+  }, [points, points.length, points[points.length - 1]?.t, box.w, box.h, floorY, plotW, span, market.startMs])
 
   const { coords, line, area, last, current, isUp, color, parityY, yFor } = geometry
+
+  // Strategy-critical moments become x-axis ticks. Endpoints are always labelled
+  // (0 → window end); interior labels are dropped when they would collide, but
+  // their lines stay so the moment is still visible.
+  const axis = useMemo(() => {
+    const spanSec = span / 1000
+    const xAt = (atSec: number) => projectX(market.startMs + atSec * 1000, market.startMs, span, plotW)
+    const marks = ticks
+      .filter((tick) => tick.atSec > 0 && tick.atSec < spanSec)
+      .map((tick) => ({ ...tick, x: xAt(tick.atSec) }))
+    const labels: { x: number; label: string; title: string; anchor: 'start' | 'middle' | 'end' }[] = [
+      { x: 0, label: '0:00', title: 'Window opens', anchor: 'start' },
+      { x: plotW, label: mmss(spanSec), title: 'Window closes', anchor: 'end' },
+    ]
+    for (const mark of marks) {
+      if (mark.x < LABEL_GAP / 2 || mark.x > plotW - LABEL_GAP / 2) continue
+      if (labels.some((l) => Math.abs(l.x - mark.x) < LABEL_GAP)) continue
+      labels.push({ x: mark.x, label: mark.label, title: mark.title, anchor: 'middle' })
+    }
+    return { marks, labels }
+  }, [ticks, plotW, span, market.startMs])
 
   const hovered = useMemo(() => {
     if (hoverT == null || coords.length === 0) return null
@@ -207,6 +253,38 @@ export function ProbabilityChart({ market, points }: { market: MarketView; point
             {/* 50¢ parity line */}
             <line x1={0} x2={plotW} y1={parityY} y2={parityY} stroke="var(--color-warning)" strokeDasharray="4 4" strokeWidth={1} />
 
+            {/* Strategy-critical moments, drawn under the curve as x-axis ticks. */}
+            {axis.marks.map((mark) => (
+              <g key={`tick-${mark.atSec}`}>
+                <title>{mark.title}</title>
+                <line
+                  x1={mark.x}
+                  x2={mark.x}
+                  y1={PAD}
+                  y2={floorY}
+                  stroke={TICK_STROKE[mark.tone]}
+                  strokeWidth={1}
+                  strokeDasharray="2 5"
+                  opacity={0.5}
+                />
+                <line x1={mark.x} x2={mark.x} y1={floorY} y2={floorY + 3} stroke={TICK_STROKE[mark.tone]} strokeWidth={1.5} />
+              </g>
+            ))}
+            {axis.labels.map((label) => (
+              <text
+                key={`axis-${label.label}-${label.x}`}
+                x={label.x}
+                y={floorY + 12}
+                textAnchor={label.anchor}
+                fontSize={9}
+                fill="var(--color-faint)"
+                className="font-mono"
+              >
+                <title>{label.title}</title>
+                {label.label}
+              </text>
+            ))}
+
             {/* Y axis */}
             {[
               { v: 1, label: '100¢' },
@@ -218,7 +296,7 @@ export function ProbabilityChart({ market, points }: { market: MarketView; point
               <text
                 key={tick.label}
                 x={plotW + 6}
-                y={PAD + (box.h - PAD - PAD) * (1 - tick.v) + 3.5}
+                y={yFor(tick.v) + 3.5}
                 fontSize={9.5}
                 fontWeight={tick.v === 0.5 ? 600 : 400}
                 fill={tick.v === 0.5 ? 'var(--color-warning)' : 'var(--color-faint)'}
@@ -259,7 +337,7 @@ export function ProbabilityChart({ market, points }: { market: MarketView; point
                   x1={hovered.x}
                   x2={hovered.x}
                   y1={PAD}
-                  y2={box.h - PAD}
+                  y2={floorY}
                   stroke="var(--color-fg)"
                   strokeDasharray="3 3"
                   strokeWidth={1}

@@ -8,7 +8,7 @@ import { reasonLabel } from '../lib/labels'
 import { Badge, Card } from './ui'
 import { LiveWindowStrip } from './LiveWindowStrip'
 import { OpenPositionsStrip } from './OpenPositionsStrip'
-import { ProbabilityChart, type OddsPoint } from './ProbabilityChart'
+import { ProbabilityChart, type AxisTick, type OddsPoint } from './ProbabilityChart'
 
 // Polymarket's official embed only plots last-trade prints, so a market this
 // quiet is stuck at its listing price forever. These panels keep the Polymarket
@@ -25,11 +25,11 @@ function impliedUp(market: MarketView): number {
   return 0.5
 }
 
-interface GateTick {
-  atSec: number
-  tone: string
-  label: string
-  title: string
+// Tailwind only emits class names it can see as literals, so tones map explicitly.
+const TICK_BG: Record<AxisTick['tone'], string> = {
+  info: 'bg-info',
+  danger: 'bg-danger',
+  muted: 'bg-muted',
 }
 
 const MAX_SAMPLES = 500
@@ -176,37 +176,40 @@ function MarketChartPanel({
         .filter((band) => band.width > 0)
     : []
   // Ticks sit on the regime boundaries and minute bucket edges, labelled with elapsed time.
-  const gateTicks = params
+  const gateCandidates: (AxisTick | null)[] = params
     ? [
         {
           atSec: params.observationSeconds,
-          tone: 'bg-info',
+          tone: 'info',
           label: mmss(params.observationSeconds),
           title: `Observation window ends · direction must then hold ${params.minDirectionHoldSeconds}s`,
         },
         position && params.stallSeconds > 0
           ? {
               atSec: (position.entryAtMs - market.startMs) / 1000 + params.stallSeconds,
-              tone: 'bg-danger',
+              tone: 'danger',
               label: mmss((position.entryAtMs - market.startMs) / 1000 + params.stallSeconds),
               title: `Stall exit · ${params.stallSeconds}s without movement`,
             }
           : null,
         {
           atSec: intervalSec - params.minRemainingSeconds,
-          tone: 'bg-danger',
+          tone: 'danger',
           label: mmss(intervalSec - params.minRemainingSeconds),
           title: `No new entries · last ${params.minRemainingSeconds}s`,
         },
-      ].filter((tick): tick is GateTick => tick !== null && tick.atSec > 0 && tick.atSec < intervalSec)
+      ]
     : []
+  const gateTicks = gateCandidates.filter(
+    (tick): tick is AxisTick => tick !== null && tick.atSec > 0 && tick.atSec < intervalSec,
+  )
   const minuteStepSec = intervalSec > 600 ? 300 : 60
-  const minuteTicks: GateTick[] = []
+  const minuteTicks: AxisTick[] = []
   for (let sec = minuteStepSec; sec < intervalSec; sec += minuteStepSec) {
     const m = Math.round(sec / 60)
     minuteTicks.push({
       atSec: sec,
-      tone: 'bg-muted',
+      tone: 'muted',
       label: mmss(sec),
       title: `Minute ${m} bucket · ${mmss(sec)}`,
     })
@@ -314,7 +317,7 @@ function MarketChartPanel({
         </Badge>
       </div>
 
-      <ProbabilityChart market={market} points={points} />
+      <ProbabilityChart market={market} points={points} ticks={ticks} />
 
       <div className="mt-3 space-y-2">
         <LiveWindowStrip markets={[market]} ws={ws} />
@@ -352,7 +355,7 @@ function MarketChartPanel({
             className="absolute top-0 -translate-x-1/2"
             style={{ left: `${Math.min(96, Math.max(4, (tick.atSec / intervalSec) * 100))}%` }}
           >
-            <span className={cx('mx-auto -mt-[3px] block h-[10px] w-0.5 rounded-full', tick.tone)} />
+            <span className={cx('mx-auto -mt-[3px] block h-[10px] w-0.5 rounded-full', TICK_BG[tick.tone])} />
             <span className="mt-0.5 block whitespace-nowrap text-[9px] tabular-nums tracking-wide text-faint">{tick.label}</span>
           </span>
         ))}
