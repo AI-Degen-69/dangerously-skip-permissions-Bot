@@ -420,7 +420,9 @@ def get_ab_test_data() -> dict[str, Any]:
 
 def start_candidate_test(candidate_id: str | None = None,
                          baseline_run_id: str | None = None) -> dict[str, Any]:
+    """Switch the live config to a registry setup and start a run tracked as the A/B candidate."""
     from bot import api
+    from bot.runs import find_run_id
 
     # 1. Update config to the registry's candidate parameters (single source of truth).
     from bot import constants as C
@@ -429,6 +431,13 @@ def start_candidate_test(candidate_id: str | None = None,
         raise ValueError(f"Unknown candidateId: {candidate_id}. "
                          f"Valid setups: {list(C.STRATEGY_SETUPS.keys())}")
     baseline_run_id = baseline_run_id or DEFAULT_BASELINE_ID
+    if baseline_run_id != DEFAULT_BASELINE_ID:
+        # The API forwards baselineRunId straight from the request body: resolve it
+        # through the runs folder so a path cannot escape it.
+        resolved = find_run_id(baseline_run_id)
+        if not resolved:
+            raise ValueError(f"Unknown baselineRunId: {baseline_run_id}")
+        baseline_run_id = resolved
     _reg = C.STRATEGY_SETUPS[candidate_id]
     cfg = api.load_config()
     cfg["strategy"] = {

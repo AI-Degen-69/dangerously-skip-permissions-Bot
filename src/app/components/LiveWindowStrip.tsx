@@ -24,7 +24,7 @@ export interface LiveWindowStripProps {
   pairCostCap?: number
 }
 
-export function LiveWindowStrip({ markets, ws, pairCostCap = 0.99 }: LiveWindowStripProps) {
+export function LiveWindowStrip({ markets, ws, pairCostCap = 0.985 }: LiveWindowStripProps) {
   const activeMarket = markets[0]
 
   const upBid = ws?.up_book?.best_bid ?? activeMarket?.quotes?.Up?.bid ?? null

@@ -44,17 +44,21 @@ def compute_fill_usd(
     return round(shares * price, 2), 0.0
 
 
-def dip_curve_shares(curve: dict, price: float, max_clip: float) -> float:
-    """Shares for a fresh dip from a linear inverse-dip curve.
+def dip_curve_shares(curve: dict, price: float, max_clip: float) -> float | None:
+    """Shares for a fresh dip from a linear inverse-dip curve, or None if the curve is unusable.
 
     curve = {"lo": 0.07, "hi": 0.45, "sharesLo": 33, "sharesHi": 8}: the fat
     end of the band (low price) gets the big clip, the thin end the small one,
     interpolated linearly in price and clamped outside the band.
     """
-    lo = float(curve.get("lo", 0.07))
-    hi = float(curve.get("hi", 0.45))
-    s_lo = float(curve.get("sharesLo", 10.0))
-    s_hi = float(curve.get("sharesHi", 10.0))
+    try:
+        lo = float(curve.get("lo", 0.07))
+        hi = float(curve.get("hi", 0.45))
+        s_lo = float(curve.get("sharesLo", 10.0))
+        s_hi = float(curve.get("sharesHi", 10.0))
+    except (AttributeError, TypeError, ValueError):
+        # A typo in config.json must not crash the trading loop mid-window.
+        return None
     a = min(max((price - lo) / (hi - lo), 0.0), 1.0) if hi > lo else 0.0
     return min(clip_shares(round(s_lo + (s_hi - s_lo) * a), max_clip), max_clip)
 
@@ -89,7 +93,10 @@ def select_ladder_clip(
         # or leave residual unhedged dust!
         return min(clip_shares(deficit, max_clip), max_clip)
     if dip_curve:
-        return dip_curve_shares(dip_curve, price, max_clip)
+        curve_clip = dip_curve_shares(dip_curve, price, max_clip)
+        if curve_clip is not None:
+            return curve_clip
+        # Unusable curve values: fall through to the flat ladder clip.
     # DSP v2.2 Confidence-Based Sizing:
     # 1. Atomic Arb (High Confidence, Risk-Free): Size heavy (up to max_clip = 60 sh)
     # v2.3 intentionally does NOT take the heavy path here: fresh dips always

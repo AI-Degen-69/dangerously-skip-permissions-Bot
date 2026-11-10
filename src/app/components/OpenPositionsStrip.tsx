@@ -26,7 +26,7 @@ export interface OpenPositionsStripProps {
   pairCostCap?: number
 }
 
-export function OpenPositionsStrip({ positions, pairCostCap = 0.99 }: OpenPositionsStripProps) {
+export function OpenPositionsStrip({ positions, pairCostCap = 0.985 }: OpenPositionsStripProps) {
   const upPos = positions.find((p) => p.side === 'Up')
   const downPos = positions.find((p) => p.side === 'Down')
 

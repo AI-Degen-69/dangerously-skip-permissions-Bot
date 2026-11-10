@@ -1669,7 +1669,12 @@ class Handler(BaseHTTPRequestHandler):
                     "symbol": setup["symbol"],
                     "name": setup["name"],
                 }
-                cfg.setdefault("entry", {}).update(setup["entry"])
+                entry_cfg = cfg.setdefault("entry", {})
+                # A leftover curve or dollar cap from the previous setup would keep
+                # sizing the new one; unrelated keys (tapeEnabled) are preserved.
+                entry_cfg.pop("dipCurve", None)
+                entry_cfg.pop("maxUnhedgedUsd", None)
+                entry_cfg.update(setup["entry"])
                 tmp_cfg = CONFIG_PATH.with_suffix(".tmp")
                 tmp_cfg.write_text(json.dumps(cfg, indent=2))
                 tmp_cfg.replace(CONFIG_PATH)

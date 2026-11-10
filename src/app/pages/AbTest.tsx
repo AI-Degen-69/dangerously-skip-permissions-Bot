@@ -79,8 +79,9 @@ export function AbTest() {
 
   const isCandidateRunning = Boolean(
     control.data?.running &&
-    ((control.data?.activeRunId && data?.candidate?.runId && control.data.activeRunId === data.candidate.runId) ||
-     (control.data?.strategy?.id?.startsWith('dangerously-skip-permissions')))
+    control.data?.activeRunId &&
+    data?.candidate?.runId &&
+    control.data.activeRunId === data.candidate.runId
   )
   const handleStart = async () => {
     try {
