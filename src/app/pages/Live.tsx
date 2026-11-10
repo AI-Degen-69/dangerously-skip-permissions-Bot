@@ -209,7 +209,7 @@ export function Live() {
 
             <PolymarketLiveChart markets={data.markets} positions={data.positions} ws={ws} />
 
-            <OrdersAndFillsTable items={trades.data?.items ?? []} />
+            <OrdersAndFillsTable items={trades.data?.items ?? []} windowSlugs={data.markets.map((market) => market.slug)} />
 
             <div className="mt-3 grid gap-3 lg:grid-cols-3">
               <Card className="p-5 lg:col-span-3">

@@ -2,12 +2,16 @@ import { useMemo, useState } from 'react'
 import { Badge, Card, EmptyState } from './ui'
 import { cx } from '../lib/cx'
 import type { BotTrade } from '../lib/bot'
+import { buildWindows, resolveWindowIndex, slotOfSlug } from '../lib/windows'
 
 const money = (value: number | null | undefined) =>
   value === null || value === undefined ? '—' : `${value < 0 ? '−' : ''}$${Math.abs(value).toFixed(2)}`
 
 const cents = (value: number | null | undefined) =>
   value === null || value === undefined ? '—' : `${Math.round(value * 100)}¢`
+
+const windowClock = (slot: number) =>
+  new Date(slot * 1000).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })
 
 function formatPreciseTime(ts: number | string): { ago: string; clockMs: string } {
   const raw = typeof ts === 'string' ? Number(ts) || new Date(ts).getTime() : ts
@@ -35,14 +39,27 @@ function formatPreciseTime(ts: number | string): { ago: string; clockMs: string 
 
 export interface OrdersAndFillsProps {
   items: BotTrade[]
+  /** Running window first, then the next one once it has been revealed. */
+  windowSlugs?: string[]
 }
 
-export function OrdersAndFillsTable({ items }: OrdersAndFillsProps) {
+export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsProps) {
   const [typeFilter, setTypeFilter] = useState<'all' | 'maker' | 'taker'>('all')
   const [sideFilter, setSideFilter] = useState<'all' | 'Up' | 'Down'>('all')
+  // null = follow the running window; a slot pins the view to that window.
+  const [pickedSlot, setPickedSlot] = useState<number | null>(null)
+
+  const windows = useMemo(() => buildWindows(items, windowSlugs), [items, windowSlugs])
+  const liveSlot = slotOfSlug(windowSlugs[0])
+  const windowIndex = resolveWindowIndex(windows, liveSlot, pickedSlot)
+  const activeWindow = windows[windowIndex]
+  const activeSlug = activeWindow?.slug
+  const isLiveView = activeWindow != null && activeWindow.slot === liveSlot
 
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
+      if (activeSlug && item.slug !== activeSlug) return false
+
       const detail = item.detail as Record<string, unknown> | undefined
       const role = String(detail?.role ?? '').toLowerCase()
       const isMaker = role === 'maker' || item.reason?.includes('maker')
@@ -56,7 +73,12 @@ export function OrdersAndFillsTable({ items }: OrdersAndFillsProps) {
 
       return true
     })
-  }, [items, typeFilter, sideFilter])
+  }, [items, typeFilter, sideFilter, activeSlug])
+
+  const stepWindow = (delta: number) => {
+    const next = windows[windowIndex + delta]
+    if (next) setPickedSlot(next.slot)
+  }
 
   return (
     <Card className="mt-3 p-5">
@@ -65,12 +87,50 @@ export function OrdersAndFillsTable({ items }: OrdersAndFillsProps) {
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-[14px] font-semibold">Orders & Fills</h2>
-            <Badge tone="neutral">{items.length}</Badge>
+            <Badge tone="neutral">{filteredItems.length}</Badge>
           </div>
           <p className="text-[12px] text-muted">Execution logs with millisecond timestamps & Maker/Taker routing.</p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {/* Window Filter · running window by default, arrows step ±5m */}
+          <div className="flex items-center gap-0.5 rounded-lg border border-line bg-surface-2 px-1 py-0.5 text-[11.5px]">
+            <span aria-hidden className="pl-0.5 font-mono text-[10px] text-faint">
+              −5
+            </span>
+            <button
+              type="button"
+              onClick={() => stepWindow(-1)}
+              disabled={windowIndex <= 0}
+              aria-label="Previous window"
+              className="rounded px-1 font-semibold text-muted transition-colors hover:text-fg disabled:opacity-30"
+            >
+              «
+            </button>
+            <button
+              type="button"
+              onClick={() => setPickedSlot(null)}
+              title={isLiveView ? 'Running window' : 'Back to the running window'}
+              className="flex items-center gap-1.5 rounded px-1.5 py-0.5 font-mono tabular-nums text-fg transition-colors hover:bg-surface-1"
+            >
+              {activeWindow ? windowClock(activeWindow.slot) : '—'}
+              <span aria-hidden className={cx('size-1.5 rounded-full', isLiveView ? 'animate-pulse bg-danger' : 'bg-line-strong')} />
+              <span className="sr-only">{isLiveView ? 'Live window' : 'Closed window, click for the live one'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => stepWindow(1)}
+              disabled={windowIndex < 0 || windowIndex >= windows.length - 1}
+              aria-label="Next window"
+              className="rounded px-1 font-semibold text-muted transition-colors hover:text-fg disabled:opacity-30"
+            >
+              »
+            </button>
+            <span aria-hidden className="pr-0.5 font-mono text-[10px] text-faint">
+              +5
+            </span>
+          </div>
+
           {/* Side Filter */}
           <div className="flex rounded-lg border border-line bg-surface-2 p-0.5 text-[11.5px]">
             {(['all', 'Up', 'Down'] as const).map((s) => (
