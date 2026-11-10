@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build && node scripts/postbuild.mjs",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check:chart": "bun scripts/chart-math-check.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
