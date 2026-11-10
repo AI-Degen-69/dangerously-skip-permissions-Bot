@@ -33,6 +33,17 @@ export function longDate(value: number | string | null | undefined): string {
   return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+/**
+ * Tone for a pair cost vs the strategy's pair-cost cap: below the cap is a
+ * profit-on-redemption pair (green), cap up to $1.00 is break-even (amber),
+ * anything over $1.00 redeems at a loss (red).
+ */
+export function pairCostTone(value: number | null | undefined, cap: number): string {
+  if (value === null || value === undefined) return 'text-faint'
+  if (value < cap) return 'text-success'
+  return value > 1 ? 'text-danger' : 'text-warning'
+}
+
 export function dueLabel(dueAt: number | null): { label: string; tone: 'danger' | 'warning' | 'muted' } {
   if (!dueAt) return { label: 'No date', tone: 'muted' }
   const now = Date.now()

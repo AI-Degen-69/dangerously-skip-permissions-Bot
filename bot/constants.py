@@ -215,6 +215,34 @@ STRATEGY_SETUPS = {
             "wholeLadderClips": True,
         },
     },
+    "dangerously-skip-permissions-v2.5": {
+        "id": "dangerously-skip-permissions-v2.5",
+        "symbol": "⚡ DSP-v2.5",
+        "name": "Dangerously Skip Permissions v2.5 (Inverse-Dip Curve + Dollar Gap Cap)",
+        "entry": {
+            "startAfterOpenSec": 4,
+            "stopBeforeCloseSec": 75,
+            "clipSharesDefault": 10.0,
+            "maxShares": 45.0,
+            "minFillPrice": 0.07,
+            "maxFillPrice": 0.45,
+            "benchmarkPairCost": 0.965,
+            "targetPairCost": 0.965,
+            "maxPairCost": 0.985,
+            # Share veto left free (46) because the dollar cap does the work:
+            # a 33-share clip at 7c is $2.31 of risk, not "33 >= 11 shares".
+            "maxShareLead": 46.0,
+            "maxUnhedgedUsd": 5.0,
+            # Inverse-dip curve: 33 shares at 7c -> 8 shares at 45c, linear in price.
+            "dipCurve": {"lo": 0.07, "hi": 0.45, "sharesLo": 33.0, "sharesHi": 8.0},
+            "rescuePairCostMax": 0.995,
+            "rescueCeilingPrice": 0.985,
+            "minSpacingMoveSec": 0.5,
+            "minSpacingStaticSec": 2.5,
+            "includeTakerFee": True,
+            "wholeLadderClips": True,
+        },
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -245,6 +273,18 @@ _SETUP_FEATURES = {
         "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
         "blurb": "every dip sized as $4.50 / price, net gap capped while total paired volume compounds",
     },
+    "dangerously-skip-permissions-v2.4": {
+        # Ladder sizing, not constant-risk: the engine keys constant-risk on
+        # strategy_id.endswith("v2.3"), so v2.4 falls through to the ladder.
+        "sizing": "ladder", "preflightGate": False,
+        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
+        "blurb": "flat 10-share ladder under an 11-share gap veto with passive sweep and uncapped paired volume",
+    },
+    "dangerously-skip-permissions-v2.5": {
+        "sizing": "inverse-curve", "preflightGate": False, "heavyAtomic": False,
+        "sweep": True, "pairedVolumeCapped": False,
+        "blurb": "inverse-dip clip curve (fatter clips at deep dips) with the gap limit denominated in dollars",
+    },
 }
 
 
@@ -274,10 +314,31 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
     heavy = bool(f.get("heavyAtomic", False))
     sweep = bool(f.get("sweep", False))
     uncapped = bool(f.get("pairedVolumeCapped", True)) is False
+    # A fill that would leave the leading side at or above maxShareLead is vetoed,
+    # so the largest clip that can ever fill unhedged is lead - 1.
+    reachable = min(mx, max(0.0, float(lead) - 1.0))
 
-    if sizing == "constant-risk":
-        dip_txt = f"${risk:.2f} risk per dip ({clip:g}-{mx:g} sh by price, dips under {hi_c}c)"
-        sig_size = f"Capped ${risk:.2f} Per Dip ({clip:g}-{mx:g} sh)"
+    if sizing == "inverse-curve":
+        curve = e.get("dipCurve") or {}
+        s_lo = curve.get("sharesLo", clip)
+        s_hi = curve.get("sharesHi", clip)
+        c_lo = round(float(curve.get("lo", lo_c / 100)) * 100)
+        c_hi = round(float(curve.get("hi", hi_c / 100)) * 100)
+        dip_txt = f"{s_lo:g} sh at {c_lo}c falling to {s_hi:g} sh at {c_hi}c"
+        sig_size = f"Inverse-Dip Curve ({s_lo:g} sh @{c_lo}c → {s_hi:g} sh @{c_hi}c)"
+    elif sizing == "constant-risk":
+        if reachable <= clip:
+            dip_txt = (
+                f"a flat {clip:g} sh per dip: the ${risk:.2f}/price rule wants up to "
+                f"{mx:g} sh, but the {lead:g}-share gap veto caps every unhedged clip at {reachable:g}"
+            )
+            sig_size = f"Flat {clip:g} sh Dips (Gap Veto Caps Sizing)"
+        else:
+            dip_txt = (
+                f"${risk:.2f} risk per dip ({clip:g}-{reachable:g} sh by price, "
+                f"gap-veto capped below {mx:g} sh, dips under {hi_c}c)"
+            )
+            sig_size = f"Capped ${risk:.2f} Per Dip ({clip:g}-{reachable:g} sh)"
     elif sizing == "confidence":
         dip_txt = f"{mx:g} sh on risk-free pairs, {clip:g} sh micro dips"
         sig_size = f"{mx:g} sh Atomic / {clip:g} sh Micro"
@@ -285,7 +346,11 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         dip_txt = f"shrinking dip clips (max {mx:g} sh)"
         sig_size = f"Shrinking Dip Clips (max {mx:g} sh)"
     else:
-        dip_txt = f"{clip:g} sh dips (max {mx:g} sh) in the {lo_c}c-{hi_c}c band"
+        cap_txt = (
+            f", gap veto caps the {mx:g} sh ladder at {reachable:g}"
+            if reachable < mx else ""
+        )
+        dip_txt = f"{clip:g} sh (max {mx:g} sh) in the {lo_c}c-{hi_c}c band{cap_txt}"
         sig_size = f"Dip Grid [{lo_c}c-{hi_c}c]"
 
     if preflight:
@@ -295,8 +360,16 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         gate_txt = f"pair-cost gates (fresh under ${tgt:.3f}, closing a gap under ${cap:.3f}, rescue under ${rescue:.3f})"
         sig_gate = f"Pair Gates (fresh under ${tgt:.3f})"
 
+    dollar_cap = float(e.get("maxUnhedgedUsd", 0.0) or 0.0)
+    share_cap_txt = (
+        f"{lead:g} sh or more unhedged on one side, ever"
+        # The $-at-ceiling figure is fake precision when a dollar cap binds first.
+        + ("" if dollar_cap > 0
+           else f" (about ${exposure:.2f} if {lead:g} sh bought at the {hi_c}c ceiling)")
+    )
     gap_txt = (
-        f"{lead:g} sh or more unhedged on one side, ever (about ${exposure:.2f} if {lead:g} sh bought at the {hi_c}c ceiling)"
+        share_cap_txt
+        + (f", and never more than ${dollar_cap:.2f} of unhedged cost" if dollar_cap > 0 else "")
         + (" while total paired-up shares have no cap" if uncapped else "")
     )
     sweep_txt = (
@@ -305,7 +378,8 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
     )
     heavy_txt = " No heavy bulk fills." if not heavy else ""
 
-    signature = f"{sig_size} - {sig_gate} - Gap Cap ({lead:g} sh) - Under-${rescue:.3f} Cap"
+    gap_cap_txt = f"Dollar Gap Cap (${dollar_cap:.2f})" if dollar_cap > 0 else f"Gap Cap ({lead:g} sh)"
+    signature = f"{sig_size} - {sig_gate} - {gap_cap_txt} - Under-${rescue:.3f} Cap"
     description = (
         f"Buys dips {dip_txt}; entries follow {gate_txt}; "
         f"never {gap_txt}.{sweep_txt}{heavy_txt}"
@@ -315,7 +389,8 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         "pairGates": f"fresh under ${tgt:.3f} / close under ${cap:.3f} / rescue under ${rescue:.3f}",
         "preflightGate": ("On (entry + opposite ask under $%.3f)" % rescue) if preflight else "Off (pair-cost gates only)",
         "heavyFills": ("%g sh atomic pairs" % mx) if heavy else "None",
-        "netGapCap": f"never {lead:g} sh+ (~${exposure:.2f} at ceiling)" + ("; paired volume uncapped" if uncapped else ""),
+        "netGapCap": (f"never ${dollar_cap:.2f} of unhedged cost" if dollar_cap > 0
+                      else f"never {lead:g} sh+ (~${exposure:.2f} at ceiling)") + ("; paired volume uncapped" if uncapped else ""),
         "maxBuy": f"{hi_c}c",
         "cutoff": f"{cutoff:g}s before close",
     }
@@ -343,6 +418,7 @@ CLIP_SHARES_DEFAULT = 30.0     # 30.0 shares = dominant order signature (31.0% o
 MAX_SHARES = 50.0              # 50.0 shares = deficit catch-up cap
 TARGET_DOLLAR_RISK_USD = 4.50  # DSP-v2.3 constant dollar-risk ceiling per unhedged dip clip
 MAX_SHARE_LEAD = 90.0          # strict unhedged-gap veto: a fill leaving lead >= this is skipped, so this value is never held
+MAX_UNHEDGED_USD = 0.0         # dollar-denominated unhedged-gap veto (0 = off): caps dollars exposed, not shares
 
 # Microstructure Price Bands ($)
 STRADDLE_BAND = (0.34, 0.55)   # Opening straddle band [34¢–55¢] (median 43¢)

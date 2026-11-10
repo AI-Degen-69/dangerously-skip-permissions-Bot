@@ -1,7 +1,8 @@
 """A/B Testing & Statistical Hypothesis Validation Module.
 
-Compares Baseline Strategy A (run_20261109_043441_paper_msr_v2: DSP v2.0)
-against Candidate Strategy B (the current running preset, DSP v2.4: Single-Knob Gap Veto).
+Compares the frozen baseline run (DEFAULT_BASELINE_ID, DSP v2.4 as recorded)
+against the candidate run started by the registry setup named in
+start_candidate_test() (DSP v2.5 by default).
 
 Calculates real-time sample progress, Welch's two-sample t-statistic, p-value,
 Cohen's d effect size, 95% confidence intervals, and histogram distributions.
@@ -17,7 +18,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNS_DIR = ROOT / "bot" / "runs"
-DEFAULT_BASELINE_ID = "run_20261109_043441_paper_msr_v2"
+DEFAULT_BASELINE_ID = "run_20261110_061832_paper_dsp_v2_4"
+DEFAULT_CANDIDATE_ID = "dangerously-skip-permissions-v2.5"
 AB_STATE_PATH = ROOT / "bot" / "ab_test_state.json"
 
 TARGET_SAMPLE_SIZE = 113  # Power 0.80, alpha 0.05, Cohen's d 0.332
@@ -202,11 +204,11 @@ def _build_histogram(baseline_pnls: list[float], candidate_pnls: list[float]) ->
     return bins
 
 
-def _candidate_strategy_id(candidate_id: str | None) -> str:
-    """Read the strategy id recorded in the candidate run's meta, defaulting to v2.4."""
-    if candidate_id:
+def _run_strategy_id(run_id: str | None) -> str:
+    """Read the strategy id recorded in a run's meta, defaulting to the baseline."""
+    if run_id:
         try:
-            meta_p = RUNS_DIR / candidate_id / "run_meta.json"
+            meta_p = RUNS_DIR / run_id / "run_meta.json"
             if meta_p.exists():
                 m = json.loads(meta_p.read_text(encoding="utf-8"))
                 strat_id = m.get("configSnapshot", {}).get("strategy", {}).get("id", "")
@@ -214,15 +216,16 @@ def _candidate_strategy_id(candidate_id: str | None) -> str:
                     return str(strat_id)
         except Exception:
             pass
-    return "dangerously-skip-permissions-v2.4"
+    # No run (or no meta): describe the setup the next start would run.
+    return DEFAULT_CANDIDATE_ID if run_id is None else "dangerously-skip-permissions-v2.4"
 
 
-def _candidate_entry(candidate_id: str | None) -> dict[str, Any]:
-    """Live entry numbers recorded in the candidate run's snapshot (single source of truth)."""
-    strat_id = _candidate_strategy_id(candidate_id)
-    if candidate_id:
+def _run_entry(run_id: str | None) -> dict[str, Any]:
+    """Live entry numbers recorded in a run's snapshot (single source of truth)."""
+    strat_id = _run_strategy_id(run_id)
+    if run_id:
         try:
-            meta_p = RUNS_DIR / candidate_id / "run_meta.json"
+            meta_p = RUNS_DIR / run_id / "run_meta.json"
             if meta_p.exists():
                 m = json.loads(meta_p.read_text(encoding="utf-8"))
                 entry = m.get("configSnapshot", {}).get("entry", {})
@@ -245,10 +248,12 @@ def _version_tag(strategy_id: str) -> str:
     return tail if tail[:1] == "v" else tail
 
 
-def _hypothesis_text(candidate_id: str | None, *, null: bool) -> str:
-    """Hypothesis copy derived from whichever candidate actually ran."""
-    strat_id = _candidate_strategy_id(candidate_id)
+def _hypothesis_text(candidate_id: str | None, *, null: bool,
+                     baseline_id: str | None = None) -> str:
+    """Hypothesis copy derived from whichever candidate and baseline actually ran."""
+    strat_id = _run_strategy_id(candidate_id)
     tag = _version_tag(strat_id)
+    base_tag = _version_tag(_run_strategy_id(baseline_id or DEFAULT_BASELINE_ID))
     try:
         from bot import constants as C
         reg = C.STRATEGY_SETUPS.get(strat_id, {})
@@ -256,15 +261,15 @@ def _hypothesis_text(candidate_id: str | None, *, null: bool) -> str:
     except Exception:
         blurb = "candidate sizing"
     if null:
-        return f"H₀: μ_{tag} ≤ μ_v2.0 (or μ_{tag} ≤ 0) — {blurb} does not produce a statistically significant positive expected return."
-    return f"H₁: μ_{tag} > 0 and μ_{tag} > μ_v2.0 — {blurb} generates a statistically significant positive mean window return at α = 0.05."
+        return f"H₀: μ_{tag} ≤ μ_{base_tag} (or μ_{tag} ≤ 0) — {blurb} does not produce a statistically significant positive expected return."
+    return f"H₁: μ_{tag} > 0 and μ_{tag} > μ_{base_tag} — {blurb} generates a statistically significant positive mean window return at α = 0.05."
 
 
-def _candidate_info(candidate_id: str | None) -> dict[str, Any]:
-    """Name/description/highlights/entry generated from the candidate run's live numbers."""
+def _run_info(run_id: str | None) -> dict[str, Any]:
+    """Name/description/highlights/entry generated from a run's own recorded numbers."""
     from bot import constants as C
-    strat_id = _candidate_strategy_id(candidate_id)
-    entry = _candidate_entry(candidate_id)
+    strat_id = _run_strategy_id(run_id)
+    entry = _run_entry(run_id)
     reg = C.STRATEGY_SETUPS.get(strat_id, {})
     name = reg.get("name", strat_id)
     _sig, desc, hl = C.describe_setup({"id": strat_id, "entry": entry or reg.get("entry", {})})
@@ -378,19 +383,12 @@ def get_ab_test_data() -> dict[str, Any]:
         "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "baseline": {
             "runId": baseline_id,
-            "name": "dangerously-skip-permissions v2.0 (Baseline)",
-            "description": "Standard reconstructed profile with SBC 75s, 15-share lead freeze, and permissive rescue pairing (rescuePairCostMax: 1.080).",
-            "configHighlights": {
-                "rescuePairCostMax": "$1.080 (permits >$1.00 pairs)",
-                "dipClips": "Constant 30 sh",
-                "sweepEqualization": "None (halts at T-75s)",
-                "maxFillPrice": "88¢ (dip) / 98.5¢ (deficit)",
-            },
+            **_run_info(baseline_id),
             **baseline_stats,
         },
         "candidate": {
             "runId": candidate_id,
-            **_candidate_info(candidate_id),
+            **_run_info(candidate_id),
             "targetSamples": TARGET_SAMPLE_SIZE,
             "progressPct": round(min(100.0, (n_b / TARGET_SAMPLE_SIZE) * 100.0), 1),
             **candidate_stats,
@@ -412,20 +410,26 @@ def get_ab_test_data() -> dict[str, Any]:
             "verdictTone": verdict_tone,
         },
         "hypotheses": {
-            "nullHypothesis": _hypothesis_text(candidate_id, null=True),
-            "altHypothesis": _hypothesis_text(candidate_id, null=False),
+            "nullHypothesis": _hypothesis_text(candidate_id, null=True, baseline_id=baseline_id),
+            "altHypothesis": _hypothesis_text(candidate_id, null=False, baseline_id=baseline_id),
             "decisionRule": f"Reject H₀ if t > {T_CRITICAL_95} (p < 0.05) once candidate sample size reaches N = {TARGET_SAMPLE_SIZE} windows.",
         },
         "histogram": histogram,
     }
 
 
-def start_candidate_test() -> dict[str, Any]:
+def start_candidate_test(candidate_id: str | None = None,
+                         baseline_run_id: str | None = None) -> dict[str, Any]:
     from bot import api
-    
-    # 1. Update config to the registry's Candidate parameters (single source of truth).
+
+    # 1. Update config to the registry's candidate parameters (single source of truth).
     from bot import constants as C
-    _reg = C.STRATEGY_SETUPS["dangerously-skip-permissions-v2.4"]
+    candidate_id = candidate_id or DEFAULT_CANDIDATE_ID
+    if candidate_id not in C.STRATEGY_SETUPS:
+        raise ValueError(f"Unknown candidateId: {candidate_id}. "
+                         f"Valid setups: {list(C.STRATEGY_SETUPS.keys())}")
+    baseline_run_id = baseline_run_id or DEFAULT_BASELINE_ID
+    _reg = C.STRATEGY_SETUPS[candidate_id]
     cfg = api.load_config()
     cfg["strategy"] = {
         "id": _reg["id"],
@@ -434,7 +438,7 @@ def start_candidate_test() -> dict[str, Any]:
     }
     entry = cfg.setdefault("entry", {})
     entry.update(_reg["entry"])
-    
+
     tmp = api.CONFIG_PATH.with_suffix(".tmp")
     tmp.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     tmp.replace(api.CONFIG_PATH)
@@ -444,9 +448,9 @@ def start_candidate_test() -> dict[str, Any]:
     time.sleep(0.5)
 
     # 3. Generate run ID and register candidate
-    run_id = f"run_{time.strftime('%Y%m%d_%H%M%S')}_paper_dsp_v2_4"
+    run_id = f"run_{time.strftime('%Y%m%d_%H%M%S')}_paper_dsp_{_version_tag(candidate_id).replace('.', '_')}"
     ab_state = {
-        "baselineRunId": DEFAULT_BASELINE_ID,
+        "baselineRunId": baseline_run_id,
         "candidateRunId": run_id,
         "startedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
@@ -458,7 +462,7 @@ def start_candidate_test() -> dict[str, Any]:
         "ok": True,
         "pid": pid,
         "candidateRunId": run_id,
-        "baselineRunId": DEFAULT_BASELINE_ID,
+        "baselineRunId": baseline_run_id,
         "data": get_ab_test_data(),
     }
 

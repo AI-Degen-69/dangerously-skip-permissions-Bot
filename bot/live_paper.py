@@ -387,6 +387,8 @@ def trade_window(
     target_pair_cost = float(entry.get("targetPairCost", C.TARGET_PAIR_COST))
     max_pair_cost = float(entry.get("maxPairCost", C.PAIR_COST_MAX))
     max_share_lead = float(entry.get("maxShareLead", C.MAX_SHARE_LEAD))
+    max_unhedged_usd = float(entry.get("maxUnhedgedUsd", C.MAX_UNHEDGED_USD))
+    dip_curve = entry.get("dipCurve") or None
     rescue_ceiling = float(entry.get("rescueCeilingPrice", C.RESCUE_CEILING_PRICE))
     rescue_max_pair_cost = float(entry.get("rescuePairCostMax", C.RESCUE_PAIR_COST_MAX))
 
@@ -503,6 +505,8 @@ def trade_window(
                 target_pair_cost=target_pair_cost,
                 max_pair_cost=max_pair_cost,
                 max_share_lead=max_share_lead,
+                max_unhedged_usd=max_unhedged_usd,
+                dip_curve=dip_curve,
                 in_sweep_phase=in_sweep_phase,
                 rescue_ceiling=rescue_ceiling,
                 rescue_max_pair_cost=rescue_max_pair_cost,

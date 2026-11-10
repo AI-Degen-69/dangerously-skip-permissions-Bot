@@ -1656,7 +1656,7 @@ class Handler(BaseHTTPRequestHandler):
                 })
             elif self.path == "/api/bot/ab-test/start":
                 from bot.ab_test import start_candidate_test
-                res = start_candidate_test()
+                res = start_candidate_test(body.get("candidateId"), body.get("baselineRunId"))
                 self._send(200, res)
             elif self.path == "/api/bot/ab-test/stop":
                 from bot.ab_test import stop_candidate_test
