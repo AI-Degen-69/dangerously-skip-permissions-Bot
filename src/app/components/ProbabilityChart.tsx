@@ -5,6 +5,7 @@ import { projectX, projectY } from '../lib/chartMath'
 import { mmss } from '../lib/format'
 import { Badge } from './ui'
 
+/** Sampled implied-Up odds over the window: { t: epoch ms, v: probability 0..1 }. */
 export interface OddsPoint {
   t: number
   v: number // implied Up, 0..1
@@ -38,6 +39,7 @@ interface Geometry {
   yFor: (v: number) => number
 }
 
+/** Live probability trajectory: implied Up odds across the window, scrubbable by pointer or keyboard. */
 export function ProbabilityChart({ market, points }: { market: MarketView; points: OddsPoint[] }) {
   const [hoverT, setHoverT] = useState<number | null>(null)
   const [box, setBox] = useState({ w: 0, h: 0 })
