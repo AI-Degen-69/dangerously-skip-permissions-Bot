@@ -498,7 +498,12 @@ def trade_window(
             total_fees_usd += fee_usd
             last_fill_ts = time.time()
             last_fill_px = px
-            pair_cost = _live_pair_cost()
+            # Only stamp a pair cost when this fill REDUCES the imbalance
+            # (i.e. it closes/equalizes a pair). Opening/extending dips get
+            # None: no pair exists yet, so a blended running average here
+            # would read as "this pair cost X" and mislead.
+            imbalance_after = abs(inv["Up"]["shares"] - inv["Down"]["shares"])
+            pair_cost = _live_pair_cost() if imbalance_after < imbalance else None
 
             # Semantic trade tagging
             if len(fills) == 0:

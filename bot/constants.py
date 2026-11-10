@@ -50,8 +50,8 @@ STRATEGY_SETUPS = {
     },
     "dangerously-skip-permissions": {
         "id": "dangerously-skip-permissions",
-        "symbol": "⚡ dangerously-skip-permissions",
-        "name": "Dangerously Skip Permissions (Obsidian Tier Reconstructed)",
+        "symbol": "⚡ DSP-v2.0",
+        "name": "Dangerously Skip Permissions v2.0 (Deep Dip Pairing)",
         "signature": (
             "Deep Dip Grid [7¢–45¢] · Tiered Rescue Pairing (Target ≤$0.965, Rescue ≤$1.025) · "
             "Early Exit (SBC 75s) · Strict Lead Cap (45 sh) · Freeze Lead (15 sh)"
@@ -148,7 +148,156 @@ STRATEGY_SETUPS = {
             "wholeLadderClips": True,
         },
     },
+    "dangerously-skip-permissions-v2.3": {
+        "id": "dangerously-skip-permissions-v2.3",
+        "symbol": "⚡ DSP-v2.3",
+        "name": "Dangerously Skip Permissions v2.3 (Constant-Risk Sizing)",
+        "signature": (
+            "Constant Dollar-Risk Sizing ($4.50) · Dip Buys ≤45¢ (10–45 sh) · "
+            "Net Imbalance Cap (15 sh) · Total Paired Volume Uncapped · Strict Sub-$1.00 Pair Cap"
+        ),
+        "description": (
+            "Constant dollar-risk candidate: Buys dips at 45¢ or cheaper only, sizing each dip as $4.50 / price "
+            "(10 sh at 45¢ up to 45 sh at 10¢) so no single dip risks more than $4.50. Net imbalance capped at 15 sh, "
+            "total paired volume uncapped: choppy windows re-trigger Dip -> Equalize micro-cycles "
+            "(Dip Up -> Equalize Down -> Dip Down -> Equalize Up) to compound hundreds of paired shares. "
+            "No pre-flight gate and no heavy 60-share fills — entries are governed by strict sub-$1.00 pair-cost gates "
+            "(≤$0.965 fresh, ≤$0.985 closing a deficit, rescue ≤$0.995)."
+        ),
+        "entry": {
+            "startAfterOpenSec": 4,
+            "stopBeforeCloseSec": 75,
+            "clipSharesDefault": 10.0,
+            "maxShares": 45.0,
+            "minFillPrice": 0.07,
+            "maxFillPrice": 0.45,
+            "benchmarkPairCost": 0.965,
+            "targetPairCost": 0.965,
+            "maxPairCost": 0.985,
+            "maxShareLead": 15.0,
+            "freezeLead": 15.0,
+            "rescuePairCostMax": 0.995,
+            "rescueCeilingPrice": 0.985,
+            "minSpacingMoveSec": 0.5,
+            "minSpacingStaticSec": 2.5,
+            "includeTakerFee": True,
+            "wholeLadderClips": True,
+        },
+    },
 }
+
+# ---------------------------------------------------------------------------
+# Single source of truth for user-facing copy.
+# signature / description / configHighlights are GENERATED from each setup's
+# entry numbers + behavior flags below, so changing a threshold automatically
+# changes every word the UI shows. Never hand-edit per-setup strings.
+# ---------------------------------------------------------------------------
+_SETUP_FEATURES = {
+    "hapcs-v1": {
+        "sizing": "ladder", "preflightGate": False, "heavyAtomic": False,
+        "sweep": False, "pairedVolumeCapped": True, "blurb": "ladder dip grid with Minute 4 certainty sniping",
+    },
+    "dangerously-skip-permissions": {
+        "sizing": "ladder", "preflightGate": False, "heavyAtomic": False,
+        "sweep": False, "pairedVolumeCapped": True, "blurb": "deep-dip grid with tiered rescue pairing",
+    },
+    "dangerously-skip-permissions-v2.1": {
+        "sizing": "de-escalating", "preflightGate": False, "heavyAtomic": False,
+        "sweep": True, "pairedVolumeCapped": True, "blurb": "de-escalating dip clips with passive maker sweep",
+    },
+    "dangerously-skip-permissions-v2.2": {
+        "sizing": "confidence", "preflightGate": True, "heavyAtomic": True,
+        "sweep": True, "pairedVolumeCapped": True, "blurb": "heavy clips on risk-free pairs, micro clips on speculative dips, pre-flight hedge gate",
+    },
+    "dangerously-skip-permissions-v2.3": {
+        "sizing": "constant-risk", "dollarRisk": 4.50, "preflightGate": False,
+        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
+        "blurb": "every dip sized as $4.50 / price, net gap capped while total paired volume compounds",
+    },
+}
+
+
+def _setup_tag(setup_id: str) -> str:
+    """'dangerously-skip-permissions-v2.3' -> 'v2.3', 'hapcs-v1' -> 'v1'."""
+    tail = str(setup_id).split("-")[-1]
+    return tail if tail[:1] == "v" else tail
+
+
+def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
+    """Build signature, description and highlight chips from live entry numbers."""
+    e = setup.get("entry", {})
+    f = _SETUP_FEATURES.get(setup.get("id", ""), {})
+    clip = e.get("clipSharesDefault", 10)
+    mx = e.get("maxShares", 45)
+    lo_c = round(float(e.get("minFillPrice", 0.07)) * 100)
+    hi_c = round(float(e.get("maxFillPrice", 0.45)) * 100)
+    lead = e.get("maxShareLead", 15)
+    tgt = float(e.get("targetPairCost", e.get("benchmarkPairCost", 0.965)))
+    cap = float(e.get("maxPairCost", 0.985))
+    rescue = float(e.get("rescuePairCostMax", 0.995))
+    cutoff = e.get("stopBeforeCloseSec", 75)
+    exposure = float(lead) * float(e.get("maxFillPrice", 0.45))
+    risk = float(f.get("dollarRisk", 4.50))
+    sizing = f.get("sizing", "ladder")
+    preflight = bool(f.get("preflightGate", False))
+    heavy = bool(f.get("heavyAtomic", False))
+    sweep = bool(f.get("sweep", False))
+    uncapped = bool(f.get("pairedVolumeCapped", True)) is False
+
+    if sizing == "constant-risk":
+        dip_txt = f"${risk:.2f} risk per dip ({clip:g}-{mx:g} sh by price, dips under {hi_c}c)"
+        sig_size = f"Capped ${risk:.2f} Per Dip ({clip:g}-{mx:g} sh)"
+    elif sizing == "confidence":
+        dip_txt = f"{mx:g} sh on risk-free pairs, {clip:g} sh micro dips"
+        sig_size = f"{mx:g} sh Atomic / {clip:g} sh Micro"
+    elif sizing == "de-escalating":
+        dip_txt = f"shrinking dip clips (max {mx:g} sh)"
+        sig_size = f"Shrinking Dip Clips (max {mx:g} sh)"
+    else:
+        dip_txt = f"{clip:g} sh dips (max {mx:g} sh) in the {lo_c}c-{hi_c}c band"
+        sig_size = f"Dip Grid [{lo_c}c-{hi_c}c]"
+
+    if preflight:
+        gate_txt = f"pre-flight hedge gate plus pair gates (under ${rescue:.3f})"
+        sig_gate = f"Pre-Flight Gate (under ${rescue:.3f})"
+    else:
+        gate_txt = f"pair-cost gates (fresh under ${tgt:.3f}, closing a gap under ${cap:.3f}, rescue under ${rescue:.3f})"
+        sig_gate = f"Pair Gates (fresh under ${tgt:.3f})"
+
+    gap_txt = (
+        f"lopsided by at most {lead:g} sh (about ${exposure:.2f} if all bought at the {hi_c}c ceiling)"
+        + (" while total paired-up shares have no cap" if uncapped else "")
+    )
+    sweep_txt = (
+        " Late gaps are swept with resting no-fee orders."
+        if sweep else ""
+    )
+    heavy_txt = " No heavy bulk fills." if not heavy else ""
+
+    signature = f"{sig_size} - {sig_gate} - Gap Cap ({lead:g} sh) - Under-${rescue:.3f} Cap"
+    description = (
+        f"Buys dips {dip_txt}; entries follow {gate_txt}; "
+        f"never {gap_txt}.{sweep_txt}{heavy_txt}"
+    ).strip()
+    highlights = {
+        "dipClips": dip_txt,
+        "pairGates": f"fresh under ${tgt:.3f} / close under ${cap:.3f} / rescue under ${rescue:.3f}",
+        "preflightGate": ("On (entry + opposite ask under $%.3f)" % rescue) if preflight else "Off (pair-cost gates only)",
+        "heavyFills": ("%g sh atomic pairs" % mx) if heavy else "None",
+        "netGapCap": f"{lead:g} sh (~${exposure:.2f} max)" + ("; paired volume uncapped" if uncapped else ""),
+        "maxBuy": f"{hi_c}c",
+        "cutoff": f"{cutoff:g}s before close",
+    }
+    return signature, description, highlights
+
+
+for _setup in STRATEGY_SETUPS.values():
+    _sig, _desc, _hl = describe_setup(_setup)
+    _setup["signature"] = _sig
+    _setup["description"] = _desc
+    _setup["configHighlights"] = _hl
+    _setup["features"] = _SETUP_FEATURES.get(_setup["id"], {})
+
 
 # Timing Parameters (seconds countdown SBC: seconds before close)
 WINDOW_S = 300                 # 5 minutes per market window
@@ -161,6 +310,7 @@ ACTIVE_WINDOW_SBC = (HARD_CUTOFF_SBC, WINDOW_S + PRE_OPEN_PIPELINE_S)
 # Sizing Parameters (shares)
 CLIP_SHARES_DEFAULT = 30.0     # 30.0 shares = dominant order signature (31.0% of tape)
 MAX_SHARES = 50.0              # 50.0 shares = deficit catch-up cap
+TARGET_DOLLAR_RISK_USD = 4.50  # DSP-v2.3 constant dollar-risk ceiling per unhedged dip clip
 MAX_SHARE_LEAD = 90.0          # 90.0 shares = hard ceiling on unhedged lead (3 clips max)
 FREEZE_LEAD = 15.0             # 15.0 shares = strict accumulation freeze on leading side
 

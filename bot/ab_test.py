@@ -202,6 +202,82 @@ def _build_histogram(baseline_pnls: list[float], candidate_pnls: list[float]) ->
     return bins
 
 
+def _candidate_strategy_id(candidate_id: str | None) -> str:
+    """Read the strategy id recorded in the candidate run's meta, defaulting to v2.2."""
+    if candidate_id:
+        try:
+            meta_p = RUNS_DIR / candidate_id / "run_meta.json"
+            if meta_p.exists():
+                m = json.loads(meta_p.read_text(encoding="utf-8"))
+                strat_id = m.get("configSnapshot", {}).get("strategy", {}).get("id", "")
+                if strat_id:
+                    return str(strat_id)
+        except Exception:
+            pass
+    return "dangerously-skip-permissions-v2.2"
+
+
+def _candidate_entry(candidate_id: str | None) -> dict[str, Any]:
+    """Live entry numbers recorded in the candidate run's snapshot (single source of truth)."""
+    strat_id = _candidate_strategy_id(candidate_id)
+    if candidate_id:
+        try:
+            meta_p = RUNS_DIR / candidate_id / "run_meta.json"
+            if meta_p.exists():
+                m = json.loads(meta_p.read_text(encoding="utf-8"))
+                entry = m.get("configSnapshot", {}).get("entry", {})
+                if isinstance(entry, dict) and entry:
+                    return dict(entry)
+        except Exception:
+            pass
+    try:
+        from bot import constants as C
+        reg = C.STRATEGY_SETUPS.get(strat_id, {})
+        if isinstance(reg.get("entry"), dict):
+            return dict(reg["entry"])
+    except Exception:
+        pass
+    return {}
+
+
+def _version_tag(strategy_id: str) -> str:
+    tail = str(strategy_id).split("-")[-1]
+    return tail if tail[:1] == "v" else tail
+
+
+def _hypothesis_text(candidate_id: str | None, *, null: bool) -> str:
+    """Hypothesis copy derived from whichever candidate actually ran."""
+    strat_id = _candidate_strategy_id(candidate_id)
+    tag = _version_tag(strat_id)
+    try:
+        from bot import constants as C
+        reg = C.STRATEGY_SETUPS.get(strat_id, {})
+        blurb = reg.get("features", {}).get("blurb", "candidate sizing")
+    except Exception:
+        blurb = "candidate sizing"
+    if null:
+        return f"H₀: μ_{tag} ≤ μ_v2.0 (or μ_{tag} ≤ 0) — {blurb} does not produce a statistically significant positive expected return."
+    return f"H₁: μ_{tag} > 0 and μ_{tag} > μ_v2.0 — {blurb} generates a statistically significant positive mean window return at α = 0.05."
+
+
+def _candidate_info(candidate_id: str | None) -> dict[str, Any]:
+    """Name/description/highlights/entry generated from the candidate run's live numbers."""
+    from bot import constants as C
+    strat_id = _candidate_strategy_id(candidate_id)
+    entry = _candidate_entry(candidate_id)
+    reg = C.STRATEGY_SETUPS.get(strat_id, {})
+    name = reg.get("name", strat_id)
+    _sig, desc, hl = C.describe_setup({"id": strat_id, "entry": entry or reg.get("entry", {})})
+    return {
+        "name": name,
+        "description": desc,
+        "signature": _sig,
+        "configHighlights": hl,
+        "entry": entry or reg.get("entry", {}),
+        "features": reg.get("features", {}),
+    }
+
+
 def get_ab_test_data() -> dict[str, Any]:
     """Return full state for the A/B Test Dashboard."""
     # Read persistent A/B state if present
@@ -226,7 +302,7 @@ def get_ab_test_data() -> dict[str, Any]:
                 if meta_p.exists():
                     m = json.loads(meta_p.read_text(encoding="utf-8"))
                     strat_id = m.get("configSnapshot", {}).get("strategy", {}).get("id", "")
-                    if "v2.2" in strat_id or strat_id.endswith("v2.2"):
+                    if "v2.2" in strat_id or "v2.3" in strat_id:
                         candidate_id = act_id
         except Exception:
             pass
@@ -314,14 +390,7 @@ def get_ab_test_data() -> dict[str, Any]:
         },
         "candidate": {
             "runId": candidate_id,
-            "name": "dangerously-skip-permissions v2.2 (Confidence Sizing)",
-            "description": "Confidence-based sizing: 60-share heavy clips on 100% risk-free atomic pairings, 10-share micro clips on speculative dips, and pre-flight gate (≤$0.995).",
-            "configHighlights": {
-                "rescuePairCostMax": "≤ $0.995 (strict sub-$1.00)",
-                "dipClips": "Confidence Sizing (60 sh Atomic / 10 sh Micro)",
-                "preflightGate": "Enforced (Entry + Opp Ask ≤ $0.995)",
-                "sweepEqualization": "Passive Maker at 0% fee (T-75s..15s)",
-            },
+            **_candidate_info(candidate_id),
             "targetSamples": TARGET_SAMPLE_SIZE,
             "progressPct": round(min(100.0, (n_b / TARGET_SAMPLE_SIZE) * 100.0), 1),
             **candidate_stats,
@@ -343,8 +412,8 @@ def get_ab_test_data() -> dict[str, Any]:
             "verdictTone": verdict_tone,
         },
         "hypotheses": {
-            "nullHypothesis": "H₀: μ_v2.2 ≤ μ_v2.0 (or μ_v2.2 ≤ 0) — Confidence-based sizing does not produce a statistically significant positive expected return.",
-            "altHypothesis": "H₁: μ_v2.2 > 0 and μ_v2.2 > μ_v2.0 — Confidence-based sizing generates a statistically significant positive mean window return at α = 0.05.",
+            "nullHypothesis": _hypothesis_text(candidate_id, null=True),
+            "altHypothesis": _hypothesis_text(candidate_id, null=False),
             "decisionRule": f"Reject H₀ if t > {T_CRITICAL_95} (p < 0.05) once candidate sample size reaches N = {TARGET_SAMPLE_SIZE} windows.",
         },
         "histogram": histogram,
@@ -354,22 +423,17 @@ def get_ab_test_data() -> dict[str, Any]:
 def start_candidate_test() -> dict[str, Any]:
     from bot import api
     
-    # 1. Update config to Candidate DSP v2.2 parameters
+    # 1. Update config to the registry's Candidate parameters (single source of truth).
+    from bot import constants as C
+    _reg = C.STRATEGY_SETUPS["dangerously-skip-permissions-v2.2"]
     cfg = api.load_config()
     cfg["strategy"] = {
-        "id": "dangerously-skip-permissions-v2.2",
-        "symbol": "⚡ DSP-v2.2",
-        "name": "Dangerously Skip Permissions v2.2 (Confidence Sizing)",
+        "id": _reg["id"],
+        "symbol": _reg["symbol"],
+        "name": _reg["name"],
     }
     entry = cfg.setdefault("entry", {})
-    entry["rescuePairCostMax"] = 0.995  # Strict sub-$1.00 pair cap
-    entry["rescueCeilingPrice"] = 0.985
-    entry["maxPairCost"] = 0.985
-    entry["freezeLead"] = 15.0
-    entry["stopBeforeCloseSec"] = 75
-    entry["clipSharesDefault"] = 10.0  # Micro clip for unhedged dips
-    entry["maxShares"] = 60.0          # Heavy clip for atomic arbs and deficit hedges
-    entry["maxShareLead"] = 30.0
+    entry.update(_reg["entry"])
     
     tmp = api.CONFIG_PATH.with_suffix(".tmp")
     tmp.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
