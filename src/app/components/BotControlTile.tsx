@@ -7,12 +7,14 @@ import {
   useBotControl,
   useBotRuns,
   useBotSnapshot,
+  useBotTape,
   useResetBot,
   useResumeBot,
   useResumeRun,
   useSelectRun,
   useSelectStrategySetup,
   useSetKillSwitch,
+  useSetTapeEnabled,
   useStartBot,
   useStopBot,
   useStrategySetups,
@@ -48,6 +50,8 @@ export function BotControlTile() {
   const start = useStartBot()
   const resumeRun = useResumeRun()
   const stop = useStopBot()
+  const tapeQuery = useBotTape()
+  const setTape = useSetTapeEnabled()
   const reset = useResetBot()
   const killSwitch = useSetKillSwitch()
   const clearHalt = useResumeBot()
@@ -293,6 +297,44 @@ export function BotControlTile() {
               >
                 <RotateCcw />
               </Button>
+            )}
+          </div>
+
+          <div className="rounded-tile border border-line bg-surface-2/30 p-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              {(() => {
+                const tape = tapeQuery.data ?? control.data?.tape ?? null
+                const on = tape?.enabled ?? false
+                return (
+                  <>
+                    <Badge tone={on ? 'success' : 'neutral'} dot>
+                      {on
+                        ? `Tape ON · ${tape?.prints ?? 0} prints · ${tape?.books ?? 0} books · ${(tape?.mb ?? 0).toFixed(2)} MB`
+                        : 'Tape OFF'}
+                    </Badge>
+                    <Button
+                      variant={on ? 'secondary' : 'primary'}
+                      size="sm"
+                      loading={setTape.isPending}
+                      onClick={() =>
+                        setTape.mutate(!on, {
+                          onSuccess: (s) => toast(s.enabled ? 'Trade-print tape recording' : 'Tape recording off'),
+                          onError: (error: Error) => toast(error.message, 'danger'),
+                        })
+                      }
+                    >
+                      {on ? 'Disable tape' : 'Enable tape'}
+                    </Button>
+                  </>
+                )
+              })()}
+            </div>
+            <p className="mt-1.5 font-mono text-[10.5px] leading-snug text-faint">
+              {(tapeQuery.data?.tapeDir ?? control.data?.tape?.tapeDir ?? (activeRunId ? `bot/runs/${activeRunId}/tape` : 'bot/runs/<run-id>/tape'))}
+              {' '}· prints.jsonl + book.jsonl · same WS connection, no terminal
+            </p>
+            {!running && (tapeQuery.data?.enabled ?? control.data?.tape?.enabled ?? false) && (
+              <p className="mt-1 text-[11px] text-muted">Tape arms on Start / Resume — the next window starts writing.</p>
             )}
           </div>
 

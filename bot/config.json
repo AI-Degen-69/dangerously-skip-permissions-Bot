@@ -25,6 +25,8 @@
     "rescueCeilingPrice": 0.985,
     "includeTakerFee": true,
     "wholeLadderClips": true,
+    "maxDepthShares": 0.0,
+    "tapeEnabled": false,
     "minSpacingMoveSec": 0.5,
     "minSpacingStaticSec": 2.5
   },

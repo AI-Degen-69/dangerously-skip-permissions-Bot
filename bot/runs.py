@@ -97,6 +97,32 @@ class RunWorkspace:
         self.log_file = self.root / "loop.log"
         self.pid_file = self.root / "loop.pid"
         self.summary_file = self.root / "summary.json"
+        self.tape_dir = self.root / "tape"
+
+    def tape_stats(self) -> dict[str, Any]:
+        """Count tape files for the #35 trade-print recorder (prints + top-5 book)."""
+        prints_path = self.tape_dir / "prints.jsonl"
+        book_path = self.tape_dir / "book.jsonl"
+        out: dict[str, Any] = {
+            "tapeDir": str(self.tape_dir),
+            "prints": 0,
+            "books": 0,
+            "printsBytes": 0,
+            "bookBytes": 0,
+        }
+        for key, path in (("prints", prints_path), ("books", book_path)):
+            try:
+                if path.exists():
+                    out[key + "Bytes"] = path.stat().st_size
+                    count = 0
+                    with path.open("r", encoding="utf-8") as f:
+                        for _ in f:
+                            count += 1
+                    out[key] = count
+            except Exception:
+                pass
+        out["mb"] = round((out["printsBytes"] + out["bookBytes"]) / (1024 * 1024), 4)
+        return out
 
     def exists(self) -> bool:
         return self.root.exists() and self.meta_file.exists()
