@@ -88,7 +88,7 @@ export function Dashboard() {
     <div className="mx-auto max-w-[1200px] p-5 sm:p-8">
       <PageHeader
         title={`Paper desk · ${strategySymbol}`}
-        subtitle={`${strategyName} — BTC 5-minute windows, held to redeem.`}
+        subtitle={control.data?.strategy?.signature ?? activeSetup?.signature ?? activeSetup?.description ?? strategyName}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <span title={strategyName}>

@@ -115,6 +115,71 @@ class TestStrategySetups(unittest.TestCase):
         # It must only consider Down (the lagging side)
         self.assertEqual(dec.outcome, "Down")
 
+    def test_v23_unhedged_gap_veto_is_strict(self):
+        """The gap knob is a strict veto: lead + shares >= knob is skipped, so the knob value itself is never held."""
+        def decide(up_sh, down_sh):
+            inv = {
+                "Up": {"shares": float(up_sh), "cost": round(up_sh * 0.44, 2)},
+                "Down": {"shares": float(down_sh), "cost": round(down_sh * 0.50, 2)},
+            }
+            quotes = {"Up": {"bid": 0.44, "ask": 0.45}}  # Down unquotable: only Up is a candidate
+            return evaluate_microstructure_ladder(
+                quotes=quotes,
+                inv=inv,
+                fill_idx=2,
+                minute=1,
+                strategy_id="dangerously-skip-permissions-v2.3",
+                min_fill=0.07,
+                max_fill=0.45,
+                default_clip=10.0,
+                max_clip=45.0,
+                benchmark_pair_cost=0.965,
+                max_pair_cost=0.985,
+                max_share_lead=20.0,
+            )
+        # 10/10 holding, order 10 -> resulting 10 unhedged < 20 -> GOOD, fills.
+        dec_ok = decide(10, 10)
+        self.assertEqual(dec_ok.action, "fill")
+        self.assertEqual(dec_ok.outcome, "Up")
+        # 19/10 holding, order 10 -> resulting 19 < 20 -> fills (19 is the max hold).
+        dec_edge = decide(19, 10)
+        self.assertEqual(dec_edge.action, "fill")
+        self.assertEqual(dec_edge.outcome, "Up")
+        # 20/10 holding, order 10 -> resulting 20 >= 20 -> BAD, vetoed and labelled.
+        dec_no = decide(20, 10)
+        self.assertFalse(dec_no.action == "fill" and dec_no.outcome == "Up")
+        self.assertEqual(dec_no.action, "skip")
+        self.assertEqual(dec_no.sub_reason, "unhedged-cap")
+
+    def test_v24_knob_11_fits_10_share_clips(self):
+        """v2.4 knob 11: a fresh 10 sh dip fills (0+10<11) but adding 10 onto a 10 sh gap is vetoed."""
+        def decide(up_sh, down_sh):
+            inv = {
+                "Up": {"shares": float(up_sh), "cost": round(up_sh * 0.44, 2)},
+                "Down": {"shares": float(down_sh), "cost": round(down_sh * 0.50, 2)},
+            }
+            quotes = {"Up": {"bid": 0.44, "ask": 0.45}}
+            return evaluate_microstructure_ladder(
+                quotes=quotes,
+                inv=inv,
+                fill_idx=2,
+                minute=1,
+                strategy_id="dangerously-skip-permissions-v2.4",
+                min_fill=0.07,
+                max_fill=0.45,
+                default_clip=10.0,
+                max_clip=45.0,
+                benchmark_pair_cost=0.965,
+                max_pair_cost=0.985,
+                max_share_lead=11.0,
+            )
+        dec_open = decide(0, 0)
+        self.assertEqual(dec_open.action, "fill")
+        self.assertEqual(dec_open.outcome, "Up")
+        dec_max = decide(10, 0)
+        self.assertFalse(dec_max.action == "fill" and dec_max.outcome == "Up")
+        self.assertEqual(dec_max.sub_reason, "unhedged-cap")
+
     def test_exact_deficit_clipping(self):
         """Verify that deficit hedging clips the exact deficit rather than coarse ladder snaps."""
         from bot.executor import select_ladder_clip
@@ -123,9 +188,9 @@ class TestStrategySetups(unittest.TestCase):
         self.assertEqual(select_ladder_clip(deficit=70.0, price=0.60, max_clip=50.0), 50.0)
 
     def test_strict_leading_side_freeze(self):
-        """Verify that when one side leads by >= freeze_lead (15 sh), the leading side is frozen."""
+        """Verify that when one side leads by >= the single gap knob, the leading side is frozen."""
         inv = {
-            "Up": {"shares": 50.0, "cost": 17.50},  # Up leads by 20 shares (>= 15)
+            "Up": {"shares": 50.0, "cost": 17.50},  # Up leads by 20 shares (>= knob 20)
             "Down": {"shares": 30.0, "cost": 12.00},
         }
         # Up quote is in the dip (0.35), Down quote is NOT in the dip (0.55)
@@ -139,7 +204,7 @@ class TestStrategySetups(unittest.TestCase):
             fill_idx=10,
             minute=1,
             strategy_id="dangerously-skip-permissions",
-            freeze_lead=15.0,
+            max_share_lead=20.0,
         )
         # Even though Up is at a cheap dip price (0.35), it must NOT buy Up!
         # It must either skip or target Down (the lagging side).

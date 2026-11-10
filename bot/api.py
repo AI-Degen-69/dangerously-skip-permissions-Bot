@@ -1203,7 +1203,6 @@ EDITABLE = {
     "entry.targetPairCost": [0.80, 0.99],
     "entry.maxPairCost": [0.90, 0.999],
     "entry.maxShareLead": [10, 300],
-    "entry.freezeLead": [5, 100],
     "entry.rescuePairCostMax": [0.95, 1.05],
     "entry.rescueCeilingPrice": [0.70, 0.99],
     "entry.startAfterOpenSec": [0, 30],

@@ -3,10 +3,10 @@
   "market": "Bitcoin Up or Down - November 9, 11:05PM-11:10PM ET",
   "trades": 2,
   "cost_usd": 56.4,
-  "payout_usd": null,
-  "net_usd": null,
-  "winner": null,
-  "pending": true,
+  "payout_usd": 60.0,
+  "net_usd": 3.6,
+  "winner": "Down",
+  "resolvedAt": "2026-11-10T04:15:20.692392+00:00",
   "fills": [
     {
       "minute": 0,
@@ -45,8 +45,8 @@
       }
     }
   ],
-  "strategy": "dangerously-skip-permissions-v2.2",
-  "strategy_symbol": "\u26a1 DSP-v2.2",
+  "strategy": "hapcs-v1",
+  "strategy_symbol": "\ud83c\udfaf HAPCS-v1",
   "maker_fills": 2,
   "taker_fills": 0,
   "fees_usd": 0.0,

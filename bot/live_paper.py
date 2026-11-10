@@ -136,6 +136,64 @@ def log_event(kind: str, reason: str, slug: str | None = None, **kw) -> None:
             pass
 
 
+def build_decision_record(
+    slug: str,
+    minute: int,
+    in_sweep_phase: bool,
+    imbalance: float,
+    fills: int,
+    cost: float,
+    quotes: dict,
+    decision,
+) -> dict:
+    up_q = (quotes.get("Up") or {})
+    down_q = (quotes.get("Down") or {})
+    return {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "slug": slug,
+        "minute": minute,
+        "inSweepPhase": bool(in_sweep_phase),
+        "imbalance": round(float(imbalance), 1),
+        "fills": fills,
+        "cost": round(float(cost), 2),
+        "action": decision.action,
+        "outcome": decision.outcome,
+        "price": decision.price,
+        "shares": decision.shares,
+        "role": decision.role,
+        "reason": decision.reason,
+        "subReason": decision.sub_reason,
+        "projectedPairCost": decision.projected_pair_cost,
+        "shareDeficit": decision.share_deficit,
+        "quotes": {
+            "Up": {"bid": up_q.get("bid"), "ask": up_q.get("ask")},
+            "Down": {"bid": down_q.get("bid"), "ask": down_q.get("ask")},
+        },
+    }
+
+
+def log_decision(
+    slug: str,
+    minute: int,
+    in_sweep_phase: bool,
+    imbalance: float,
+    fills: int,
+    cost: float,
+    quotes: dict,
+    decision,
+) -> None:
+    ws = get_current_workspace()
+    if ws is None:
+        return
+    rec = build_decision_record(slug, minute, in_sweep_phase, imbalance, fills, cost, quotes, decision)
+    try:
+        ws.root.mkdir(parents=True, exist_ok=True)
+        with ws.decisions_file.open("a") as f:
+            f.write(json.dumps(rec) + "\n")
+    except Exception:
+        pass
+
+
 def microprice_lean(c: PublicClient, up_id: str, down_id: str, streamer: LiveBookStreamer | None = None) -> LeanSignal:
     """Optional lean probe from live book microprice. Kept neutral by default."""
     if load_cfg().get("entry", {}).get("leanSource", "microprice") == "dumb":
@@ -336,7 +394,6 @@ def trade_window(
     target_pair_cost = float(entry.get("targetPairCost", C.TARGET_PAIR_COST))
     max_pair_cost = float(entry.get("maxPairCost", C.PAIR_COST_MAX))
     max_share_lead = float(entry.get("maxShareLead", C.MAX_SHARE_LEAD))
-    freeze_lead = float(entry.get("freezeLead", C.FREEZE_LEAD))
     rescue_ceiling = float(entry.get("rescueCeilingPrice", C.RESCUE_CEILING_PRICE))
     rescue_max_pair_cost = float(entry.get("rescuePairCostMax", C.RESCUE_PAIR_COST_MAX))
 
@@ -454,10 +511,17 @@ def trade_window(
                 max_pair_cost=max_pair_cost,
                 max_share_lead=max_share_lead,
                 in_sweep_phase=in_sweep_phase,
-                freeze_lead=freeze_lead,
                 rescue_ceiling=rescue_ceiling,
                 rescue_max_pair_cost=rescue_max_pair_cost,
             )
+
+            # Uncensored decision journal: every evaluation (fill or skip) with
+            # the quotes that produced it. Unlike log_event("refuse") this is
+            # NOT throttled, so the true skip rate and binding gate are known.
+            try:
+                log_decision(slug, minute, in_sweep_phase, imbalance, len(fills), cost, quotes, decision)
+            except Exception:
+                pass
 
             if decision.action == "skip" or decision.outcome is None or decision.price is None:
                 preferred_side = decision.outcome or ("Up" if len(fills) % 2 == 0 else "Down")

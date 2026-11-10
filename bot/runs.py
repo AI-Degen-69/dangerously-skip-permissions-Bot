@@ -7,6 +7,7 @@ Provides deterministic run sessions under `bot/runs/<run_id>/`:
       loop.log           (process output)
       loop.pid           (process ID)
       events.jsonl       (session decision journal)
+      decisions.jsonl    (uncensored per-evaluation engine log: quotes + guard)
       windows/           (settled window json files)
       summary.json       (session KPIs / metrics)
 
@@ -92,6 +93,7 @@ class RunWorkspace:
         self.windows_dir = self.root / "windows"
         self.meta_file = self.root / "run_meta.json"
         self.events_file = self.root / "events.jsonl"
+        self.decisions_file = self.root / "decisions.jsonl"
         self.log_file = self.root / "loop.log"
         self.pid_file = self.root / "loop.pid"
         self.summary_file = self.root / "summary.json"

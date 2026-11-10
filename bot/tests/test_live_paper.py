@@ -291,6 +291,47 @@ class LivePaperLoopTests(unittest.TestCase):
         # Thesis-intact must NEVER be logged anymore
         self.assertNotIn("thesis-intact", reasons_only)
 
+    def test_decision_journal_record_schema_and_run_folder_write(self):
+        import json
+
+        import bot.live_paper as lp
+        from bot.executor import MicrostructureDecision
+
+        decision = MicrostructureDecision(
+            action="skip",
+            outcome="Up",
+            price=None,
+            shares=0.0,
+            role="MAKER",
+            reason="extreme-price-skip",
+            sub_reason="pair-cost-cap",
+            projected_pair_cost=1.02,
+            share_deficit=0.0,
+        )
+        quotes = {"Up": {"bid": 0.44, "ask": 0.45}, "Down": {"bid": 0.54, "ask": 0.56}}
+        rec = lp.build_decision_record("slug-x", 2, False, 10.0, 6, 12.34, quotes, decision)
+        self.assertEqual(rec["slug"], "slug-x")
+        self.assertEqual(rec["action"], "skip")
+        self.assertEqual(rec["subReason"], "pair-cost-cap")
+        self.assertEqual(rec["projectedPairCost"], 1.02)
+        self.assertEqual(rec["quotes"]["Up"], {"bid": 0.44, "ask": 0.45})
+        self.assertIn("ts", rec)
+
+        # No workspace -> silent no-op, never raises.
+        with patch.object(lp, "get_current_workspace", return_value=None):
+            self.assertIsNone(lp.log_decision("slug-x", 2, False, 10.0, 6, 12.34, quotes, decision))
+
+        # With workspace -> exactly one JSON line in the run folder.
+        ws = SimpleNamespace(
+            root=self.tmp_path / "run_x",
+            decisions_file=self.tmp_path / "run_x" / "decisions.jsonl",
+        )
+        with patch.object(lp, "get_current_workspace", return_value=ws):
+            lp.log_decision("slug-x", 2, False, 10.0, 6, 12.34, quotes, decision)
+        lines = (self.tmp_path / "run_x" / "decisions.jsonl").read_text().strip().splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(json.loads(lines[0])["reason"], "extreme-price-skip")
+
     def test_msr_v2_parabolic_taker_fee_and_maker_zero_fee(self):
         from bot.executor import compute_fill_usd, taker_fee_per_share
 
