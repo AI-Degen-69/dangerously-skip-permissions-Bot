@@ -1,6 +1,5 @@
 import {
   Activity,
-  AlertTriangle,
   BarChart3,
   CheckCircle2,
   Info,
@@ -17,7 +16,7 @@ import { BotControlTile } from '../components/BotControlTile'
 import { InteractivePnlChart } from '../components/InteractivePnlChart'
 import { BOT_ORIGIN, useBotControl, useBotPerf, useRedeemBot, useStrategySetups, mergeStrategySetups } from '../lib/bot'
 import { STRATEGY_PRESETS } from '../botDefaults'
-import type { BotPerf, PerfGate, PerfNote, PerfWindow, StrategySetup } from '../lib/bot'
+import type { BotPerf, PerfGate, PerfWindow, StrategySetup } from '../lib/bot'
 import { computeKpiStats } from '../lib/kpiStats'
 import { cx } from '../lib/cx'
 import { money2, relativeTime } from '../lib/format'
@@ -46,12 +45,18 @@ const GATE_LABEL: Record<PerfGate['status'], string> = {
   sample: 'sample',
 }
 
-const NOTE_TONE: Record<PerfNote['tone'], string> = {
-  danger: 'bg-danger-soft text-danger',
-  warning: 'bg-warning-soft text-warning',
-  info: 'bg-info-soft text-info',
-  success: 'bg-success-soft text-success',
+// One colour class per element: `text-fg` is emitted after `text-danger` in the
+// stylesheet, so mixing them leaves the value white instead of red.
+type Tone = 'success' | 'danger' | 'warning' | 'neutral'
+const TONE_TEXT: Record<Tone, string> = {
+  success: 'text-success',
+  danger: 'text-danger',
+  warning: 'text-warning',
+  neutral: 'text-fg',
 }
+
+const drawdownTone = (pct: number): 'success' | 'warning' | 'danger' =>
+  pct <= 15 ? 'success' : pct <= 30 ? 'warning' : 'danger'
 
 export function Dashboard() {
   const perf = useBotPerf()
@@ -66,7 +71,6 @@ export function Dashboard() {
   const data = perf.data
   const summary = data?.summary
   const health = data?.health
-  const notes = data?.notes ?? []
   const windows = data?.windows ?? []
   const settled = windows.filter((window) => !window.pending)
   const startingCapital = data?.summary?.bankrollUsd ?? 1000
@@ -163,7 +167,17 @@ export function Dashboard() {
             <Stat
               label="Net P&amp;L"
               value={`${stats.netUsd >= 0 ? '+' : ''}${usd(stats.netUsd)}`}
-              hint={`${stats.capitalReturnPct >= 0 ? '+' : ''}${stats.capitalReturnPct.toFixed(1)}% capital · ${stats.roiPct.toFixed(1)}% ROI`}
+              hint={
+                <>
+                  <span className={stats.capitalReturnPct >= 0 ? 'text-success' : 'text-danger'}>
+                    {stats.capitalReturnPct >= 0 ? '+' : ''}
+                    {stats.capitalReturnPct.toFixed(1)}% capital
+                  </span>
+                  {' · '}
+                  <span className={stats.roiPct >= 0 ? 'text-success' : 'text-danger'}>{stats.roiPct.toFixed(1)}% ROI</span>
+                </>
+              }
+              hintText={`${stats.capitalReturnPct >= 0 ? '+' : ''}${stats.capitalReturnPct.toFixed(1)}% capital · ${stats.roiPct.toFixed(1)}% ROI`}
               tone={stats.netUsd >= 0 ? 'success' : 'danger'}
               badge={
                 <Badge tone={stats.netUsd >= 0 ? 'success' : 'danger'}>
@@ -176,7 +190,15 @@ export function Dashboard() {
             <Stat
               label="Win Rate"
               value={`${(stats.winRate * 100).toFixed(1)}%`}
-              hint={`${stats.winsCount}W – ${stats.lossesCount}L (${stats.settled} settled)`}
+              hint={
+                <>
+                  <span className="text-success">{stats.winsCount}W</span>
+                  {' – '}
+                  <span className="text-danger">{stats.lossesCount}L</span>
+                  {` (${stats.settled} settled)`}
+                </>
+              }
+              hintText={`${stats.winsCount}W – ${stats.lossesCount}L (${stats.settled} settled)`}
               tone={stats.winRate >= 0.5 ? 'success' : 'danger'}
               badge={
                 stats.edgePct !== null ? (
@@ -194,10 +216,18 @@ export function Dashboard() {
               label="Expectancy"
               value={`${stats.expectancyUsd >= 0 ? '+' : ''}${usd(stats.expectancyUsd)}`}
               unit="/ window"
-              hint={`Avg Win +${usd(stats.avgWinUsd)} · Loss -${usd(stats.avgLossUsd)}`}
+              hint={
+                <>
+                  {`Avg Win `}
+                  <span className="text-success">+{usd(Math.abs(stats.avgWinUsd))}</span>
+                  {' · Loss '}
+                  <span className="text-danger">-{usd(Math.abs(stats.avgLossUsd))}</span>
+                </>
+              }
+              hintText={`Avg Win +${usd(Math.abs(stats.avgWinUsd))} · Loss -${usd(Math.abs(stats.avgLossUsd))}`}
               tone={stats.expectancyUsd >= 0 ? 'success' : 'danger'}
               badge={
-                <Badge tone="neutral" className="font-mono text-[10.5px]">
+                <Badge tone={stats.expectancyRatio >= 0 ? 'success' : 'danger'} className="font-mono text-[10.5px]">
                   {stats.expectancyRatio >= 0 ? '+' : ''}
                   {stats.expectancyRatio.toFixed(2)}R EV
                 </Badge>
@@ -208,10 +238,21 @@ export function Dashboard() {
             <Stat
               label="Profit Factor"
               value={stats.grossLossUsd === 0 && stats.grossProfitUsd > 0 ? '∞' : stats.profitFactor.toFixed(2)}
-              hint={`Gross: +${usd(stats.grossProfitUsd)} / -${usd(stats.grossLossUsd)}`}
+              hint={
+                <>
+                  {`Gross: `}
+                  <span className="text-success">+{usd(Math.abs(stats.grossProfitUsd))}</span>
+                  {' / '}
+                  <span className="text-danger">-{usd(Math.abs(stats.grossLossUsd))}</span>
+                </>
+              }
+              hintText={`Gross: +${usd(Math.abs(stats.grossProfitUsd))} / -${usd(Math.abs(stats.grossLossUsd))}`}
               tone={stats.profitFactor >= 1.5 ? 'success' : stats.profitFactor >= 1.0 ? 'warning' : 'danger'}
               badge={
-                <Badge tone="neutral" className="font-mono text-[10.5px]">
+                <Badge
+                  tone={stats.payoffRatio >= 1 ? 'success' : stats.payoffRatio >= 0.5 ? 'warning' : 'danger'}
+                  className="font-mono text-[10.5px]"
+                >
                   Payoff {stats.lossesCount === 0 && stats.winsCount > 0 ? '∞' : `${stats.payoffRatio.toFixed(2)}x`}
                 </Badge>
               }
@@ -222,10 +263,28 @@ export function Dashboard() {
               label="Sharpe Ratio"
               value={stats.sharpeRatio.toFixed(2)}
               unit="Ann."
-              hint={`Sortino: ${stats.lossesCount === 0 && stats.settled > 0 && stats.netUsd > 0 ? '∞' : stats.sortinoRatio.toFixed(2)} · Max DD: -${stats.maxDrawdownPct.toFixed(1)}%`}
+              hint={
+                <>
+                  {`Sortino: `}
+                  <span
+                    className={
+                      stats.lossesCount === 0 && stats.settled > 0 && stats.netUsd > 0
+                        ? 'text-success'
+                        : stats.sortinoRatio >= 0
+                          ? 'text-success'
+                          : 'text-danger'
+                    }
+                  >
+                    {stats.lossesCount === 0 && stats.settled > 0 && stats.netUsd > 0 ? '∞' : stats.sortinoRatio.toFixed(2)}
+                  </span>
+                  {' · Max DD: '}
+                  <span className={TONE_TEXT[drawdownTone(stats.maxDrawdownPct)]}>-{stats.maxDrawdownPct.toFixed(1)}%</span>
+                </>
+              }
+              hintText={`Sortino: ${stats.lossesCount === 0 && stats.settled > 0 && stats.netUsd > 0 ? '∞' : stats.sortinoRatio.toFixed(2)} · Max DD: -${stats.maxDrawdownPct.toFixed(1)}%`}
               tone={stats.sharpeRatio >= 1.0 ? 'success' : stats.sharpeRatio >= 0 ? 'neutral' : 'danger'}
               badge={
-                <Badge tone={stats.maxDrawdownPct <= 15 ? 'success' : stats.maxDrawdownPct <= 30 ? 'warning' : 'danger'}>
+                <Badge tone={drawdownTone(stats.maxDrawdownPct)}>
                   DD {stats.maxDrawdownPct.toFixed(1)}%
                 </Badge>
               }
@@ -532,71 +591,39 @@ export function Dashboard() {
         </Card>
       </div>
 
-      <div className="mt-3 grid gap-3 lg:grid-cols-3">
-        <Card className="p-5 lg:col-span-2">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <h2 className="text-[14px] font-semibold">Fidelity gate</h2>
-              <p className="text-[12.5px] text-muted">
-                How close the live paper tape is to the frozen 24h sample — 45 median fills, both sides, $316/$447 cost,
-                M0–M4 shape.
-              </p>
-            </div>
-            <Badge tone={gateJudged ? 'success' : 'neutral'}>
-              {gateJudged ? 'judged' : `sample · ${settled.length}/288`}
-            </Badge>
+      <Card className="mt-3 p-5">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h2 className="text-[14px] font-semibold">Fidelity gate</h2>
+            <p className="text-[12.5px] text-muted">
+              How close the live paper tape is to the frozen 24h sample — 45 median fills, both sides, $316/$447 cost,
+              M0–M4 shape.
+            </p>
           </div>
+          <Badge tone={gateJudged ? 'success' : 'neutral'}>
+            {gateJudged ? 'judged' : `sample · ${settled.length}/288`}
+          </Badge>
+        </div>
 
-          <div className="mt-3 divide-y divide-line">
-            {(data?.gate ?? []).map((row) => (
-              <div key={row.key} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5">
-                <div className="min-w-0 flex-1">
-                  <p className="text-[13px]">{row.label}</p>
-                  <p className="text-[11.5px] text-faint">{row.detail}</p>
-                </div>
-                <span className="tabular-nums text-[13px] font-medium">{row.value}</span>
-                <span className="w-[92px] text-right text-[12px] text-faint">tape {row.target}</span>
-                <Badge tone={GATE_TONE[row.status]} className="w-[74px] justify-center">
-                  {GATE_LABEL[row.status]}
-                </Badge>
+        <div className="mt-3 divide-y divide-line">
+          {(data?.gate ?? []).map((row) => (
+            <div key={row.key} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5">
+              <div className="min-w-0 flex-1">
+                <p className="text-[13px]">{row.label}</p>
+                <p className="text-[11.5px] text-faint">{row.detail}</p>
               </div>
-            ))}
-            {!data && <Skeleton className="my-4 h-[180px]" />}
-          </div>
+              <span className="tabular-nums text-[13px] font-medium">{row.value}</span>
+              <span className="w-[92px] text-right text-[12px] text-faint">tape {row.target}</span>
+              <Badge tone={GATE_TONE[row.status]} className="w-[74px] justify-center">
+                {GATE_LABEL[row.status]}
+              </Badge>
+            </div>
+          ))}
+          {!data && <Skeleton className="my-4 h-[180px]" />}
+        </div>
 
-          {data && <ShapeChart mShape={data.mShape} />}
-        </Card>
-
-        <Card className="flex flex-col p-5">
-          <div className="flex items-center justify-between">
-            <h2 className="text-[14px] font-semibold">Things to note</h2>
-            <Badge tone="neutral">{notes.length}</Badge>
-          </div>
-          <p className="text-[12.5px] text-muted">What the tape says about this run, worst first.</p>
-          <ul className="scrollbar-thin mt-3 -mr-2 max-h-[430px] space-y-2.5 overflow-y-auto pr-2">
-            {notes.map((note) => (
-              <li key={note.title} className="rounded-tile border border-line bg-surface-2/40 p-3">
-                <div className="flex items-start gap-2">
-                  <span className={cx('mt-0.5 grid size-5 shrink-0 place-items-center rounded-[6px]', NOTE_TONE[note.tone])}>
-                    {note.tone === 'danger' || note.tone === 'warning' ? (
-                      <AlertTriangle className="size-3" />
-                    ) : note.tone === 'success' ? (
-                      <CheckCircle2 className="size-3" />
-                    ) : (
-                      <Info className="size-3" />
-                    )}
-                  </span>
-                  <div className="min-w-0">
-                    <p className="text-[13px] font-medium leading-snug">{note.title}</p>
-                    <p className="mt-1 text-[12px] leading-relaxed text-muted">{note.body}</p>
-                  </div>
-                </div>
-              </li>
-            ))}
-            {!data && <Skeleton className="h-[220px]" />}
-          </ul>
-        </Card>
-      </div>
+        {data && <ShapeChart mShape={data.mShape} />}
+      </Card>
 
       <Card className="mt-3 p-5">
         <div className="flex flex-wrap items-start justify-between gap-2">
@@ -686,6 +713,7 @@ function Stat({
   value,
   unit,
   hint,
+  hintText,
   badge,
   tip,
   tone,
@@ -695,9 +723,10 @@ function Stat({
   value: string
   unit?: string
   hint: React.ReactNode
+  hintText?: string
   badge?: React.ReactNode
   tip?: string
-  tone?: 'success' | 'danger' | 'warning' | 'neutral'
+  tone?: Tone
   icon?: React.ReactNode
 }) {
   const tipId = useId()
@@ -733,10 +762,8 @@ function Stat({
         <div className="flex items-baseline gap-1.5">
           <span
             className={cx(
-              'text-[23px] font-semibold tracking-[-0.02em] tabular-nums text-fg',
-              tone === 'success' && 'text-success',
-              tone === 'danger' && 'text-danger',
-              tone === 'warning' && 'text-warning',
+              'text-[23px] font-semibold tracking-[-0.02em] tabular-nums',
+              TONE_TEXT[tone ?? 'neutral'],
             )}
           >
             {value}
@@ -748,7 +775,11 @@ function Stat({
             {hint}
           </p>
         ) : (
-          <div className="mt-0.5 truncate text-[11.5px] text-faint">{hint}</div>
+          // The hint is composed markup, so the plain-text twin keeps the
+          // full value reachable when the card truncates it.
+          <div className="mt-0.5 truncate text-[11.5px] text-faint" title={hintText}>
+            {hint}
+          </div>
         )}
       </div>
     </Card>

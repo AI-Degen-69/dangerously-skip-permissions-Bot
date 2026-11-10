@@ -747,14 +747,9 @@ function StraddleDeskStrip({ data }: { data: BotSnapshot }) {
   const maxPayoff = hasHoldings ? Math.max(payIfUp, payIfDown) : 0
   const favoredSide = payIfUp >= payIfDown ? 'Up' : 'Down'
 
-  const fillsCount =
-    Number(activeMarket?.verdict?.detail?.fills) ||
-    (positions.length > 0 ? (upShares > 0 ? 1 : 0) + (downShares > 0 ? 1 : 0) : 0)
-  const windowCap = 4000
-
   return (
     <Card className="mt-3 p-4">
-      <div className="grid grid-cols-2 gap-4 divide-y sm:divide-y-0 sm:divide-x divide-line lg:grid-cols-3">
+      <div className="grid grid-cols-2 gap-4 divide-y sm:divide-y-0 sm:divide-x divide-line lg:grid-cols-2">
         {/* Metric 1: Combined Pair Cost */}
         <div className="pt-2 sm:pt-0 sm:px-3 first:pl-0">
           <p className="text-[11px] font-medium uppercase tracking-wide text-faint">Combined Pair Cost</p>
@@ -801,7 +796,7 @@ function StraddleDeskStrip({ data }: { data: BotSnapshot }) {
         </div>
 
         {/* Metric 2: Guaranteed Settlement Floor */}
-        <div className="pt-2 sm:pt-0 sm:px-3">
+        <div className="pt-2 sm:pt-0 sm:px-3 last:pr-0">
           <p className="text-[11px] font-medium uppercase tracking-wide text-faint">Settlement Payoff Floor</p>
           <div className="mt-1 flex items-baseline gap-2">
             <span
@@ -827,22 +822,6 @@ function StraddleDeskStrip({ data }: { data: BotSnapshot }) {
               'Redemption guarantee at expiry'
             )}
           </p>
-        </div>
-
-        {/* Metric 3: Window Budget & Clips */}
-        <div className="pt-2 sm:pt-0 sm:px-3 last:pr-0">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-faint">Window Budget & Clips</p>
-          <div className="mt-1 flex items-baseline gap-2">
-            <span className="text-[22px] font-semibold tracking-[-0.02em] tabular-nums">
-              ${totalCost.toFixed(2)}
-            </span>
-            <span className="text-[11.5px] text-faint">of ${windowCap.toLocaleString()}</span>
-          </div>
-          <div className="mt-1 flex items-center justify-between text-[11px] text-faint">
-            <span className="tabular-nums">
-              {fillsCount} fills (tape med: 39)
-            </span>
-          </div>
         </div>
       </div>
     </Card>

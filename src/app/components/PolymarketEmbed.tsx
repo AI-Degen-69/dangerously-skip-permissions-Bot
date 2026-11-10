@@ -3,10 +3,12 @@ import { useEffect, useRef } from 'react'
 
 import { useBotConfig, type BotConfigView, type Interval, type MarketView, type PositionView, type WsStatus } from '../lib/bot'
 import { cx } from '../lib/cx'
+import { mmss } from '../lib/format'
 import { reasonLabel } from '../lib/labels'
 import { Badge, Card } from './ui'
 import { LiveWindowStrip } from './LiveWindowStrip'
 import { OpenPositionsStrip } from './OpenPositionsStrip'
+import { ProbabilityChart, type OddsPoint } from './ProbabilityChart'
 
 // Polymarket's official embed only plots last-trade prints, so a market this
 // quiet is stuck at its listing price forever. These panels keep the Polymarket
@@ -21,11 +23,6 @@ function impliedUp(market: MarketView): number {
   if (up !== null) return up
   if (down !== null) return 1 - down
   return 0.5
-}
-
-interface OddsPoint {
-  t: number
-  v: number // implied Up, 0..1
 }
 
 interface GateTick {
@@ -79,8 +76,6 @@ const useOddsSeries = (market: MarketView): OddsPoint[] => {
 }
 
 const clock = (ms: number) => new Date(ms).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
-// Elapsed time into the window, e.g. 5:00 — "passed", not "remaining".
-const mmss = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`
 
 export function PolymarketLiveChart({
   markets,
@@ -319,7 +314,14 @@ function MarketChartPanel({
         </Badge>
       </div>
 
-      <div className="mt-2 flex items-center justify-between text-[11px] text-faint">
+      <ProbabilityChart market={market} points={points} />
+
+      <div className="mt-3 space-y-2">
+        <LiveWindowStrip markets={[market]} ws={ws} />
+        <OpenPositionsStrip positions={positions} />
+      </div>
+
+      <div className="mt-3 flex items-center justify-between text-[11px] text-faint">
         <span>{Math.round(progress * 100)}% elapsed</span>
         <span className="tabular-nums">{Math.max(0, Math.round(market.secondsRemaining))}s left</span>
       </div>
@@ -377,80 +379,7 @@ function MarketChartPanel({
           hint={depthHint}
         />
       </dl>
-
-      <OddsChart market={market} points={points} />
-
-      <div className="mt-3 space-y-2">
-        <LiveWindowStrip markets={[market]} ws={ws} />
-        <OpenPositionsStrip positions={positions} />
-      </div>
     </Card>
-  )
-}
-
-function OddsChart({ market, points }: { market: MarketView; points: OddsPoint[] }) {
-  const W = 600
-  const H = 110
-  const PAD_TOP = 10
-  const PAD_BOTTOM = 12
-  const span = Math.max(1, market.endMs - market.startMs)
-  const yFor = (v: number) => PAD_TOP + (H - PAD_TOP - PAD_BOTTOM) * (1 - v)
-  const xFor = (t: number) => Math.min(W, Math.max(0, ((t - market.startMs) / span) * W))
-  const coords = points.map((p) => [xFor(p.t), yFor(p.v)] as const)
-  const line = coords.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ')
-  const last = coords[coords.length - 1]!
-  // Area between the chart line and the price-to-beat midline, split green/red by side.
-  const midY = yFor(0.5)
-  const priceToBeat = market.anchor ? market.anchor.value.toFixed(2) : null
-  const areaMid = `${line} L${last[0].toFixed(1)},${midY.toFixed(1)} L${coords[0]![0].toFixed(1)},${midY.toFixed(1)} Z`
-  const current = points[points.length - 1]?.v ?? 0.5
-  const oddsColor = current >= 0.5 ? 'var(--color-success)' : 'var(--color-danger)'
-  const upPct = impliedUp(market) * 100
-
-  return (
-    <div
-      className="mt-2.5 flex min-h-[130px] flex-1 flex-col"
-      role="img"
-      aria-label={`Implied Up odds ${upPct.toFixed(0)}% this window`}
-    >
-      <div className="relative flex-1">
-      <svg viewBox={`0 0 ${W} ${H}`} className="absolute inset-0 h-full w-full" preserveAspectRatio="none" aria-hidden>
-        <defs>
-          {/* One fill, clipped to whichever side of the price-to-beat line it is on. */}
-          <clipPath id={`ptb-above-${market.slug}`}>
-            <rect x={0} y={0} width={W} height={midY} />
-          </clipPath>
-          <clipPath id={`ptb-below-${market.slug}`}>
-            <rect x={0} y={midY} width={W} height={H - midY} />
-          </clipPath>
-        </defs>
-        {[0.25, 0.75].map((t) => (
-          <line
-            key={t}
-            x1={0}
-            x2={W}
-            y1={yFor(t)}
-            y2={yFor(t)}
-            stroke="var(--color-line)"
-            strokeDasharray="2 4"
-            strokeWidth={1}
-          />
-        ))}
-        <line x1={0} x2={W} y1={midY} y2={midY} stroke="var(--color-warning)" strokeDasharray="2 4" strokeWidth={1} />
-        <text x={2} y={midY - 3} fontSize={10} fill="var(--color-warning)">
-          {priceToBeat ?? '50'}
-        </text>
-        {coords.length > 0 && (
-          <>
-            <path d={areaMid} fill="var(--color-success)" fillOpacity={0.16} clipPath={`url(#ptb-above-${market.slug})`} />
-            <path d={areaMid} fill="var(--color-danger)" fillOpacity={0.16} clipPath={`url(#ptb-below-${market.slug})`} />
-            <path d={line} fill="none" stroke={oddsColor} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-            <circle cx={last[0]} cy={last[1]} r={4} fill={oddsColor} stroke="var(--color-surface)" strokeWidth={2} />
-          </>
-        )}
-      </svg>
-      </div>
-    </div>
   )
 }
 
