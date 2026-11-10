@@ -110,10 +110,13 @@ class RunWorkspace:
             "printsBytes": 0,
             "bookBytes": 0,
         }
-        for key, path in (("prints", prints_path), ("books", book_path)):
+        for key, path, size_key in (
+            ("prints", prints_path, "printsBytes"),
+            ("books", book_path, "bookBytes"),
+        ):
             try:
                 if path.exists():
-                    out[key + "Bytes"] = path.stat().st_size
+                    out[size_key] = path.stat().st_size
                     count = 0
                     with path.open("r", encoding="utf-8") as f:
                         for _ in f:

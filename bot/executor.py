@@ -202,6 +202,7 @@ def evaluate_microstructure_ladder(
     saw_ceiling = False
     saw_dust = False
     saw_pair_cap = False
+    saw_depth_cap = False
     saw_unhedged_cap = False
     # DSP family (v2.0, v2.1, v2.2, ...) shares the same recovery-engine rules.
     is_dsp = strategy_id.startswith("dangerously-skip-permissions")
@@ -248,7 +249,7 @@ def evaluate_microstructure_ladder(
                 if proj_pc is None or proj_pc <= max_pair_cost:
                     shares = _cap_for_maker(shares, role, side)
                     if shares <= 0:
-                        saw_pair_cap = True
+                        saw_depth_cap = True
                         continue
                     return MicrostructureDecision(
                         action="fill",
@@ -313,7 +314,7 @@ def evaluate_microstructure_ladder(
         if proj_pc is None or proj_pc <= max_pair_cost or (proj_pc <= rescue_cap and exec_px <= effective_ceiling):
             shares = _cap_for_maker(shares, role, side)
             if shares <= 0:
-                saw_pair_cap = True
+                saw_depth_cap = True
                 continue
             return MicrostructureDecision(
                 action="fill",
@@ -337,6 +338,8 @@ def evaluate_microstructure_ladder(
         preferred = "Up" if up_def > 0 else "Down"
         if saw_ceiling:
             return MicrostructureDecision(action="skip", outcome=preferred, reason="extreme-price-skip", sub_reason="ceiling-price-skip")
+        if saw_depth_cap:
+            return MicrostructureDecision(action="skip", outcome=preferred, reason="no-liquidity", sub_reason="depth-cap")
         if saw_pair_cap:
             return MicrostructureDecision(action="skip", outcome=preferred, reason="extreme-price-skip", sub_reason="pair-cost-cap")
         return MicrostructureDecision(action="skip", outcome=preferred, reason="sweep-balanced", sub_reason="sweep-balanced")
@@ -431,7 +434,7 @@ def evaluate_microstructure_ladder(
             if proj_pc is None or proj_pc <= allowed_pc:
                 shares = _cap_for_maker(shares, role, side)
                 if shares <= 0:
-                    saw_pair_cap = True
+                    saw_depth_cap = True
                     continue
                 return MicrostructureDecision(
                     action="fill",
@@ -469,7 +472,7 @@ def evaluate_microstructure_ladder(
             )
             shares = _cap_for_maker(shares, role, side)
             if shares <= 0:
-                saw_pair_cap = True
+                saw_depth_cap = True
                 continue
             return MicrostructureDecision(
                 action="fill",
@@ -489,6 +492,8 @@ def evaluate_microstructure_ladder(
         return MicrostructureDecision(action="skip", outcome=preferred, reason="dust-quote", sub_reason="below-price-floor")
     if saw_unhedged_cap:
         return MicrostructureDecision(action="skip", outcome=preferred, reason="unhedged-cap-skip", sub_reason="unhedged-cap")
+    if saw_depth_cap:
+        return MicrostructureDecision(action="skip", outcome=preferred, reason="no-liquidity", sub_reason="depth-cap")
     if saw_pair_cap:
         return MicrostructureDecision(action="skip", outcome=preferred, reason="extreme-price-skip", sub_reason="pair-cost-cap")
     return MicrostructureDecision(action="skip", outcome=preferred, reason="no-liquidity", sub_reason="no-liquidity")

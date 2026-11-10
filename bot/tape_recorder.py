@@ -57,18 +57,16 @@ def run_recorder(up_token_id: str, down_token_id: str, out_dir: Path, max_mb: fl
     start = time.time()
     last_beat = 0.0
     last_frame_ts = time.time()
-    last_counts = (0, 0)
+    last_total = 0
     try:
         while True:
             time.sleep(1.0)
             now = time.time()
             elapsed = now - start
-            tc = streamer.tick_count + streamer.print_count
-            if tc != last_counts[0] + last_counts[1] if isinstance(last_counts, tuple) else True:
+            total = streamer.tick_count + streamer.print_count
+            if total != last_total:
                 last_frame_ts = now
-            last_counts = (streamer.tick_count, streamer.print_count)
-            if streamer.tick_count > 0 or streamer.print_count > 0:
-                last_frame_ts = now
+                last_total = total
             used_mb = dir_size_bytes(out_dir) / (1024 * 1024)
             if used_mb >= max_mb:
                 print(f'stopping: tape budget reached ({used_mb:.2f} MB >= {max_mb:.1f} MB)')
