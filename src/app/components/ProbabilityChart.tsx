@@ -170,7 +170,8 @@ export function ProbabilityChart({
         .map((f) => ({
           ...f,
           x: projectX(f.atMs, market.startMs, span, plotW),
-          y: projectY(f.price, PAD, floorY),
+          // The axis is implied-Up odds, so a Down fill belongs at its complement.
+          y: projectY(f.side === 'Down' ? 1 - f.price : f.price, PAD, floorY),
         })),
     [fills, market.startMs, market.endMs, span, plotW, floorY],
   )

@@ -484,7 +484,9 @@ export const useBotEvents = () =>
 export const useBotTrades = () =>
   useQuery({
     queryKey: ['bot', 'trades'],
-    queryFn: () => getJson<{ items: BotTrade[] }>('/trades?limit=80'),
+    // risk.maxFillsPerWindow is 500: a smaller limit would truncate the active
+    // window's fills and drop its oldest chart markers.
+    queryFn: () => getJson<{ items: BotTrade[] }>('/trades?limit=500'),
     refetchInterval: 5_000,
     retry: false,
   })
