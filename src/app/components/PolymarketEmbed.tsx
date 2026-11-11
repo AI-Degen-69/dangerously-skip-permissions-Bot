@@ -1,7 +1,7 @@
 import { Activity, ArrowUpRight, Radio } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 
-import { useBotConfig, type BotConfigView, type Interval, type MarketView, type PositionView, type WsStatus } from '../lib/bot'
+import { useBotConfig, type BotConfigView, type BotTrade, type Interval, type MarketView, type PositionView, type WsStatus } from '../lib/bot'
 import { cx } from '../lib/cx'
 import { mmss } from '../lib/format'
 import { reasonLabel } from '../lib/labels'
@@ -81,10 +81,13 @@ export function PolymarketLiveChart({
   markets,
   positions = [],
   ws,
+  trades = [],
 }: {
   markets: MarketView[]
   positions?: PositionView[]
   ws?: WsStatus
+  /** Every fill in the run; each chart draws only its own window's. */
+  trades?: BotTrade[]
 }) {
   const { data: config } = useBotConfig()
   const lastMarkets = useRef<MarketView[]>([])
@@ -115,6 +118,7 @@ export function PolymarketLiveChart({
             pairCostCap={config?.config.entry.maxPairCost}
             wide={activeMarkets.length === 1}
             ws={ws}
+            trades={trades}
           />
         ))
       )}
@@ -129,6 +133,7 @@ function MarketChartPanel({
   pairCostCap,
   wide = false,
   ws,
+  trades = [],
 }: {
   market: MarketView
   positions?: PositionView[]
@@ -136,8 +141,13 @@ function MarketChartPanel({
   pairCostCap?: number
   wide?: boolean
   ws?: WsStatus
+  trades?: BotTrade[]
 }) {
   const points = useOddsSeries(market)
+  // Each fill becomes a marker at the moment and price it filled.
+  const fills = trades
+    .filter((t) => t.slug === market.slug && t.kind !== 'settle' && t.side && t.price != null)
+    .map((t) => ({ side: t.side!, price: t.price!, atMs: Number(t.ts), shares: t.shares ?? 0 }))
   const total = Math.max(1, market.endMs - market.startMs)
   const intervalSec = total / 1000
   const hasUp = positions.some((p) => p.side === 'Up')
@@ -320,7 +330,7 @@ function MarketChartPanel({
         </Badge>
       </div>
 
-      <ProbabilityChart market={market} points={points} ticks={ticks} />
+      <ProbabilityChart market={market} points={points} ticks={ticks} fills={fills} />
 
       <div className="mt-3 space-y-2">
         <LiveWindowStrip markets={[market]} ws={ws} pairCostCap={pairCostCap} />

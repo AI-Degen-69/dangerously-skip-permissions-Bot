@@ -36,6 +36,14 @@ const TICK_STROKE: Record<AxisTick['tone'], string> = {
   muted: 'var(--color-line-strong)',
 }
 
+/** A fill the bot placed in this window, drawn where it happened. */
+export interface FillMark {
+  side: 'Up' | 'Down'
+  price: number
+  atMs: number
+  shares: number
+}
+
 interface ChartPoint {
   t: number
   v: number
@@ -60,10 +68,12 @@ export function ProbabilityChart({
   market,
   points,
   ticks = [],
+  fills = [],
 }: {
   market: MarketView
   points: OddsPoint[]
   ticks?: AxisTick[]
+  fills?: FillMark[]
 }) {
   const [hoverT, setHoverT] = useState<number | null>(null)
   const [box, setBox] = useState({ w: 0, h: 0 })
@@ -150,6 +160,21 @@ export function ProbabilityChart({
     return { marks, labels }
   }, [ticks, plotW, span, market.startMs])
 
+  // Fills are drawn where they happened: x from the fill time, y from its price,
+  // so the marker sits on the curve at the moment the bot paid for that side.
+  // Outside-window fills are dropped rather than clamped onto an edge.
+  const marks = useMemo(
+    () =>
+      fills
+        .filter((f) => f.atMs >= market.startMs && f.atMs <= market.endMs)
+        .map((f) => ({
+          ...f,
+          x: projectX(f.atMs, market.startMs, span, plotW),
+          y: projectY(f.price, PAD, floorY),
+        })),
+    [fills, market.startMs, market.endMs, span, plotW, floorY],
+  )
+
   const hovered = useMemo(() => {
     if (hoverT == null || coords.length === 0) return null
     let best = coords[0]!
@@ -185,6 +210,11 @@ export function ProbabilityChart({
     <div className="relative mt-2.5 overflow-hidden rounded-tile border border-line bg-surface-2/30 p-3">
       <div className="relative flex items-center justify-between gap-2">
         <p className="text-[10px] font-medium uppercase tracking-wide text-faint">Live probability trajectory</p>
+        {marks.length > 0 && (
+          <span className="ml-auto font-mono text-[10px] text-faint" title="Diamonds on the curve mark where the bot filled">
+            ◆ {marks.length} {marks.length === 1 ? 'fill' : 'fills'}
+          </span>
+        )}
         <Badge tone={coords.length === 0 ? 'neutral' : isUp ? 'success' : 'danger'} className="font-mono text-[11px]">
           {coords.length === 0 ? '—' : `${isUp ? 'UP' : 'DN'} ${Math.round(current * 100)}¢`}
         </Badge>
@@ -321,6 +351,21 @@ export function ProbabilityChart({
                 filter={`url(#prob-glow-${market.slug})`}
               />
             )}
+            {marks.map((mark, index) => (
+              <g key={`fill-${index}-${mark.atMs}`}>
+                <title>{`${mark.side} fill · ${mark.shares} sh @ ${Math.round(mark.price * 100)}¢ · ${mmss((mark.atMs - market.startMs) / 1000)}`}</title>
+                <rect
+                  x={mark.x - 3.5}
+                  y={mark.y - 3.5}
+                  width={7}
+                  height={7}
+                  transform={`rotate(45 ${mark.x} ${mark.y})`}
+                  fill={mark.side === 'Up' ? UP_COLOR : DOWN_COLOR}
+                  stroke="var(--color-surface)"
+                  strokeWidth={1.5}
+                />
+              </g>
+            ))}
             {last && (
               <g>
                 {/* Blinking halo on the live edge of the curve. */}

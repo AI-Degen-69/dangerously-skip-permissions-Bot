@@ -207,7 +207,7 @@ export function Live() {
           <>
             <StraddleDeskStrip data={data} />
 
-            <PolymarketLiveChart markets={data.markets} positions={data.positions} ws={ws} />
+            <PolymarketLiveChart markets={data.markets} positions={data.positions} ws={ws} trades={trades.data?.items ?? []} />
 
             <OrdersAndFillsTable items={trades.data?.items ?? []} windowSlugs={data.markets.map((market) => market.slug)} />
 
