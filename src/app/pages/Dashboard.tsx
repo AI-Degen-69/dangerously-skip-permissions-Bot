@@ -400,7 +400,7 @@ export function Dashboard() {
                 <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-muted">
                   <span>Last {Math.min(settled.length, 24)} windows</span>
                   <span className="text-faint">
-                    best {usd(summary?.bestUsd ?? 0)} · worst {usd(summary?.worstUsd ?? 0)}
+                    best {usd(stats.bestUsd)} · worst {usd(stats.worstUsd)}
                   </span>
                 </div>
                 <WindowBars

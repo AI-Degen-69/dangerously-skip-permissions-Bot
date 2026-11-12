@@ -81,6 +81,32 @@ export function useAccountTier(): [AccountTier, (id: string) => void] {
   return [tierById(id), pick]
 }
 
+/**
+ * Maker or taker for one fill, mirroring `_window_row` in bot/api.py so the
+ * totals and the orders table can never disagree.
+ *
+ * A recorded role wins. Without one, a recorded fee decides — a charged fee means
+ * the fill crossed — then the legacy reason text, and finally maker, which is
+ * what the backend assumes for a fill it cannot classify.
+ */
+export function classifyFill(input: {
+  role?: unknown
+  reason?: string | null
+  feeUsd?: unknown
+}): 'maker' | 'taker' {
+  const role = String(input.role ?? '').toLowerCase()
+  if (role === 'maker' || role === 'taker') return role
+
+  if (typeof input.feeUsd === 'number' && Number.isFinite(input.feeUsd)) {
+    return input.feeUsd > 0 ? 'taker' : 'maker'
+  }
+
+  const reason = String(input.reason ?? '').toLowerCase()
+  if (reason.includes('equalizer') || reason.includes('snipe')) return 'taker'
+  if (reason.includes('maker')) return 'maker'
+  return 'maker'
+}
+
 /** Fee per share at a price, in dollars. */
 export function takerFeePerShare(price: number): number {
   const p = Math.min(1, Math.max(0, price))

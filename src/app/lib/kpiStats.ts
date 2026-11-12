@@ -146,18 +146,13 @@ export function computeKpiStats(
   const expectancyUsd = settled.length > 0 ? netUsd / settled.length : 0
   const expectancyRatio = winRate * payoffRatio - lossRate
   const activeRate = (winsCount + lossesCount) / (settled.length || 1)
+  // Every field below is derived from the rebate-adjusted nets, so the API's
+  // pre-rebate summary must not be preferred here — it would freeze these values
+  // while the counts beside them moved with the tier.
   const breakEvenWinRate =
-    apiSummary?.breakEvenWinRate !== undefined
-      ? apiSummary.breakEvenWinRate
-      : winsCount > 0 && payoffRatio > 0
-        ? activeRate / (1 + payoffRatio)
-        : null
+    winsCount > 0 && payoffRatio > 0 ? activeRate / (1 + payoffRatio) : null
   const edgePct =
-    apiSummary?.edgePct !== undefined
-      ? apiSummary.edgePct
-      : breakEvenWinRate !== null
-        ? (winRate - breakEvenWinRate) * 100
-        : null
+    breakEvenWinRate !== null ? (winRate - breakEvenWinRate) * 100 : null
 
   // 105,120 5-minute windows in a 365-day year
   const ANNUAL_FACTOR = Math.sqrt(288 * 365)
@@ -288,23 +283,17 @@ export function computeKpiStats(
     sortinoRatio,
     windowSharpe,
     volatilityUsd,
-    maxDrawdownUsd: apiSummary?.maxDrawdownUsd ?? maxDdUsd,
-    maxDrawdownPct:
-      apiSummary?.maxDrawdownPct != null
-        ? apiSummary.maxDrawdownPct * 100
-        : maxDdPct,
-    currentDrawdownUsd: apiSummary?.currentDrawdownUsd ?? currentDrawdownUsd,
-    currentDrawdownPct:
-      apiSummary?.currentDrawdownPct != null
-        ? apiSummary.currentDrawdownPct * 100
-        : currentDrawdownPct,
+    maxDrawdownUsd: maxDdUsd,
+    maxDrawdownPct: maxDdPct,
+    currentDrawdownUsd,
+    currentDrawdownPct,
     highWaterUsd: peak,
     bestUsd: nets.length > 0 ? Math.max(...nets) : 0,
     worstUsd: nets.length > 0 ? Math.min(...nets) : 0,
 
-    currentStreak: apiSummary?.currentStreak ?? currentStreak,
-    maxWinStreak: apiSummary?.maxWinStreak ?? maxWinStreak,
-    maxLossStreak: apiSummary?.maxLossStreak ?? maxLossStreak,
+    currentStreak,
+    maxWinStreak,
+    maxLossStreak,
 
     upCount: upWindows.length,
     downCount: downWindows.length,

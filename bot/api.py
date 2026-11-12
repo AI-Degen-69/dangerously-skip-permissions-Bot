@@ -856,12 +856,27 @@ def _window_row(r: dict) -> dict:
             continue
         detail = f.get("detail") or {}
         role = str(detail.get("role") or "").upper()
-        fee = _num(detail.get("feeUsd"))
+        raw_fee = detail.get("feeUsd")
+        has_fee = isinstance(raw_fee, (int, float)) and not isinstance(raw_fee, bool)
+        fee = _num(raw_fee)
         base = shares * C.TAKER_FEE_COEFF * price * (1 - price)
-        if role == "MAKER" or (not role and fee <= 0):
-            maker_fee_base += base
+        # Same precedence as classifyFill() in src/app/lib/rebates.ts: a recorded
+        # role, then a recorded fee, then the legacy reason text, then maker. The
+        # orders table classifies with the same rule, so the totals it shows and
+        # the per-fill rows can never disagree.
+        reason = str(f.get("reason") or "").lower()
+        if role in ("MAKER", "TAKER"):
+            is_taker = role == "TAKER"
+        elif has_fee:
+            is_taker = fee > 0
+        elif "equalizer" in reason or "snipe" in reason:
+            is_taker = True
         else:
+            is_taker = False
+        if is_taker:
             computed_taker += fee if fee > 0 else base
+        else:
+            maker_fee_base += base
     recorded_fees = r.get("fees_usd")
     taker_fees = _num(recorded_fees) if recorded_fees is not None else round(computed_taker, 4)
 

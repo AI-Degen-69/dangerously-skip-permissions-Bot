@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Badge, Card, EmptyState } from './ui'
 import { cx } from '../lib/cx'
 import type { BotTrade } from '../lib/bot'
-import { rebateFor, takerFeePerShare, useAccountTier } from '../lib/rebates'
+import { classifyFill, rebateFor, takerFeePerShare, useAccountTier } from '../lib/rebates'
 import { buildWindows, resolveWindowIndex, slotOfSlug, windowSlotOf } from '../lib/windows'
 
 const money = (value: number | null | undefined) =>
@@ -66,12 +66,10 @@ export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsP
       if (activeSlot != null && windowSlotOf(item) !== activeSlot) return false
 
       const detail = item.detail as Record<string, unknown> | undefined
-      const role = String(detail?.role ?? '').toLowerCase()
-      const isMaker = role === 'maker' || item.reason?.includes('maker')
-      const isTaker = role === 'taker' || item.reason?.includes('equalizer') || item.reason?.includes('snipe')
+      const role = classifyFill({ role: detail?.role, reason: item.reason, feeUsd: detail?.feeUsd })
 
-      if (typeFilter === 'maker' && !isMaker) return false
-      if (typeFilter === 'taker' && !isTaker) return false
+      if (typeFilter === 'maker' && role !== 'maker') return false
+      if (typeFilter === 'taker' && role !== 'taker') return false
 
       const side = item.side ?? (detail?.winner as string | undefined)
       if (sideFilter !== 'all' && side !== sideFilter) return false
@@ -204,19 +202,23 @@ export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsP
                 const cost =
                   trade.usd ?? (trade.shares != null && trade.price != null ? trade.shares * trade.price : null)
 
-                const role = String(detail?.role ?? '').toUpperCase()
-                const isMaker = role === 'MAKER' || trade.reason?.includes('maker')
-                const isTaker = role === 'TAKER' || trade.reason?.includes('equalizer') || trade.reason?.includes('snipe')
-                const orderType = isMaker ? 'MAKER' : isTaker ? 'TAKER' : role || 'TAKER'
+                const fillRole = classifyFill({
+                  role: detail?.role,
+                  reason: trade.reason,
+                  feeUsd: detail?.feeUsd,
+                })
+                const isMaker = fillRole === 'maker'
+                const orderType = fillRole.toUpperCase()
 
                 const isSettled = trade.kind === 'settle'
 
-                // The run file records the fee it charged; older fills without it
-                // fall back to the same 0.07 · p · (1 − p) formula.
-                const detailFee = typeof detail?.feeUsd === 'number' ? detail.feeUsd : 0
+                // The run file records the fee it charged, and a stored zero is a
+                // real value (no fee on that fill). Only fills with no recorded fee
+                // fall back to the 0.07 · p · (1 − p) formula.
+                const detailFee = typeof detail?.feeUsd === 'number' ? detail.feeUsd : null
                 const feeUsd = isSettled
                   ? null
-                  : detailFee > 0
+                  : detailFee !== null
                     ? detailFee
                     : isMaker
                       ? 0
