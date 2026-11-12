@@ -40,15 +40,59 @@ const cents = (v: number | undefined | null) => {
 const usd = (v: number | undefined | null, digits = 3) => (v == null ? '—' : `$${Number(v).toFixed(digits)}`)
 const sh = (v: number | undefined | null) => (v == null ? '—' : `${Number(v)} sh`)
 
+/** bot/executor.py dip_curve_shares(): linear in price, rounded to whole shares. */
+function curveShares(curve: { lo: number; hi: number; sharesLo: number; sharesHi: number }, price: number) {
+  const lo = Number(curve.lo)
+  const hi = Number(curve.hi)
+  const a = hi > lo ? Math.min(Math.max((price - lo) / (hi - lo), 0), 1) : 0
+  return Math.round(Number(curve.sharesLo) + (Number(curve.sharesHi) - Number(curve.sharesLo)) * a)
+}
+
+/** Where the dollar cap actually bites on the live curve: a clip that costs more
+ *  than maxUnhedgedUsd is refused whenever it leaves a net unhedged lead. */
+function curveProfile(picked: StrategySetup) {
+  const e = picked.entry
+  const curve = e.dipCurve
+  const gapUsd = Number(e.maxUnhedgedUsd ?? 0)
+  if (!curve) return null
+  const loC = Math.round(Number(curve.lo) * 100)
+  const hiC = Math.round(Number(curve.hi) * 100)
+  let peakCost = 0
+  let peakPx = loC
+  const refused: number[] = []
+  for (let c = loC; c <= hiC; c++) {
+    const cost = curveShares(curve, c / 100) * (c / 100)
+    if (cost > peakCost) {
+      peakCost = cost
+      peakPx = c
+    }
+    if (gapUsd > 0 && cost > gapUsd) refused.push(c)
+  }
+  return {
+    costLo: curveShares(curve, Number(curve.lo)) * Number(curve.lo),
+    costHi: curveShares(curve, Number(curve.hi)) * Number(curve.hi),
+    peakCost,
+    peakPx,
+    refusedFrom: refused.length ? refused[0] : null,
+    refusedTo: refused.length ? refused[refused.length - 1] : null,
+  }
+}
+
 /** Sizing sentence + dollar cost of one clip, derived from the active entry block. */
 function sizingLine(picked: StrategySetup) {
   const { entry } = picked
   const curve = entry.dipCurve
-  if (curve) {
+  const profile = curveProfile(picked)
+  if (curve && profile) {
+    const gapUsd = Number(entry.maxUnhedgedUsd ?? 0)
+    const refused =
+      profile.refusedFrom != null
+        ? ` Above ${usd(gapUsd, 2)} a clip is refused, so fresh dips between ${profile.refusedFrom}¢ and ${profile.refusedTo}¢ never fill (the cap only bites when the fill leaves a net unhedged lead).`
+        : ''
     return {
       label: 'Inverse-dip curve',
-      value: `${sh(curve.sharesLo)} at ${cents(curve.lo)} → ${sh(curve.sharesHi)} at ${cents(curve.hi)} (linear)`,
-      cost: `One clip costs ≈ $${(Number(curve.sharesLo) * Number(curve.lo)).toFixed(2)} at the bottom of the band and ≈ $${(Number(curve.sharesHi) * Number(curve.hi)).toFixed(2)} at the top.`,
+      value: `${sh(curve.sharesLo)} at ${cents(curve.lo)} → ${sh(curve.sharesHi)} at ${cents(curve.hi)} (linear, whole shares)`,
+      cost: `One clip costs ≈ $${profile.costLo.toFixed(2)} at ${cents(curve.lo)} and ≈ $${profile.costHi.toFixed(2)} at ${cents(curve.hi)}, peaking at ≈ $${profile.peakCost.toFixed(2)} around ${profile.peakPx}¢.${refused}`,
     }
   }
   return {
@@ -72,6 +116,15 @@ function specRows(picked: StrategySetup) {
       note: 'Only prices inside this band are bought as fresh dips. Above it the engine waits for a hedge instead of chasing.',
     },
     { key: sizing.label, value: sizing.value, note: sizing.cost },
+    ...(e.dipCurve
+      ? [
+          {
+            key: 'Clip ceiling',
+            value: `${sh(e.maxShares)} on a deficit close`,
+            note: 'A deficit-closing fill snaps to the deficit, capped at the max clip.',
+          },
+        ]
+      : []),
     {
       key: 'Pair-cost gates',
       value: `fresh ≤ ${usd(e.targetPairCost)} · gap-close ≤ ${usd(e.maxPairCost)}${rescuePc ? ` · rescue ≤ ${usd(rescuePc)}` : ''}`,
@@ -79,9 +132,9 @@ function specRows(picked: StrategySetup) {
     },
     {
       key: 'Unhedged gap cap',
-      value: gapUsd > 0 ? `≈ ${usd(gapUsd, 2)} of net unhedged cost · ${sh(lead)} share knob` : `never ${sh(lead)} on one side`,
+      value: gapUsd > 0 ? `≤ ${usd(gapUsd, 2)} net unhedged cost · ≤ ${sh(lead)} lead` : `never ${sh(lead)} on one side`,
       note: gapUsd > 0
-        ? `The dollar cap does the work; the ${sh(lead)} share knob is a second limit the engine never reaches. Paired volume stays uncapped.`
+        ? `Both vetoes are live: the ${usd(gapUsd, 2)} cap refuses a clip that would cost more than that, and the ${sh(lead)} share knob refuses a clip that would push the leading side to it. The knob binds first on deep dips — a second ${sh(e.dipCurve?.sharesLo ?? e.clipSharesDefault)} clip at ${cents(e.dipCurve?.lo ?? e.minFillPrice)} costs only $${(2 * Number(e.dipCurve?.sharesLo ?? e.clipSharesDefault) * Number(e.dipCurve?.lo ?? e.minFillPrice)).toFixed(2)} but would leave ${sh(2 * Number(e.dipCurve?.sharesLo ?? e.clipSharesDefault))} shares unhedged. Paired volume stays uncapped.`
         : `The share knob is a strict veto, so the largest unhedged lead ever held is ${sh(lead - 1)}.`,
     },
     {
@@ -97,7 +150,7 @@ function specRows(picked: StrategySetup) {
     {
       key: 'Fill spacing',
       value: `${e.minSpacingMoveSec}s after a price move · ${e.minSpacingStaticSec}s on a static quote`,
-      note: 'Prevents double-filling the same quote and thins out to 0.5s while a deficit is being closed.',
+      note: `Prevents double-filling the same quote. Inside the sweep window (T−${e.stopBeforeCloseSec}s → T−${HARD_CUTOFF_S}s, while imbalanced) the spacing collapses to a flat ${e.minSpacingMoveSec}s.`,
     },
     {
       key: 'Fees',
@@ -180,7 +233,7 @@ const CALIBRATION_SUMMARY = [
     implied: '98.5%',
     actualWin: '75.0%',
     roiPct: '−20.7%',
-    verdict: 'Blocked by the price ceiling',
+    verdict: 'Blocked by the 97.5¢ ceiling of that tape (today a rescue hedge may pay 98.5¢)',
     tone: 'danger' as const,
   },
 ]
@@ -239,7 +292,10 @@ export function Strategy() {
   const setupsQuery = useStrategySetups()
   const allSetups = mergeStrategySetups(setupsQuery.data?.setups, STRATEGY_PRESETS as unknown as Record<string, StrategySetup>)
   const pickedId = control.data?.strategy?.id ?? setupsQuery.data?.activeSetupId
-  const picked = allSetups.find((s) => s.id === pickedId) ?? allSetups[0]
+  // Never fall back to a preset: if the API cannot say which setup is active,
+  // naming any of them would claim a strategy is running when nothing says so.
+  const picked = pickedId ? allSetups.find((s) => s.id === pickedId) : undefined
+  const loading = control.isLoading || setupsQuery.isLoading
   const [activeId, setActiveId] = useState<string>(TOC[0].id)
 
   useEffect(() => {
@@ -269,16 +325,25 @@ export function Strategy() {
   const gapUsd = Number(entry?.maxUnhedgedUsd ?? 0)
   const rescuePx = entry?.rescueCeilingPrice
   const rescuePc = entry?.rescuePairCostMax
+  // Deepest-dip clip, used for the "knob binds first" example.
+  const loPx = Number(entry?.dipCurve?.lo ?? entry?.minFillPrice ?? 0)
+  const loSh = Number(entry?.dipCurve?.sharesLo ?? entry?.clipSharesDefault ?? 0)
 
   return (
     <div className="mx-auto max-w-[1180px] p-5 sm:p-8">
       <PageHeader
         title={picked ? `Strategy · ${picked.symbol}` : 'Strategy'}
-        subtitle={picked ? `${picked.name} — ${picked.signature}` : 'Waiting for the bot API to report the active setup.'}
+        subtitle={
+          picked
+            ? `${picked.name} — ${picked.signature}`
+            : loading
+              ? 'Reading the active setup from the bot API…'
+              : 'The bot API did not report an active setup.'
+        }
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone="accent" className="font-mono font-semibold">
-              {picked ? `${picked.symbol} · Active` : 'Engine'}
+              {picked ? `${picked.symbol} · Active` : loading ? 'Reading setup…' : 'Setup unknown'}
             </Badge>
             <Badge tone="info" className="font-mono text-[11px]">
               API {BOT_ORIGIN}
@@ -410,26 +475,28 @@ export function Strategy() {
         </Card>
       )}
 
-      {/* Quick Jump Bar */}
-      <div className="mt-6 flex gap-2 overflow-x-auto pb-1" aria-label="Jump to section">
-        {TOC.map((item) => {
-          const isActive = activeId === item.id || item.children.some((child) => child.id === activeId)
-          const Icon = item.icon
-          return (
-            <Button
-              key={item.id}
-              variant={isActive ? 'primary' : 'secondary'}
-              size="md"
-              onClick={() => jumpTo(item.id)}
-              className="min-w-[165px] flex-1 whitespace-nowrap"
-              aria-current={isActive ? 'true' : undefined}
-            >
-              <Icon />
-              {item.short}
-            </Button>
-          )
-        })}
-      </div>
+      {picked ? (
+        <>
+          {/* Quick Jump Bar */}
+          <div className="mt-6 flex gap-2 overflow-x-auto pb-1" aria-label="Jump to section">
+            {TOC.map((item) => {
+              const isActive = activeId === item.id || item.children.some((child) => child.id === activeId)
+              const Icon = item.icon
+              return (
+                <Button
+                  key={item.id}
+                  variant={isActive ? 'primary' : 'secondary'}
+                  size="md"
+                  onClick={() => jumpTo(item.id)}
+                  className="min-w-[165px] flex-1 whitespace-nowrap"
+                  aria-current={isActive ? 'true' : undefined}
+                >
+                  <Icon />
+                  {item.short}
+                </Button>
+              )
+            })}
+          </div>
 
       <div className="mt-6 grid gap-8 lg:grid-cols-[minmax(0,1fr)_240px]">
         <div className="min-w-0 space-y-8">
@@ -449,8 +516,8 @@ export function Strategy() {
               </div>
 
               <p className="mt-4 text-[13.5px] leading-relaxed text-muted">
-                On a simultaneous snapshot, <code className="font-mono text-fg">best_ask(Up) + best_ask(Down) &gt; $1.01</code>{' '}
-                plus taker fees, so a bot that crosses the spread on both sides loses on every trade. This engine beats
+                On a simultaneous snapshot, buying both outcomes at the ask costs more than $1.00 plus taker fees,
+                so a bot that crosses the spread on both sides loses on every trade. This engine beats
                 that spread with <strong className="font-semibold text-fg">asynchronous timing</strong> — buying Up
                 when Up dips, then Down seconds or minutes later when Down dips — and with{' '}
                 <strong className="font-semibold text-fg">passive maker bids</strong> that pay no fee.
@@ -480,11 +547,14 @@ export function Strategy() {
                     <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted">
                       {entry?.dipCurve ? (
                         <>
-                          Clips are linear in price: <code className="font-mono">{entry.dipCurve.sharesLo} sh</code> at{' '}
+                          Clips are linear in price, then rounded to whole shares:{' '}
+                          <code className="font-mono">{entry.dipCurve.sharesLo} sh</code> at{' '}
                           <code className="font-mono">{cents(entry.dipCurve.lo)}</code> falling to{' '}
                           <code className="font-mono">{entry.dipCurve.sharesHi} sh</code> at{' '}
-                          <code className="font-mono">{cents(entry.dipCurve.hi)}</code>. Deep dips get size, the thin end
-                          of the band gets a token clip, and dollars per clip stay in a narrow range.
+                          <code className="font-mono">{cents(entry.dipCurve.hi)}</code>. The cost of a clip rises with
+                          the price and peaks in the middle of the band, where the{' '}
+                          <code className="font-mono">{usd(Number(entry.maxUnhedgedUsd ?? 0), 2)}</code> unhedged cap
+                          refuses it.
                         </>
                       ) : (
                         <>
@@ -518,15 +588,20 @@ export function Strategy() {
                       {gapUsd > 0 ? (
                         <>
                           A fill that would leave more than <code className="font-mono">{usd(gapUsd, 2)}</code> of net
-                          unhedged cost is vetoed, and so is one that would push the leader to{' '}
-                          <code className="font-mono">{entry?.maxShareLead} sh</code>. Once a side leads, only the
+                          unhedged cost is vetoed, and so is one that would push the leading side to{' '}
+                          <code className="font-mono">{entry?.maxShareLead} sh</code>. At deep dips the share knob binds
+                          first: a second <code className="font-mono">{loSh}</code> clip at{' '}
+                          <code className="font-mono">{cents(loPx)}</code> costs only{' '}
+                          <code className="font-mono">${(2 * loSh * loPx).toFixed(2)}</code> but would leave{' '}
+                          <code className="font-mono">{2 * loSh} sh</code>{' '}
+                          unhedged. Below that knob both sides stay eligible; once one side reaches it, only the
                           lagging side may be bought. Total paired volume is uncapped.
                         </>
                       ) : (
                         <>
                           A fill that would leave the leading side at or above{' '}
                           <code className="font-mono">{entry?.maxShareLead} sh</code> is vetoed, so that lead is never
-                          held. Once a side leads, only the lagging side may be bought.
+                          held. Once a side reaches the knob, only the lagging side may be bought.
                         </>
                       )}
                     </p>
@@ -577,7 +652,8 @@ export function Strategy() {
                 Source of truth: <code className="font-mono">bot/config.json</code>, mirrored in{' '}
                 <code className="font-mono">bot/constants.py</code> and enforced by{' '}
                 <code className="font-mono">bot/executor.py</code>. Change a value on the Config page and this table
-                follows on the next refresh.
+                follows on the next refresh — except the clip curve and the dollar cap, which belong to the setup
+                itself and only change when the setup is switched.
               </p>
             </Card>
           </section>
@@ -590,8 +666,7 @@ export function Strategy() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <h3 className="text-[16px] font-semibold text-fg">
-                    3. Window lifecycle ({entry ? `T+${entry.startAfterOpenSec}s` : 'T+4s'} first fill, T−{entry?.stopBeforeCloseSec ?? 75}s
-                    cutoff)
+                    3. Window lifecycle (fills from T+0s, T−{entry?.stopBeforeCloseSec ?? 75}s cutoff)
                   </h3>
                   <p className="text-[13px] text-muted">How one 300-second market is traded end to end</p>
                 </div>
@@ -608,13 +683,12 @@ export function Strategy() {
                 </div>
 
                 <div className="rounded-tile border border-line bg-surface-2/40 p-3.5">
-                  <span className="font-mono text-[11px] font-bold uppercase text-danger">
-                    1. T+0s – T+{entry?.startAfterOpenSec ?? 4}s
-                  </span>
-                  <p className="mt-1 text-[13.5px] font-semibold text-fg">Opening buffer</p>
+                  <span className="font-mono text-[11px] font-bold uppercase text-danger">1. T+0s — opening leg</span>
+                  <p className="mt-1 text-[13.5px] font-semibold text-fg">First fill</p>
                   <p className="mt-1 text-[12px] leading-relaxed text-muted">
-                    No scheduled trading before the T+{entry?.startAfterOpenSec ?? 4}s threshold; the first fill is the
-                    opening leg on the cheaper side.
+                    The engine can fill from T+0s: <code className="font-mono">startAfterOpenSec</code> (
+                    {entry?.startAfterOpenSec ?? 4}s) decides when the next window is picked up, not when fills start.
+                    The first fill is the opening leg on the cheaper side.
                   </p>
                 </div>
 
@@ -765,16 +839,17 @@ export function Strategy() {
                 <div>
                   <h3 className="text-[15.5px] font-semibold text-fg">5. Reference tape: price-regime calibration</h3>
                   <p className="text-[12.5px] text-muted">
-                    Measured on 10,007 settled fills of the HAPCS-v1 reconstruction tape (Nov 7–8, 2026)
+                    Measured across 10,236 settled fills of the HAPCS-v1 reconstruction tape (Nov 7–8, 2026)
                   </p>
                 </div>
                 <Badge tone="neutral">Evidence, not active config</Badge>
               </div>
 
               <p className="mt-3 rounded-tile border border-line bg-surface-2/40 p-3 text-[12.5px] leading-relaxed text-muted">
-                This table is the historical evidence behind the 7¢ price floor and the mid-band skip. It comes from a
-                different wallet and a different engine generation, so its names, fills and ROI figures do not describe
-                the setup running now — nothing on this page above reads from it.
+                This table is the historical evidence behind the 7¢ price floor and the mid-band skip. It comes from
+                the same wallet (0xc533…69a9) but an earlier Nov 6–8 ledger and a different engine generation
+                (HAPCS-v1), so its names, fills and ROI figures do not describe the setup running now — nothing on
+                this page above reads from it.
               </p>
 
               <div className="mt-4 overflow-x-auto">
@@ -872,6 +947,19 @@ export function Strategy() {
           </nav>
         </aside>
       </div>
+        </>
+      ) : (
+        <Card className="mt-6 p-6">
+          <p className="text-[14px] font-semibold text-fg">
+            {loading ? 'Reading the active setup…' : 'No active setup reported'}
+          </p>
+          <p className="mt-1 text-[12.5px] leading-relaxed text-muted">
+            {loading
+              ? 'This page documents whatever bot/config.json selects, so it waits for the bot API to answer.'
+              : 'The bot API is unreachable, so no setup can be named here. Nothing below is live configuration.'}
+          </p>
+        </Card>
+      )}
 
       <Card className="mt-6 flex flex-wrap items-center justify-between gap-3 p-5">
         <div className="flex items-start gap-3">

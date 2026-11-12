@@ -212,8 +212,8 @@ export const STRATEGY_PRESETS = {
     id: 'dangerously-skip-permissions-v2.5',
     symbol: '⚡ DSP-v2.5',
     name: 'Dangerously Skip Permissions v2.5 (Inverse-Dip Curve + Dollar Gap Cap)',
-    signature: 'Inverse-Dip Curve (33 sh @7¢ → 8 sh @45¢) · Pair Gates (fresh under $0.965) · Dollar Gap Cap ($5.00) · Under-$0.995 Cap',
-    description: 'Buys dips 33 sh at 7¢ falling to 8 sh at 45¢; entries follow pair-cost gates (fresh under $0.965, closing a gap under $0.985, rescue under $0.995); never 46 sh or more unhedged on one side, and never more than $5.00 of unhedged cost while total paired-up shares have no cap. Late gaps are swept with resting no-fee orders. No heavy bulk fills.',
+    signature: 'Inverse-Dip Curve (33 sh @7c → 8 sh @45c) - Pair Gates (fresh under $0.965) - Dollar Gap Cap ($5.00) - Under-$0.995 Cap',
+    description: 'Buys dips 33 sh at 7c falling to 8 sh at 45c; entries follow pair-cost gates (fresh under $0.965, closing a gap under $0.985, rescue under $0.995); never 46 sh or more unhedged on one side, ever, and never more than $5.00 of unhedged cost while total paired-up shares have no cap. Late gaps are swept with resting no-fee orders. No heavy bulk fills.',
     entry: {
       clipSharesDefault: 10,
       maxShares: 45,
