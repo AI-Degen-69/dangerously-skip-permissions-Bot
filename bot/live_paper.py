@@ -54,6 +54,7 @@ from bot.executor import (
 from bot.risk import RiskState, assert_single_window, check_window, clip_shares, heartbeat
 from bot.runs import RunWorkspace, find_run_id, get_active_run_id, make_run_id, set_active_run_id
 from bot.signal import LeanSignal
+from bot.tape_verifier import verify_fills
 from bot.ws import LiveBookStreamer
 
 RUNS_DIR = Path("bot/paper_runs")
@@ -523,6 +524,30 @@ def trade_window(
     sync_thread = threading.Thread(target=_sync_loop, daemon=True, name="WSS-StateSync")
     sync_thread.start()
 
+    # --- Tape verification thread (#35) ---
+    # Every 5s, check unverified fills against accumulated trade prints.
+    def _tape_verify_loop():
+        while not stop_sync.is_set():
+            stop_sync.wait(5.0)
+            if stop_sync.is_set():
+                break
+            if not _tape_on or not fills:
+                continue
+            try:
+                changed = verify_fills(fills, _tape_dir, window_start_s=float(slot))
+                if changed > 0 and verbose:
+                    stats = {s: 0 for s in ("verified", "partial", "unverified", "pending")}
+                    for f in fills:
+                        s = (f.get("detail") or {}).get("tapeStatus", "pending")
+                        if s in stats:
+                            stats[s] += 1
+                    print(f"[{slug}] tape: {stats}", flush=True)
+            except Exception:
+                pass
+
+    verify_thread = threading.Thread(target=_tape_verify_loop, daemon=True, name="TapeVerifier")
+    verify_thread.start()
+
     def log(msg: str) -> None:
         if verbose:
             print(f"[{slug}] {msg}", flush=True)
@@ -708,6 +733,7 @@ def trade_window(
                     "pairCost": pair_cost,
                     "deficit": decision.share_deficit,
                     "strategy": strat_id,
+                    "tapeStatus": "pending" if _tape_on else None,
                 },
             })
 
@@ -726,7 +752,16 @@ def trade_window(
     finally:
         stop_sync.set()
         sync_thread.join(timeout=1.0)
+        verify_thread.join(timeout=2.0)
         streamer.stop()
+
+    # --- Final tape verification pass (definitive, all prints available) ---
+    if _tape_on and fills:
+        try:
+            verify_fills(fills, _tape_dir, window_start_s=float(slot), force=True)
+            log(f"tape final: {sum(1 for f in fills if (f.get('detail') or {}).get('tapeStatus') == 'verified')}/{len(fills)} verified")
+        except Exception:
+            pass
 
     # --- Close window: write run file, trigger async background settlement ---
     maker_count = sum(1 for f in fills if (f.get("detail") or {}).get("role") == "MAKER")
