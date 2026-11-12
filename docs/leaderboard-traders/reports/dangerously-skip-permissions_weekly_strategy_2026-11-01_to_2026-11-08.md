@@ -7,6 +7,8 @@
 **Script:** [`../scripts/analyze_weekly_strategy.py`](../scripts/analyze_weekly_strategy.py) - regenerates every table below
 **Raw computed output:** [`dangerously-skip-permissions_weekly_appendix.txt`](dangerously-skip-permissions_weekly_appendix.txt)
 
+> **Superseded in part** by the three-week analysis ([`dangerously-skip-permissions_strategy_2026-10-18_to_2026-11-08.md`](dangerously-skip-permissions_strategy_2026-10-18_to_2026-11-08.md), 486,244 rows). Two conclusions here did not survive the larger sample: net trading is **+27.9 bps (+$11,503)**, not the ~0 (+2 bps) reported below, and the residual directional book is **+26.5 bps (t = 1.43)**, not the −55 bps treated as a systematic leak. The mechanism, the 50% rebate formula, the timing fingerprint and the weekend-flow verdict all reproduced.
+
 > **Scope correction.** The prompt names `docs/dangerously-skip-permissions/scripts/...`; that path does not exist. The file above is the only full-week export in the repo, and the anchors reproduce against it, so this is the right file. The prompt's count of 1,927 markets is 1,926 here (one off; every other anchor matches to the cent).
 
 ---

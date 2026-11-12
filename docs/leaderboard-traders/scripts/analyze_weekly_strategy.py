@@ -10,13 +10,21 @@ Key recovered facts the script relies on:
 """
 
 import csv
+import os
+import sys
 
 import numpy as np
 import pandas as pd
 
 csv.field_size_limit(10**9)
 
-PATH = "docs/leaderboard-traders/scripts/full-week-trades_dangerously-skip-permissions_2026-11-01_to_2026-11-08.csv"
+DEFAULT_PATH = "docs/leaderboard-traders/scripts/full-week-trades_dangerously-skip-permissions_2026-11-01_to_2026-11-08.csv"
+# Any ledger can be analysed: pass a .csv argument or set TRADES_CSV.
+PATH = (
+    next((a for a in sys.argv[1:] if a.lower().endswith(".csv")), None)
+    or os.environ.get("TRADES_CSV")
+    or DEFAULT_PATH
+)
 FEE_RATE = 0.07
 
 
