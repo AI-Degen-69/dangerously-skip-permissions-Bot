@@ -203,7 +203,33 @@ export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsP
                 const orderType = isMaker ? 'MAKER' : isTaker ? 'TAKER' : role || 'TAKER'
 
                 const isSettled = trade.kind === 'settle'
-                const statusLabel = isSettled ? 'Settled' : 'Filled'
+                const tapeStatus = (detail?.tapeStatus as string | undefined) ?? undefined
+                const statusLabel = isSettled
+                  ? 'Settled'
+                  : tapeStatus === 'verified'
+                  ? 'Verified'
+                  : tapeStatus === 'partial'
+                  ? 'Partial'
+                  : tapeStatus === 'unverified'
+                  ? 'Unverified'
+                  : tapeStatus === 'unverified-taker'
+                  ? 'Taker'
+                  : tapeStatus === 'pending'
+                  ? 'Pending'
+                  : 'Filled'
+                const statusColor = isSettled
+                  ? 'bg-accent'
+                  : tapeStatus === 'verified'
+                  ? 'bg-success'
+                  : tapeStatus === 'partial'
+                  ? 'bg-warning'
+                  : tapeStatus === 'unverified'
+                  ? 'bg-danger'
+                  : tapeStatus === 'unverified-taker'
+                  ? 'bg-faint'
+                  : tapeStatus === 'pending'
+                  ? 'bg-warning'
+                  : 'bg-success'
 
                 return (
                   <tr key={`${trade.ts}-${index}`} className="transition-colors hover:bg-surface-2/60">
@@ -278,7 +304,7 @@ export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsP
                         <span
                           className={cx(
                             'size-1.5 rounded-full',
-                            isSettled ? 'bg-accent' : 'bg-success',
+                            statusColor,
                           )}
                         />
                         {statusLabel}

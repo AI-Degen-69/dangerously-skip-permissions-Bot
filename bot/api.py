@@ -315,6 +315,20 @@ def tape_status() -> dict:
                 stats = ws.tape_stats()
         except Exception:
             pass
+
+    # Aggregate verification stats from current window fills
+    verification: dict = {}
+    try:
+        from bot.tape_verifier import verification_summary
+        state_path = BOT_DIR / "state.json"
+        if state_path.exists():
+            st = json.loads(state_path.read_text())
+            fills = st.get("fills") or []
+            if fills:
+                verification = verification_summary(fills)
+    except Exception:
+        pass
+
     return {
         "enabled": enabled,
         "runId": run_id,
@@ -322,6 +336,7 @@ def tape_status() -> dict:
         "prints": stats.get("prints", 0),
         "books": stats.get("books", 0),
         "mb": stats.get("mb", 0.0),
+        "verification": verification,
     }
 
 
