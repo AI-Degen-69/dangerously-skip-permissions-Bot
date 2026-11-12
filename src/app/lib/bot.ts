@@ -286,10 +286,6 @@ export interface PerfWindow {
   downFills: number
   zeroPriceFills: number
   mShape: number[]
-  /** Taker fees already charged inside costUsd. */
-  feesUsd?: number
-  /** Taker fees on the maker fills, the pool a maker rebate is drawn from. */
-  makerFeeBaseUsd?: number
 }
 
 export interface PerfNote {
@@ -308,8 +304,6 @@ export interface BotPerf {
     costUsd: number
     payoutUsd: number
     netUsd: number
-    feesUsd?: number
-    makerFeeBaseUsd?: number
     roi: number
     profitable: number
     hitRate: number

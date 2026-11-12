@@ -831,8 +831,6 @@ def _minute_shape(fills: list[dict]) -> list[int]:
 
 def _window_row(r: dict) -> dict:
     """One settled/pending window flattened for the dashboard tables."""
-    from bot import constants as C
-
     fills = r.get("fills") or []
     cost = _num(r.get("cost_usd"))
     payout = _num(r.get("payout_usd"))
@@ -842,29 +840,6 @@ def _window_row(r: dict) -> dict:
     except (TypeError, ValueError):
         start_ms = 0
     sides = {f.get("outcome") for f in fills if f.get("outcome")}
-
-    # Fees are already charged inside cost_usd, so a rebate is only ever added on
-    # top. The taker side scales with the account tier and the maker side is a
-    # fixed share of the fees its fills were matched against, so both ship as raw
-    # bases and the dashboard applies whichever tier is selected.
-    maker_fee_base = 0.0
-    computed_taker = 0.0
-    for f in fills:
-        price = _num(f.get("price"))
-        shares = _num(f.get("shares"))
-        if price <= 0 or shares <= 0:
-            continue
-        detail = f.get("detail") or {}
-        role = str(detail.get("role") or "").upper()
-        fee = _num(detail.get("feeUsd"))
-        base = shares * C.TAKER_FEE_COEFF * price * (1 - price)
-        if role == "MAKER" or (not role and fee <= 0):
-            maker_fee_base += base
-        else:
-            computed_taker += fee if fee > 0 else base
-    recorded_fees = r.get("fees_usd")
-    taker_fees = _num(recorded_fees) if recorded_fees is not None else round(computed_taker, 4)
-
     return {
         "slug": r.get("event_slug"),
         "market": r.get("market"),
@@ -881,8 +856,6 @@ def _window_row(r: dict) -> dict:
         "downFills": sum(1 for f in fills if f.get("outcome") == "Down"),
         "zeroPriceFills": sum(1 for f in fills if _num(f.get("price")) <= 0),
         "mShape": _minute_shape(fills),
-        "feesUsd": round(taker_fees, 4),
-        "makerFeeBaseUsd": round(maker_fee_base, 4),
     }
 
 
@@ -1168,8 +1141,6 @@ def perf() -> dict:
             "bankrollUsd": bankroll,
             "settled": len(settled), "pending": len(pending), "fills": fills,
             "costUsd": cost, "payoutUsd": payout, "netUsd": net,
-            "feesUsd": round(sum(w["feesUsd"] for w in settled), 4),
-            "makerFeeBaseUsd": round(sum(w["makerFeeBaseUsd"] for w in settled), 4),
             "roi": round(net / cost, 4) if cost else 0.0,
             "profitable": profitable,
             "hitRate": round(profitable / len(settled), 4) if settled else 0.0,
