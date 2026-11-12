@@ -1,0 +1,659 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dangerously-skip-permissions — 3-week ledger analysis</title>
+<style>
+  :root{
+    --bg:#0a0c10; --panel:#11151b; --panel2:#161b23; --line:#232a35; --line2:#2f3846;
+    --ink:#e8ecf3; --muted:#8b95a6; --dim:#5f6979;
+    --pos:#3ecf8e; --neg:#ff6b6b; --amber:#f2b544; --blue:#6aa8ff; --violet:#a78bfa;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(900px 500px at 80% -10%,rgba(62,207,142,.07),transparent 60%),
+                     radial-gradient(700px 400px at 0% 5%,rgba(106,168,255,.06),transparent 55%);
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:0 28px}
+  header.top{border-bottom:1px solid var(--line);padding:44px 0 30px;margin-bottom:8px}
+  .eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .eyebrow b{color:var(--pos);font-weight:600}
+  h1{font-size:clamp(28px,3.6vw,44px);line-height:1.12;letter-spacing:-.025em;margin:16px 0 12px;font-weight:650}
+  h1 em{font-style:normal;color:var(--pos)}
+  .lede{color:var(--muted);font-size:17px;max-width:74ch;margin:0}
+  .lede b{color:var(--ink);font-weight:600}
+  .wallet{font-family:var(--mono);font-size:12px;color:var(--dim);margin-top:18px;word-break:break-all}
+  .wallet span{color:var(--muted)}
+
+  nav.toc{position:sticky;top:0;z-index:20;background:rgba(10,12,16,.88);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);margin-bottom:6px}
+  nav.toc .wrap{display:flex;gap:4px;overflow-x:auto;padding-top:10px;padding-bottom:10px;scrollbar-width:none}
+  nav.toc a{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);text-decoration:none;padding:6px 11px;border-radius:6px;white-space:nowrap;border:1px solid transparent}
+  nav.toc a:hover{color:var(--ink);background:var(--panel2);border-color:var(--line)}
+
+  section{padding:54px 0 10px;border-bottom:1px solid var(--line)}
+  section:last-child{border-bottom:0}
+  .sh{display:flex;align-items:baseline;gap:14px;margin-bottom:6px}
+  .sh .num{font-family:var(--mono);font-size:12px;color:var(--pos);letter-spacing:.1em}
+  h2{font-size:23px;letter-spacing:-.015em;margin:0;font-weight:620}
+  .sub{color:var(--muted);max-width:80ch;margin:0 0 26px;font-size:14.5px}
+
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin:26px 0 8px}
+  .kpi{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:12px;padding:18px 18px 16px;position:relative;overflow:hidden}
+  .kpi::before{content:"";position:absolute;inset:0 0 auto 0;height:2px;background:var(--line2)}
+  .kpi.pos::before{background:var(--pos)}.kpi.neg::before{background:var(--neg)}.kpi.amb::before{background:var(--amber)}.kpi.blu::before{background:var(--blue)}
+  .kpi .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--dir,var(--dim))}
+  .kpi.pos{--dir:var(--pos)}.kpi.neg{--dir:var(--neg)}.kpi.amb{--dir:var(--amber)}.kpi.blu{--dir:var(--blue)}
+  .kpi .v{font-family:var(--mono);font-size:27px;font-weight:600;letter-spacing:-.02em;margin:8px 0 3px;font-variant-numeric:tabular-nums}
+  .kpi .s{font-size:12.5px;color:var(--muted)}
+  .kpi .s b{color:var(--ink);font-weight:600}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 22px 14px;margin:22px 0}
+  .panel h3{font-size:15px;margin:0 0 4px;font-weight:620;letter-spacing:-.01em}
+  .panel .cap{color:var(--muted);font-size:13px;margin:0 0 16px}
+  .chart{width:100%;height:auto;display:block}
+  .grid{stroke:rgba(255,255,255,.055);stroke-width:1}
+  .zero{stroke:rgba(255,255,255,.22);stroke-width:1.2}
+  .ytick{fill:var(--dim);font-family:var(--mono);font-size:10.5px}
+  .xtick{fill:var(--dim);font-family:var(--mono);font-size:10px}
+  .ann{fill:var(--muted);font-family:var(--mono);font-size:11px}
+  .ann.pos{fill:var(--pos)}.ann.neg{fill:var(--neg)}.ann.amb{fill:var(--amber)}
+  .bar-lbl{fill:var(--ink);font-family:var(--mono);font-size:11px;font-weight:600}
+
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  thead th{
+    text-align:right;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--dim);font-weight:500;padding:0 10px 9px;border-bottom:1px solid var(--line2);white-space:nowrap
+  }
+  thead th:first-child{text-align:left}
+  tbody td{padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.045);text-align:right;font-variant-numeric:tabular-nums;font-family:var(--mono);font-size:12.8px;white-space:nowrap}
+  tbody td:first-child{text-align:left;font-family:var(--sans);font-size:13.3px;color:var(--ink);white-space:normal}
+  tbody tr:hover td{background:rgba(255,255,255,.022)}
+  td.p{color:var(--pos)}td.n{color:var(--neg)}td.m{color:var(--muted)}
+  .num-col{color:var(--muted)}
+
+  .chip{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;padding:2.5px 7px;border-radius:5px;border:1px solid;line-height:1.4;white-space:nowrap}
+  .chip.same{color:var(--pos);border-color:rgba(62,207,142,.35);background:rgba(62,207,142,.09)}
+  .chip.changed{color:var(--amber);border-color:rgba(242,181,68,.38);background:rgba(242,181,68,.1)}
+  .chip.note{color:var(--blue);border-color:rgba(106,168,255,.35);background:rgba(106,168,255,.09)}
+
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+  @media(max-width:820px){.cols{grid-template-columns:1fr}}
+  .note{border-left:2px solid var(--line2);padding:2px 0 2px 16px;color:var(--muted);font-size:13.5px;margin:18px 0}
+  .note b{color:var(--ink)}
+  .note.pos{border-color:var(--pos)}.note.amb{border-color:var(--amber)}.note.neg{border-color:var(--neg)}
+
+  ul.find{list-style:none;padding:0;margin:18px 0 6px}
+  ul.find li{position:relative;padding:12px 0 12px 30px;border-bottom:1px solid rgba(255,255,255,.045);font-size:14px;color:var(--muted)}
+  ul.find li:last-child{border-bottom:0}
+  ul.find li b{color:var(--ink);display:block;font-weight:620;margin-bottom:2px}
+  ul.find li::before{content:"";position:absolute;left:6px;top:20px;width:7px;height:7px;border-radius:2px;background:var(--line2)}
+  ul.find li.pos::before{background:var(--pos)}ul.find li.amb::before{background:var(--amber)}ul.find li.blu::before{background:var(--blue)}
+
+  footer{padding:40px 0 70px;color:var(--dim);font-size:12.5px}
+  footer code{font-family:var(--mono);font-size:11.5px;color:var(--muted);background:var(--panel2);padding:1px 5px;border-radius:4px}
+  .fine{list-style:none;padding:0;margin:12px 0 0}
+  .fine li{padding:4px 0}
+  .fine li::before{content:"— ";color:var(--dim)}
+  .srcrow{display:flex;gap:26px;flex-wrap:wrap;margin-top:22px;font-family:var(--mono);font-size:11px}
+  .srcrow div{color:var(--dim)}
+  .srcrow b{color:var(--muted);display:block;font-size:10px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:3px;font-weight:500}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="eyebrow"><span>Wallet forensics</span><span>·</span><b>three-week extension</b><span>·</span><span>2026-11-12</span></div>
+    <h1>Three weeks confirm the machine.<br>They <em>do not</em> confirm the edge.</h1>
+    <p class="lede">Extending the one-week sample to 21 days keeps every structural finding — the two-sided quoting, the locked spread capture, the ~T−10&nbsp;s cutoff, the daily 50% fee rebate — and overturns two economic conclusions. Over three weeks the wallet made <b>+$66,190</b>, but <b>81%</b> of it was rebate, and the trading gain it looked like we had found came almost entirely from a <b>single week</b>.</p>
+    <div class="wallet"><span>wallet</span> 0xc53375ff94e96100f2b30a4b5775db35218d69a9 &nbsp;·&nbsp; <span>range</span> 2026-10-18 21:35 → 2026-11-08 21:33 UTC &nbsp;·&nbsp; <span>rows</span> 486,244</div>
+  </div>
+</header>
+
+<nav class="toc">
+  <div class="wrap">
+    <a href="#verdict">Verdict</a>
+    <a href="#compare">vs one week</a>
+    <a href="#weekly">Week by week</a>
+    <a href="#curve">22-day curve</a>
+    <a href="#daily">Daily P&amp;L</a>
+    <a href="#anatomy">Where it comes from</a>
+    <a href="#pairs">Pair cost</a>
+    <a href="#rebate">The rebate formula</a>
+    <a href="#action">What it means</a>
+    <a href="#method">Method</a>
+  </div>
+</nav>
+
+<main>
+
+<!-- 01 -->
+<section id="verdict">
+  <div class="wrap">
+    <div class="sh"><span class="num">01</span><h2>The verdict on the new range</h2></div>
+    <p class="sub">The three-week window is 2.8× the rows of the original week. Every number below reconciles to the cent against the ledger, and the weekly sums close exactly to the three-week totals.</p>
+
+    <div class="kpis">
+      <div class="kpi pos"><div class="k">Net, 21 days</div><div class="v">+$66,190</div><div class="s">160 bps of $4.22M cash out</div></div>
+      <div class="kpi blu"><div class="k">Of which rebate</div><div class="v">81.5%</div><div class="s">$53,943 · 127.8 bps</div></div>
+      <div class="kpi amb"><div class="k">Net trading</div><div class="v">+$11,503</div><div class="s">27.9 bps — but see the weekly split</div></div>
+      <div class="kpi"><div class="k">Per market</div><div class="v">+$11.73</div><div class="s">$2.06 trading + $9.67 rebate</div></div>
+    </div>
+
+    <div class="panel">
+      <h3>Where the $66,190 actually comes from</h3>
+      <p class="cap">Locked spread capture is 89.4% of gross trading profit. Fees take back almost exactly what trading earns; the rebate returns half of them.</p>
+      <div id="wf"></div>
+    </div>
+
+    <ul class="find">
+      <li class="pos"><b>Trading is not flat, but it is not reliably profitable either.</b>Over 21 days net trading is +27.9 bps. Split by week it is −7.2, +99.6, +2.6 bps — the entire gain is one week. Report it as a range, not a rate.</li>
+      <li class="pos"><b>The 50% rebate rule is the only invariant.</b>Rebate paid on day <span style="font-family:var(--mono)">D</span> equals exactly half of day <span style="font-family:var(--mono)">D−1</span>'s taker fees — to the cent on 15 of 20 day-pairs, within 0.5% on the rest. It held every single day.</li>
+      <li class="amb"><b>The residual directional book is noise, not a leak.</b>The week showed −55 bps. Three weeks show +26.5 bps at t&nbsp;=&nbsp;1.43. There is nothing there to fix, in either direction.</li>
+      <li class="blu"><b>Variance is enormous relative to the trading edge.</b>Per-market net has σ = $111.77 against a mean of $2.06, and market-level drawdown reached −$5,865. The rebate is what makes the equity curve look calm.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- 02 -->
+<section id="compare">
+  <div class="wrap">
+    <div class="sh"><span class="num">02</span><h2>Did anything change versus one week?</h2></div>
+    <p class="sub">Same wallet, same strategy, 2.8× the data. Six measurements moved materially, nine reproduced, one stretched. The pattern is clean: <span style="color:var(--pos)">structure is stable</span>, <span style="color:var(--amber)">economics are noisy</span>.</p>
+
+    <table>
+      <thead>
+        <tr><th>Measurement</th><th>1 week · Nov 1–8</th><th>3 weeks · Oct 18–Nov 8</th><th style="text-align:center">Verdict</th></tr>
+      </thead>
+      <tbody id="cmp"></tbody>
+    </table>
+
+    <div class="note amb"><b>Read the changed rows as one story, not six.</b> Taker share rose, pair cost worsened and the residual flipped sign together — that is what happens when the sample stops being one ordinary week. The one-week file happened to land in a benign stretch for pair cost and an unkind one for direction.</div>
+  </div>
+</section>
+
+<!-- 03 -->
+<section id="weekly">
+  <div class="wrap">
+    <div class="sh"><span class="num">03</span><h2>Week by week — the finding that matters</h2></div>
+    <p class="sub">The three-week average hides a 107 bps swing. Rebates are flat across all three weeks; trading profit is not. Any decision that depends on trading being +28 bps is not supported by this data.</p>
+
+    <div class="panel">
+      <h3>Net trading vs rebate, bps of cash notional</h3>
+      <p class="cap">Bars are basis points on the week's own notional, so the nights and weekends inside each week are already averaged out.</p>
+      <div id="wk"></div>
+    </div>
+
+    <table style="margin-top:6px">
+      <thead><tr><th>Week</th><th>Markets</th><th>Notional</th><th>Gross</th><th>Fees</th><th>Net trading</th><th>Rebates</th><th>Total</th></tr></thead>
+      <tbody>
+        <tr><td>Oct 19–25</td><td class="m">1,912</td><td class="m">$1,498,546</td><td class="p">+$34,615</td><td class="n">−$35,691</td><td class="n">−$1,076</td><td class="p">+$19,690</td><td class="p">+$18,614</td></tr>
+        <tr><td>Oct 26–Nov 1</td><td class="m">1,744</td><td class="m">$1,301,811</td><td class="p">+$41,819</td><td class="n">−$28,846</td><td class="p">+$12,973</td><td class="p">+$17,412</td><td class="p">+$30,385</td></tr>
+        <tr><td>Nov 2–8</td><td class="m">1,886</td><td class="m">$1,400,924</td><td class="p">+$29,577</td><td class="n">−$29,206</td><td class="p">+$371</td><td class="p">+$16,840</td><td class="p">+$17,211</td></tr>
+        <tr style="border-top:1px solid var(--line2)"><td><b>Oct 18 (partial)</b></td><td class="m">29</td><td class="m">$20,159</td><td class="n">−$299</td><td class="n">−$465</td><td class="n">−$764</td><td class="m">$0</td><td class="n">−$764</td></tr>
+      </tbody>
+    </table>
+
+    <div class="note"><b>Consistency check.</b> Week 3 rebates land at $16,840 — the same figure the one-week report derived from an independent 7-day pull. The tiled pulls and the single pull agree, so the extension did not introduce a discontinuity.</div>
+  </div>
+</section>
+
+<!-- 04 -->
+<section id="curve">
+  <div class="wrap">
+    <div class="sh"><span class="num">04</span><h2>The 22-day equity curve</h2></div>
+    <p class="sub">The gap between the two lines is the rebate. It opens at the first settlement day and never closes — which is why the daily equity path looks smooth while the trading path is jagged.</p>
+
+    <div class="panel">
+      <h3>Cumulative P&amp;L, settled markets</h3>
+      <p class="cap">Green: total including rebates. Grey: before rebates. Shaded band: cumulative rebates received.</p>
+      <div id="cum"></div>
+    </div>
+
+    <div class="cols">
+      <div class="note pos"><b>+$53,942 in rebates over 21 days</b>, arriving in even daily increments of roughly $2,570 — because the rule is mechanical, not performance-linked.</div>
+      <div class="note neg"><b>Max drawdown of the daily equity curve: −$217.</b> The pre-rebate trading curve ran from −$764 at the start to a −$4,596 trough on Oct 23 — a −$3,832 drawdown that the rebate band absorbed entirely.</div>
+    </div>
+  </div>
+</section>
+
+<!-- 05 -->
+<section id="daily">
+  <div class="wrap">
+    <div class="sh"><span class="num">05</span><h2>Daily trading result, and the loss cap</h2></div>
+    <p class="sub">Two days closed negative after rebates (Oct 18 partial, Oct 19). Seven days lost more than $500 pre-rebate — the level the live bot halts at.</p>
+
+    <div class="panel">
+      <h3>Net trading P&amp;L per UTC day</h3>
+      <p class="cap">The dashed line marks the DSP-v2.5 <code style="font-family:var(--mono);color:var(--muted)">dailyLossCapUsd = 500</code>. Bars below it are days a na&iuml;ve cap would have stopped trading.</p>
+      <div id="daily-chart"></div>
+    </div>
+
+    <div class="note amb"><b>7 of 21 days breach a $500 cap</b> — Oct 18, 19, 21, 22, 23, Nov 4 and Nov 5, worst −$2,329 on Oct 22. Including rebates, the same days closed at −$764, −$217, +$1,875, +$352, +$2,549, +$1,874 and +$1,560. A cap that stops the bot on the fourth-worst-looking day of the month is destroying the rebate stream to avoid a drawdown that already reverses by settlement.</div>
+  </div>
+</section>
+
+<!-- 06 -->
+<section id="anatomy">
+  <div class="wrap">
+    <div class="sh"><span class="num">06</span><h2>Where the trading P&amp;L comes from</h2></div>
+    <p class="sub">Decomposed per market into the part that is arbitrage (locked spread on matched shares) and the part that is directional bet (residual imbalance).</p>
+
+    <div class="kpis">
+      <div class="kpi pos"><div class="k">Locked capture</div><div class="v">+$94,455</div><div class="s">89.4% of gross · $16.95/market</div></div>
+      <div class="kpi amb"><div class="k">Residual directional</div><div class="v">+$10,943</div><div class="s">+26.5 bps · t = 1.43 · noise</div></div>
+      <div class="kpi neg"><div class="k">Taker fees</div><div class="v">−$94,208</div><div class="s">228 bps · 89% of gross profit</div></div>
+      <div class="kpi"><div class="k">Markets with locked &gt; 0</div><div class="v">67.2%</div><div class="s">median residual 143 shares</div></div>
+    </div>
+
+    <div class="cols" style="margin-top:26px">
+      <div class="panel" style="margin:0">
+        <h3>The mechanism in one paragraph</h3>
+        <p class="cap" style="margin-bottom:0">It quotes both sides of a 5-minute BTC Up/Down slot from the first seconds after open, buys 15–30 shares at a time, and never sells. Because it holds both tokens of the same market to settlement, every matched pair it owns pays out exactly one dollar. If it bought the pair for less than $1, the difference is locked — no forecast involved. The price of that certainty is that it pays taker fees on 76% of its cash and has to carry whatever imbalance it accumulated.</p>
+        <table style="margin-top:16px">
+          <thead><tr><th>Fingerprint</th><th>Value</th></tr></thead>
+          <tbody>
+            <tr><td>Both sides traded</td><td class="m">5,557 / 5,589 · 99.4%</td></tr>
+            <tr><td>Median fills per market</td><td class="m">74</td></tr>
+            <tr><td>First fill after open</td><td class="m">6 s median</td></tr>
+            <tr><td>Second side after first</td><td class="m">6 s median</td></tr>
+            <tr><td>Last fill before close</td><td class="m">≈ T−10 s</td></tr>
+            <tr><td>Fills in final 15 s</td><td class="m">2.0%</td></tr>
+            <tr><td>Taker share of cash</td><td class="m">75.7%</td></tr>
+            <tr><td>Max ticket</td><td class="m">200 shares / $162</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="panel" style="margin:0">
+        <h3>Trading P&amp;L by final all-in pair cost</h3>
+        <p class="cap">Mean net per market in each bucket. The left half pays for the right half.</p>
+        <div id="pairs"></div>
+        <p class="cap" style="margin:10px 0 0">51.5% of markets finish under $1.00 all-in, median 0.998. Every market above 1.02 loses money on average, and half the book sits there.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 07 -->
+<section id="rebate">
+  <div class="wrap">
+    <div class="sh"><span class="num">07</span><h2>Within a tier, the rebate is an exact formula</h2></div>
+    <p class="sub">Twenty complete day-pairs, three weeks apart. This is the single number to watch if live results ever diverge from these reports.</p>
+
+    <div class="panel">
+      <h3>Deviation from 0.5000, in basis points of the ratio</h3>
+      <p class="cap">Every day sits within 25 bps of exactly one half — 8× inside the ±2 pp tolerance in the kill criteria.</p>
+      <div id="rb"></div>
+    </div>
+
+    <div class="cols">
+      <div>
+        <table>
+          <thead><tr><th>Day</th><th>Rebate</th><th>Prior fees</th><th>Ratio</th></tr></thead>
+          <tbody id="rbt"></tbody>
+        </table>
+      </div>
+      <div>
+        <ul class="find">
+          <li class="pos"><b>Total rebates $53,942.51</b>127.8 bps of cash notional — taker $48,081, maker $5,861.</li>
+          <li class="pos"><b>Covers 57.2% of fees paid</b>Not all of them: the residual 43% is the strategy's real cost of doing business.</li>
+          <li class="blu"><b>Marginal value of scale</b>≈ $12,778 of rebate per extra $1M of two-sided notional.</li>
+          <li class="amb"><b>The 0.1–0.25% outliers</b>Oct 26, Nov 2 and Nov 8 — fills landing either side of 00:00 UTC, not a change in terms.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 08 -->
+<section id="action">
+  <div class="wrap">
+    <div class="sh"><span class="num">08</span><h2>What this means for the live bot</h2></div>
+    <p class="sub">DSP-v2.5 is deliberately not a clone of this wallet, so only the items where three weeks of data change the argument appear here.</p>
+
+    <table>
+      <thead><tr><th>Setting</th><th>v2.5</th><th>Measured behaviour</th><th style="text-align:left">Reading</th></tr></thead>
+      <tbody>
+        <tr><td><code style="font-family:var(--mono);font-size:12px">dailyLossCapUsd</code></td><td class="m">$500</td><td class="m">7/21 days beyond it; worst −$2,329</td><td style="text-align:left"><span class="chip changed">too tight</span> defensible range $1,500–2,500</td></tr>
+        <tr><td>Rebate accounting</td><td class="n">absent</td><td class="m">+127.8 bps of notional</td><td style="text-align:left"><span class="chip changed">largest gap</span> paper P&amp;L understates by ~83%</td></tr>
+        <tr><td><code style="font-family:var(--mono);font-size:12px">maxFillPrice</code></td><td class="m">0.45</td><td class="m">edges positive 0.10–0.95; mean fill 0.476</td><td style="text-align:left"><span class="chip note">by design</span> forgoes the 0.45–0.80 core</td></tr>
+        <tr><td><code style="font-family:var(--mono);font-size:12px">maxShareLead</code></td><td class="m">46</td><td class="m">median residual 143 sh (21.6%), p90 53%</td><td style="text-align:left"><span class="chip note">by design</span> suppresses fills, buys no safety</td></tr>
+        <tr><td><code style="font-family:var(--mono);font-size:12px">stopBeforeCloseSec</code></td><td class="m">75</td><td class="m">last fill median T−91 s, cutoff T−10 s</td><td style="text-align:left"><span class="chip same">fine</span> slightly early</td></tr>
+        <tr><td><code style="font-family:var(--mono);font-size:12px">startAfterOpenSec</code></td><td class="m">4</td><td class="m">first fill median T+6 s</td><td style="text-align:left"><span class="chip same">matches</span></td></tr>
+      </tbody>
+    </table>
+
+    <div class="note pos"><b>Priority order.</b> Model the rebate first — until paper P&amp;L includes it, nothing else can be judged. Then widen the daily loss cap to the measured band. Treat the 0.45 price ceiling and the 46-share lead cap as explicit A/B deviations rather than fidelity parameters, because the wallet tolerates neither.</div>
+
+    <div class="note neg"><b>Kill criteria, corrected.</b> If the taker rebate goes from 50% to 0%, 21-day P&amp;L falls from +$66.2k to +$12.2k. But do not monitor the ratio itself: 0.5000 is the top rung of a volume ladder, not a fixed term. Watch <b>30-day weighted volume against the tier threshold</b> — a quiet month silently drops the rate to 44%, 32% or lower without any change in the strategy. The full ladder is worked out in the 16-week analysis.</div>
+  </div>
+</section>
+
+<!-- 09 -->
+<section id="method">
+  <div class="wrap">
+    <div class="sh"><span class="num">09</span><h2>Method and what this cannot answer</h2></div>
+    <p class="sub">The pull script accepts only 1- or 7-day windows, so the sample is three tiled 7-day pulls merged on identical rows.</p>
+    <div class="cols">
+      <div>
+        <ul class="find">
+          <li class="pos"><b>Integrity</b>486,244 rows after dropping 167 boundary duplicates; 475,807 trades, 10,395 redemptions, 42 daily rebate rows. Zero fills outside the market window.</li>
+          <li class="amb"><b>Coverage 92.4%</b>5,589 of ~6,047 slots. Gaps concentrate on Oct 30 (180 markets), Nov 1 (153) and Oct 21 (234).</li>
+          <li class="blu"><b>Anchored</b>The third pull reproduces the committed one-week file exactly — 174,019 rows, 72,744,461 bytes.</li>
+        </ul>
+      </div>
+      <div>
+        <ul class="find">
+          <li class="neg"><b>Invisible to this data</b>Unfilled quotes, queue position, intra-window mark-to-market, adverse selection beyond the next same-token fill, redemption gas.</li>
+          <li class="amb"><b>Inferred, not observed</b>Taker/maker labels come from the fee, not from exchange order data. The maker reward has no formula that fits; it is ~$1/market/day.</li>
+          <li class="blu"><b>Sample realism</b>21 days is one regime. It contains three weekends but only one of them is like the next.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="srcrow">
+      <div><b>Ledger</b>scratch/trades_2026-10-18_to_2026-11-08.csv</div>
+      <div><b>Computed</b>scratch/analysis_3week.txt · 610 lines</div>
+      <div><b>Report</b>docs/leaderboard-traders/reports/dangerously-skip-permissions_strategy_2026-10-18_to_2026-11-08.md</div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    Generated from the public ledger of <code>0xc53375ff94e96100f2b30a4b5775db35218d69a9</code>. All figures in USD, rebates credited on the day paid, settlements valued at $1 per winning share. Negative values are shown with a true minus sign.
+    <ul class="fine">
+      <li>Weekly totals sum exactly to the 21-day totals; day-pair rebate ratios are recomputed from the ledger, not copied from the analyzer.</li>
+      <li>The analyzer's own <code>turnover/day</code> line divides by 7 and is 3× too high for a 21-day file — the correct figure is $201,021/day and is not used in this page.</li>
+      <li>Charts are static SVG drawn from the ledger at build time; no external scripts, fonts or trackers.</li>
+    </ul>
+  </div>
+</footer>
+
+<script>
+const D = {
+  labels:["10-18","10-19","10-20","10-21","10-22","10-23","10-24","10-25","10-26","10-27","10-28","10-29","10-30","10-31","11-01","11-02","11-03","11-04","11-05","11-06","11-07","11-08"],
+  markets:[29,263,277,234,283,280,288,287,287,288,286,273,180,277,153,287,278,252,272,287,280,230],
+  net:[-764.21,-2138.83,2934.13,-1665.80,-2329.21,-632.21,1019.55,1736.55,4220.11,1712.42,1953.28,1895.61,2617.60,843.93,-270.28,638.42,2048.15,-1442.73,-1502.58,-287.24,901.51,15.26],
+  cumNet:[-764.21,-2903.04,31.09,-1634.71,-3963.92,-4596.13,-3576.58,-1840.03,2380.08,4092.50,6045.78,7941.39,10558.99,11402.92,11132.64,11771.06,13819.21,12376.48,10873.90,10586.66,11488.17,11503.43],
+  cumTot:[-764.21,-980.91,4912.30,6787.78,7139.35,9688.05,14131.87,17850.15,23925.33,28849.95,33619.32,38473.49,44331.95,47128.60,48235.18,49544.76,54786.44,56660.88,58220.86,61246.89,64641.21,65445.96],
+  weeks:[{w:"Oct 19–25",net:-7.2,reb:131.4},{w:"Oct 26–Nov 1",net:99.6,reb:133.8},{w:"Nov 2–8",net:2.6,reb:120.2}],
+  pairs:[{l:"< 0.90",n:461,v:64.65},{l:"0.90–0.95",n:700,v:45.21},{l:"0.95–0.98",n:914,v:25.79},{l:"0.98–1.00",n:786,v:2.41},{l:"1.00–1.02",n:822,v:-6.20},{l:"1.02–1.05",n:990,v:-31.28},{l:"1.05–1.10",n:677,v:-47.53},{l:"> 1.10",n:204,v:-36.64}],
+  rbDev:[0,0,0,0,0,0,9,0,0,0,1,0,1,22,0,0,0,0,0,25],
+  rbDays:["10-20","10-21","10-22","10-23","10-24","10-25","10-26","10-27","10-28","10-29","10-30","10-31","11-01","11-02","11-03","11-04","11-05","11-06","11-07","11-08"],
+  rbPay:[2715.79,3314.63,2457.55,2897.70,3186.54,1695.84,1580.11,2904.06,2540.16,2666.62,2939.70,1719.41,1100.15,556.32,2845.81,2918.65,2712.61,2894.90,2210.23,565.46],
+  rbFee:[5431.57,6629.26,4915.10,5795.40,6373.08,3391.67,3154.61,5808.12,5080.31,5333.25,5878.05,3438.82,2199.67,1107.73,5691.63,5837.31,5425.22,5789.81,4420.46,1125.34]
+};
+
+const C = {pos:"#3ecf8e",neg:"#ff6b6b",amber:"#f2b544",blue:"#6aa8ff",muted:"#8b95a6",dim:"#5f6979",line:"#232a35"};
+
+const MINUS = "\u2212";
+function money(v,dp=0){
+  const s = Math.abs(v).toLocaleString("en-US",{minimumFractionDigits:dp,maximumFractionDigits:dp});
+  return (v<0?MINUS+"$":"$")+s;
+}
+function moneyS(v,dp=0){ // signed, always shows +
+  const s = Math.abs(v).toLocaleString("en-US",{minimumFractionDigits:dp,maximumFractionDigits:dp});
+  return (v<0?MINUS+"$":"+$")+s;
+}
+function compact(v){
+  const a=Math.abs(v);
+  if(a>=1000) return (v<0?MINUS:"")+"$"+Math.round(a/1000)+"k";
+  return (v<0?MINUS:"")+"$"+Math.round(a);
+}
+function svg(w,h,inner,extra){
+  return '<svg viewBox="0 0 '+w+' '+h+'" class="chart" role="img" '+(extra||"")+'>'+inner+'</svg>';
+}
+
+/* ---------- 1. waterfall ---------- */
+(function(){
+  const steps=[
+    {l:"Locked\nspread",v:94455,t:"pos"},
+    {l:"Residual\ndirectional",v:10943,t:"pos"},
+    {l:"One-sided",v:313,t:"pos"},
+    {l:"Taker\nfees",v:-94208,t:"neg"},
+    {l:"Net\ntrading",t:"sub"},
+    {l:"Rebates",v:53943,t:"pos"},
+    {l:"Net\ntotal",t:"tot"}
+  ];
+  const W=1100,H=390,P={l:74,r:26,t:22,b:74};
+  const iw=W-P.l-P.r, ih=H-P.t-P.b;
+  const n=steps.length, slot=iw/n, bw=Math.min(96,slot*0.58);
+  let run=0, lo=-12000, hi=118000;
+  const Y=v=>P.t+(hi-v)/(hi-lo)*ih;
+  let g="";
+  // grid
+  for(let k=0;k<=5;k++){
+    const v=lo+(hi-lo)*k/5, y=Y(v);
+    g+='<line class="grid" x1="'+P.l+'" y1="'+y+'" x2="'+(P.l+iw)+'" y2="'+y+'"/>';
+    g+='<text class="ytick" x="'+(P.l-12)+'" y="'+(y+4)+'" text-anchor="end">'+compact(v)+'</text>';
+  }
+  g+='<line class="zero" x1="'+P.l+'" y1="'+Y(0)+'" x2="'+(P.l+iw)+'" y2="'+Y(0)+'"/>';
+  steps.forEach((s,i)=>{
+    const cx=P.l+slot*i+slot/2;
+    let top,bot,col,label;
+    if(s.t==="sub"||s.t==="tot"){
+      top=Y(Math.max(0,run)); bot=Y(Math.min(0,run));
+      col = s.t==="tot" ? C.pos : C.blue;
+      label = money(run);
+    }else{
+      const a=run, b=run+s.v; run=b;
+      top=Y(Math.max(a,b)); bot=Y(Math.min(a,b));
+      col = s.v>=0?C.pos:C.neg;
+      label = moneyS(s.v);
+    }
+    const h=Math.max(2,bot-top);
+    g+='<rect x="'+(cx-bw/2)+'" y="'+top+'" width="'+bw+'" height="'+h+'" rx="3" fill="'+col+'" opacity="'+(s.t?0.95:0.82)+'"><title>'+s.l.replace("\n"," ")+': '+label+'</title></rect>';
+    const ly = (s.t==="tot"||s.t==="sub") ? top-9 : (s.v<0 ? bot+15 : top-9);
+    g+='<text class="bar-lbl" x="'+cx+'" y="'+ly+'" text-anchor="middle" fill="'+col+'">'+label+'</text>';
+    const lines=s.l.split("\n");
+    lines.forEach((ln,k)=>{
+      g+='<text class="xtick" x="'+cx+'" y="'+(P.t+ih+26+k*13)+'" text-anchor="middle" style="font-size:11px;fill:'+(s.t?C.muted:C.dim)+'">'+ln+'</text>';
+    });
+  });
+  document.getElementById("wf").innerHTML=svg(W,H,g,'aria-label="Waterfall of trading PnL, fees and rebates"');
+})();
+
+/* ---------- 2. comparison table ---------- */
+(function(){
+  const rows=[
+    ["Net trading","+$269 · 2 bps","+$11,503 · 27.9 bps","changed"],
+    ["Residual directional","−$7,683 · −55 bps","+$10,943 · +26.5 bps","changed"],
+    ["Days negative incl. rebates","none","2 · Oct 18, Oct 19","changed"],
+    ["All-in pair cost, median","0.992","0.998","changed"],
+    ["Markets under $1.00 all-in","54.7%","51.5%","changed"],
+    ["Taker share of fills","55.0%","59.1%","changed"],
+    ["Rebate = 50% of prior-day fees","holds","holds, 20/20 days","same"],
+    ["Both sides traded","99.2%","99.4%","same"],
+    ["Median fills per market","75","74","same"],
+    ["First fill after open","6 s","6 s","same"],
+    ["Effective last-fill cutoff","≈ T−12 s","≈ T−10 s","same"],
+    ["Locked share of gross PnL","89%","89.4%","same"],
+    ["Market win rate","47.9%","49.1%","same"],
+    ["USD per market, mean","$737","$755","same"],
+    ["Max market-level drawdown","−$5,242","−$5,865","same"],
+    ["Gross edge","214 bps","256 bps","note"]
+  ];
+  const chip={same:"reproduced",changed:"moved",note:"stretched"};
+  document.getElementById("cmp").innerHTML = rows.map(r=>
+    '<tr><td>'+r[0]+'</td><td class="'+(r[1].indexOf("−")===0?"n":"m")+'">'+r[1]+'</td><td class="m">'+r[2]+
+    '</td><td style="text-align:center"><span class="chip '+r[3]+'">'+chip[r[3]]+'</span></td></tr>'
+  ).join("");
+})();
+
+/* ---------- 3. weekly grouped bars ---------- */
+(function(){
+  const W=1100,H=350,P={l:74,r:26,t:26,b:60};
+  const iw=W-P.l-P.r, ih=H-P.t-P.b;
+  const hi=180, lo=-30;
+  const Y=v=>P.t+(hi-v)/(hi-lo)*ih;
+  const n=D.weeks.length, slot=iw/n;
+  let g="";
+  for(let k=0;k<=6;k++){
+    const v=lo+(hi-lo)*k/6, y=Y(v);
+    g+='<line class="grid" x1="'+P.l+'" y1="'+y+'" x2="'+(P.l+iw)+'" y2="'+y+'"/>';
+    g+='<text class="ytick" x="'+(P.l-12)+'" y="'+(y+4)+'" text-anchor="end">'+v.toFixed(0)+'</text>';
+  }
+  g+='<line class="zero" x1="'+P.l+'" y1="'+Y(0)+'" x2="'+(P.l+iw)+'" y2="'+Y(0)+'"/>';
+  D.weeks.forEach((wk,i)=>{
+    const cx=P.l+slot*i+slot/2, bw=62, gap=14;
+    [{v:wk.reb,c:C.pos,l:"rebate"},{v:wk.net,c:(wk.net>=0?C.blue:C.neg),l:"trading"}].forEach((s,j)=>{
+      const x=cx-(bw+gap)/2+j*(bw+gap);
+      const top=Y(Math.max(0,s.v)), bot=Y(Math.min(0,s.v));
+      g+='<rect x="'+x+'" y="'+top+'" width="'+bw+'" height="'+Math.max(2,bot-top)+'" rx="3" fill="'+s.c+'" opacity="0.88"><title>'+wk.w+' '+s.l+': '+s.v+' bps</title></rect>';
+      const ly = s.v>=0 ? top-8 : bot+15;
+      g+='<text class="bar-lbl" x="'+(x+bw/2)+'" y="'+ly+'" text-anchor="middle" fill="'+s.c+'">'+(s.v>0?"+":"")+s.v.toFixed(1)+'</text>';
+    });
+    g+='<text class="xtick" x="'+cx+'" y="'+(P.t+ih+26)+'" text-anchor="middle" style="font-size:11.5px;fill:'+C.muted+'">'+wk.w+'</text>';
+  });
+  // legend
+  const lx=P.l+iw-250, ly=P.t-6;
+  g+='<rect x="'+lx+'" y="'+ly+'" width="10" height="10" rx="2" fill="'+C.pos+'"/><text class="ann" x="'+(lx+16)+'" y="'+(ly+9)+'">rebate bps</text>';
+  g+='<rect x="'+(lx+108)+'" y="'+ly+'" width="10" height="10" rx="2" fill="'+C.blue+'"/><text class="ann" x="'+(lx+124)+'" y="'+(ly+9)+'">net trading bps</text>';
+  document.getElementById("wk").innerHTML=svg(W,H,g,'aria-label="Weekly net trading versus rebate basis points"');
+})();
+
+/* ---------- 4. cumulative lines ---------- */
+(function(){
+  const W=1100,H=410,P={l:78,r:150,t:30,b:46};
+  const iw=W-P.l-P.r, ih=H-P.t-P.b;
+  const all=D.cumNet.concat(D.cumTot);
+  const lo=Math.min.apply(null,all)-6000, hi=Math.max.apply(null,all)+6000;
+  const X=i=>P.l+i*(iw/(D.labels.length-1));
+  const Y=v=>P.t+(hi-v)/(hi-lo)*ih;
+  let g="";
+  for(let k=0;k<=6;k++){
+    const v=lo+(hi-lo)*k/6, y=Y(v);
+    g+='<line class="grid" x1="'+P.l+'" y1="'+y+'" x2="'+(P.l+iw)+'" y2="'+y+'"/>';
+    g+='<text class="ytick" x="'+(P.l-12)+'" y="'+(y+4)+'" text-anchor="end">'+compact(v)+'</text>';
+  }
+  g+='<line class="zero" x1="'+P.l+'" y1="'+Y(0)+'" x2="'+(P.l+iw)+'" y2="'+Y(0)+'"/>';
+  // band
+  let band="M"+X(0)+","+Y(D.cumNet[0]);
+  for(let i=1;i<D.cumNet.length;i++) band+="L"+X(i)+","+Y(D.cumNet[i]);
+  for(let i=D.cumTot.length-1;i>=0;i--) band+="L"+X(i)+","+Y(D.cumTot[i]);
+  band+="Z";
+  g+='<path d="'+band+'" fill="'+C.pos+'" opacity="0.10"/>';
+  const line=(arr,col,w,op)=>{
+    let d="M"+X(0)+","+Y(arr[0]);
+    for(let i=1;i<arr.length;i++) d+="L"+X(i)+","+Y(arr[i]);
+    return '<path d="'+d+'" fill="none" stroke="'+col+'" stroke-width="'+w+'" stroke-linejoin="round" opacity="'+op+'"/>';
+  };
+  g+=line(D.cumTot,C.pos,2.4,1);
+  g+=line(D.cumNet,"#9aa5b8",1.8,.85);
+  // dots on total
+  D.cumTot.forEach((v,i)=>{ g+='<circle cx="'+X(i)+'" cy="'+Y(v)+'" r="2.6" fill="'+C.pos+'"/>'; });
+  // x labels
+  D.labels.forEach((l,i)=>{ if(i%3===0||i===D.labels.length-1) g+='<text class="xtick" x="'+X(i)+'" y="'+(P.t+ih+24)+'" text-anchor="middle">'+l+'</text>'; });
+  // end annotations
+  const ex=P.l+iw+12;
+  const ty=Y(D.cumTot[D.cumTot.length-1]), ny=Y(D.cumNet[D.cumNet.length-1]);
+  g+='<text class="ann pos" x="'+ex+'" y="'+(ty+4)+'" style="font-size:12px;font-weight:600">'+money(D.cumTot[D.cumTot.length-1])+'</text>';
+  g+='<text class="ann" x="'+ex+'" y="'+(ty+20)+'" style="font-size:10.5px">total incl. rebate</text>';
+  g+='<text class="ann" x="'+ex+'" y="'+(ny+4)+'" style="font-size:12px;font-weight:600;fill:#9aa5b8">'+money(D.cumNet[D.cumNet.length-1])+'</text>';
+  g+='<text class="ann" x="'+ex+'" y="'+(ny+20)+'" style="font-size:10.5px">trading only</text>';
+  // band label
+  g+='<text class="ann" x="'+(P.l+iw*0.55)+'" y="'+(Y(26000))+'" style="font-size:11.5px;fill:'+C.pos+'" opacity=".8">cumulative rebates +$53,943</text>';
+  document.getElementById("cum").innerHTML=svg(W,H,g,'aria-label="Cumulative equity with and without rebates"');
+})();
+
+/* ---------- 5. daily bars ---------- */
+(function(){
+  const W=1100,H=340,P={l:78,r:26,t:26,b:62};
+  const iw=W-P.l-P.r, ih=H-P.t-P.b;
+  const hi=4800, lo=-2800;
+  const Y=v=>P.t+(hi-v)/(hi-lo)*ih;
+  const n=D.net.length, slot=iw/n, bw=slot*0.56;
+  let g="";
+  for(let k=0;k<=6;k++){
+    const v=lo+(hi-lo)*k/6, y=Y(v);
+    g+='<line class="grid" x1="'+P.l+'" y1="'+y+'" x2="'+(P.l+iw)+'" y2="'+y+'"/>';
+    g+='<text class="ytick" x="'+(P.l-12)+'" y="'+(y+4)+'" text-anchor="end">'+compact(v)+'</text>';
+  }
+  g+='<line class="zero" x1="'+P.l+'" y1="'+Y(0)+'" x2="'+(P.l+iw)+'" y2="'+Y(0)+'"/>';
+  D.net.forEach((v,i)=>{
+    const x=P.l+slot*i+(slot-bw)/2;
+    const top=Y(Math.max(0,v)), bot=Y(Math.min(0,v));
+    const col=v>=0?C.pos:C.neg;
+    g+='<rect x="'+x+'" y="'+top+'" width="'+bw+'" height="'+Math.max(2,bot-top)+'" rx="2" fill="'+col+'" opacity="0.85"><title>'+D.labels[i]+': '+moneyS(v)+' ('+D.markets[i]+' markets)</title></rect>';
+    if(i%2===0) g+='<text class="xtick" x="'+(x+bw/2)+'" y="'+(P.t+ih+20)+'" text-anchor="middle">'+D.labels[i]+'</text>';
+  });
+  // cap line
+  const cy=Y(-500);
+  g+='<line x1="'+P.l+'" y1="'+cy+'" x2="'+(P.l+iw)+'" y2="'+cy+'" stroke="'+C.amber+'" stroke-width="1.3" stroke-dasharray="6 5" opacity=".9"/>';
+  g+='<text class="ann amb" x="'+(P.l+6)+'" y="'+(cy-7)+'" style="font-size:10.5px">v2.5 daily cap −$500 · 7 days below</text>';
+  document.getElementById("daily-chart").innerHTML=svg(W,H,g,'aria-label="Daily net trading profit and loss"');
+})();
+
+/* ---------- 6. pair cost diverging bars ---------- */
+(function(){
+  const W=540,H=330,P={l:56,r:14,t:22,b:66};
+  const iw=W-P.l-P.r, ih=H-P.t-P.b;
+  const hi=72, lo=-56;
+  const Y=v=>P.t+(hi-v)/(hi-lo)*ih;
+  const n=D.pairs.length, slot=iw/n, bw=slot*0.62;
+  let g="";
+  for(let k=0;k<=5;k++){
+    const v=lo+(hi-lo)*k/5, y=Y(v);
+    g+='<line class="grid" x1="'+P.l+'" y1="'+y+'" x2="'+(P.l+iw)+'" y2="'+y+'"/>';
+    g+='<text class="ytick" x="'+(P.l-8)+'" y="'+(y+4)+'" text-anchor="end" style="font-size:9.5px">'+(v>0?"+":"")+v.toFixed(0)+'</text>';
+  }
+  g+='<line class="zero" x1="'+P.l+'" y1="'+Y(0)+'" x2="'+(P.l+iw)+'" y2="'+Y(0)+'"/>';
+  D.pairs.forEach((p,i)=>{
+    const x=P.l+slot*i+(slot-bw)/2;
+    const top=Y(Math.max(0,p.v)), bot=Y(Math.min(0,p.v));
+    const col=p.v>=0?C.pos:C.neg;
+    g+='<rect x="'+x+'" y="'+top+'" width="'+bw+'" height="'+Math.max(2,bot-top)+'" rx="2" fill="'+col+'" opacity="0.85"><title>'+p.l+': '+p.n+' markets, mean '+moneyS(p.v,2)+'</title></rect>';
+    g+='<text class="xtick" x="'+(x+bw/2)+'" y="'+(P.t+ih+18)+'" text-anchor="middle" style="font-size:9px;fill:'+(p.v>=0?C.muted:C.dim)+'">'+p.l.replace(/ /g,"\u00a0")+'</text>';
+    g+='<text class="xtick" x="'+(x+bw/2)+'" y="'+(P.t+ih+40)+'" text-anchor="middle" style="font-size:8.5px;fill:'+C.dim+'">'+p.n+'</text>';
+  });
+  g+='<text class="ann" x="'+(P.l+iw)+'" y="'+(P.t-6)+'" text-anchor="end" style="font-size:9.5px">mean net / market</text>';
+  g+='<text class="ann" x="'+(P.l+iw)+'" y="'+(H-6)+'" text-anchor="end" style="font-size:9px;fill:'+C.dim+'">markets in bucket</text>';
+  document.getElementById("pairs").innerHTML=svg(W,H,g,'aria-label="Mean net profit by final pair cost bucket"');
+})();
+
+/* ---------- 7. rebate ratio deviations ---------- */
+(function(){
+  const W=1100,H=190,P={l:78,r:26,t:30,b:46};
+  const iw=W-P.l-P.r, ih=H-P.t-P.b;
+  const hi=40, lo=0;
+  const Y=v=>P.t+(hi-v)/(hi-lo)*ih;
+  const n=D.rbDev.length, slot=iw/n, bw=slot*0.5;
+  let g="";
+  for(let k=0;k<=4;k++){
+    const v=lo+(hi-lo)*k/4, y=Y(v);
+    g+='<line class="grid" x1="'+P.l+'" y1="'+y+'" x2="'+(P.l+iw)+'" y2="'+y+'"/>';
+    g+='<text class="ytick" x="'+(P.l-12)+'" y="'+(y+4)+'" text-anchor="end">'+v.toFixed(0)+'</text>';
+  }
+  D.rbDev.forEach((v,i)=>{
+    const x=P.l+slot*i+(slot-bw)/2;
+    const top=Y(v), bot=Y(0);
+    const col = v===0?C.pos : (v<=2?C.pos:C.amber);
+    g+='<rect x="'+x+'" y="'+top+'" width="'+bw+'" height="'+Math.max(1.5,bot-top)+'" rx="1.5" fill="'+col+'" opacity="'+(v===0?0.35:0.95)+'"><title>'+D.rbDays[i]+': ratio '+(0.5+v/10000).toFixed(4)+'</title></rect>';
+    if(i%3===0) g+='<text class="xtick" x="'+(x+bw/2)+'" y="'+(P.t+ih+18)+'" text-anchor="middle" style="font-size:9.5px">'+D.rbDays[i]+'</text>';
+  });
+  g+='<line class="zero" x1="'+P.l+'" y1="'+Y(0)+'" x2="'+(P.l+iw)+'" y2="'+Y(0)+'"/>';
+  g+='<text class="ann" x="'+(P.l+iw)+'" y="'+(P.t-8)+'" text-anchor="end" style="font-size:9.5px">bps from 0.5000</text>';
+  document.getElementById("rb").innerHTML=svg(W,H,g,'aria-label="Rebate ratio deviation per day"');
+})();
+
+/* ---------- 7b. rebate table ---------- */
+(function(){
+  const rows=D.rbDays.map((d,i)=>{
+    const ratio=D.rbPay[i]/D.rbFee[i];
+    const exact = Math.abs(ratio-0.5)<0.00005;
+    const cls = exact?"p":"m";
+    return '<tr><td>'+d+'</td><td class="p">'+moneyS(D.rbPay[i],2).replace("+","")+'</td><td class="m">'+money(D.rbFee[i],2)+'</td><td class="'+cls+'">'+ratio.toFixed(4)+'</td></tr>';
+  }).join("");
+  document.getElementById("rbt").innerHTML=rows;
+})();
+</script>
+</body>
+</html>

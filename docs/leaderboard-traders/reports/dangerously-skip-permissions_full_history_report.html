@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dangerously-skip-permissions — 16-week ledger analysis</title>
+<style>
+  :root{
+    --bg:#08090c; --panel:#101319; --panel2:#151922; --line:#212733; --line2:#2d3542;
+    --ink:#e9edf4; --muted:#8b95a6; --dim:#5c6675;
+    --pos:#40d18f; --neg:#ff6b6b; --amber:#f3b544; --blue:#6aa8ff; --violet:#a78bfa;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.62;
+    -webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(1000px 600px at 78% -12%,rgba(64,209,143,.08),transparent 60%),
+                     radial-gradient(800px 500px at -5% 3%,rgba(106,168,255,.06),transparent 55%);}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 28px}
+  header.top{border-bottom:1px solid var(--line);padding:46px 0 32px}
+  .eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .eyebrow b{color:var(--pos);font-weight:600}
+  h1{font-size:clamp(30px,4vw,48px);line-height:1.08;letter-spacing:-.028em;margin:18px 0 14px;font-weight:660}
+  h1 em{font-style:normal;color:var(--pos)}
+  .lede{color:var(--muted);font-size:17.5px;max-width:76ch;margin:0}
+  .lede b{color:var(--ink);font-weight:600}
+  .wallet{font-family:var(--mono);font-size:12px;color:var(--dim);margin-top:20px;word-break:break-all}
+  .wallet span{color:var(--muted)}
+  nav.toc{position:sticky;top:0;z-index:20;background:rgba(8,9,12,.9);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+  nav.toc .wrap{display:flex;gap:4px;overflow-x:auto;padding:10px 28px;scrollbar-width:none}
+  nav.toc a{font-family:var(--mono);font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--dim);text-decoration:none;padding:6px 11px;border-radius:6px;white-space:nowrap;border:1px solid transparent}
+  nav.toc a:hover{color:var(--ink);background:var(--panel2);border-color:var(--line)}
+  section{padding:56px 0 12px;border-bottom:1px solid var(--line)}
+  section:last-of-type{border-bottom:0}
+  .sh{display:flex;align-items:baseline;gap:14px;margin-bottom:6px}
+  .sh .num{font-family:var(--mono);font-size:12px;color:var(--pos);letter-spacing:.1em}
+  h2{font-size:24px;letter-spacing:-.017em;margin:0;font-weight:630}
+  .sub{color:var(--muted);max-width:82ch;margin:0 0 26px;font-size:14.5px}
+  .sub b{color:var(--ink)}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(205px,1fr));gap:14px;margin:26px 0 10px}
+  .kpi{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:12px;padding:18px;position:relative;overflow:hidden}
+  .kpi::before{content:"";position:absolute;inset:0 0 auto 0;height:2px;background:var(--line2)}
+  .kpi.pos{--dir:var(--pos)}.kpi.neg{--dir:var(--neg)}.kpi.amb{--dir:var(--amber)}.kpi.blu{--dir:var(--blue)}
+  .kpi.pos::before{background:var(--pos)}.kpi.neg::before{background:var(--neg)}.kpi.amb::before{background:var(--amber)}.kpi.blu::before{background:var(--blue)}
+  .kpi .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--dir,var(--dim))}
+  .kpi .v{font-family:var(--mono);font-size:27px;font-weight:600;letter-spacing:-.02em;margin:8px 0 3px;font-variant-numeric:tabular-nums}
+  .kpi .s{font-size:12.5px;color:var(--muted)}
+  .kpi .s b{color:var(--ink);font-weight:600}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 22px 14px;margin:22px 0}
+  .panel h3{font-size:15px;margin:0 0 4px;font-weight:620}
+  .panel .cap{color:var(--muted);font-size:13px;margin:0 0 16px}
+  .chart{width:100%;height:auto;display:block;overflow:visible}
+  .grid{stroke:rgba(255,255,255,.055);stroke-width:1}
+  .zero{stroke:rgba(255,255,255,.20);stroke-width:1.2}
+  .ytick{fill:var(--dim);font-family:var(--mono);font-size:10.5px}
+  .xtick{fill:var(--dim);font-family:var(--mono);font-size:10px}
+  .ann{fill:var(--muted);font-family:var(--mono);font-size:11px}
+  .ann.pos{fill:var(--pos)}.ann.neg{fill:var(--neg)}.ann.amb{fill:var(--amber)}.ann.blu{fill:var(--blue)}
+  .bar-lbl{fill:var(--ink);font-family:var(--mono);font-size:11px;font-weight:600}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  thead th{text-align:right;font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);font-weight:500;padding:0 9px 9px;border-bottom:1px solid var(--line2);white-space:nowrap}
+  thead th:first-child{text-align:left}
+  tbody td{padding:8px 9px;border-bottom:1px solid rgba(255,255,255,.045);text-align:right;font-variant-numeric:tabular-nums;font-family:var(--mono);font-size:12.6px;white-space:nowrap}
+  tbody td:first-child{text-align:left;font-family:var(--sans);font-size:13.2px;color:var(--ink)}
+  tbody tr:hover td{background:rgba(255,255,255,.022)}
+  td.p{color:var(--pos)}td.n{color:var(--neg)}td.m{color:var(--muted)}
+  .chip{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.07em;text-transform:uppercase;padding:2.5px 7px;border-radius:5px;border:1px solid;line-height:1.4;white-space:nowrap}
+  .chip.same{color:var(--pos);border-color:rgba(64,209,143,.35);background:rgba(64,209,143,.09)}
+  .chip.changed{color:var(--amber);border-color:rgba(243,181,68,.38);background:rgba(243,181,68,.1)}
+  .chip.note{color:var(--blue);border-color:rgba(106,168,255,.35);background:rgba(106,168,255,.09)}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+  @media(max-width:860px){.cols{grid-template-columns:1fr}}
+  .note{border-left:2px solid var(--line2);padding:2px 0 2px 16px;color:var(--muted);font-size:13.5px;margin:18px 0}
+  .note b{color:var(--ink)}
+  .note.pos{border-color:var(--pos)}.note.amb{border-color:var(--amber)}.note.neg{border-color:var(--neg)}.note.blu{border-color:var(--blue)}
+  ul.find{list-style:none;padding:0;margin:18px 0 6px}
+  ul.find li{position:relative;padding:12px 0 12px 30px;border-bottom:1px solid rgba(255,255,255,.045);font-size:14px;color:var(--muted)}
+  ul.find li:last-child{border-bottom:0}
+  ul.find li b{color:var(--ink);display:block;font-weight:620;margin-bottom:2px}
+  ul.find li::before{content:"";position:absolute;left:6px;top:20px;width:7px;height:7px;border-radius:2px;background:var(--line2)}
+  ul.find li.pos::before{background:var(--pos)}ul.find li.amb::before{background:var(--amber)}ul.find li.blu::before{background:var(--blue)}ul.find li.neg::before{background:var(--neg)}
+  .scroll{overflow-x:auto}
+  footer{padding:40px 0 72px;color:var(--dim);font-size:12.5px}
+  footer code{font-family:var(--mono);font-size:11.5px;color:var(--muted);background:var(--panel2);padding:1px 5px;border-radius:4px}
+  .fine{list-style:none;padding:0;margin:12px 0 0}
+  .fine li{padding:4px 0}
+  .fine li::before{content:"— ";color:var(--dim)}
+  .srcrow{display:flex;gap:26px;flex-wrap:wrap;margin-top:22px;font-family:var(--mono);font-size:11px}
+  .srcrow div{color:var(--dim)}
+  .srcrow b{color:var(--muted);display:block;font-size:10px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:3px;font-weight:500}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="eyebrow"><span>Wallet forensics</span><span>·</span><b>full history</b><span>·</span><span>114 days</span><span>·</span><span>2026-11-12</span></div>
+    <h1>The edge is real.<br>It also has a <em>size limit</em>.</h1>
+    <p class="lede">The wallet's entire history — 16 weeks, 1,191,338 rows, 31,506 markets. Over the whole sample the trading edge is <b>+87.7 bps and statistically unambiguous</b> (t&nbsp;=&nbsp;7.97). It is also <b>not a constant</b>: it falls almost linearly with the dollars the wallet puts into each market, from <b>+812 bps</b> at $114/market to <b>&minus;2 bps</b> at $743. That curve, not the average, is the finding.</p>
+    <div class="wallet"><span>wallet</span> 0xc53375ff94e96100f2b30a4b5775db35218d69a9 &nbsp;·&nbsp; <span>range</span> 2026-07-17 14:16 → 2026-11-08 21:33 UTC &nbsp;·&nbsp; <span>17 weekly pulls</span></div>
+  </div>
+</header>
+
+<nav class="toc">
+  <div class="wrap">
+    <a href="#verdict">Verdict</a>
+    <a href="#capacity">The capacity curve</a>
+    <a href="#months">Month by month</a>
+    <a href="#tier">Rebate tier</a>
+    <a href="#enough">How much is enough</a>
+    <a href="#equity">Equity curve</a>
+    <a href="#weeks">Week table</a>
+    <a href="#action">For the bot</a>
+    <a href="#method">Method</a>
+  </div>
+</nav>
+
+<main>
+
+<section id="verdict">
+  <div class="wrap">
+    <div class="sh"><span class="num">01</span><h2>The verdict on the full history</h2></div>
+    <p class="sub">This is every trade the wallet has ever made. The first fill is 2026-07-17; nothing exists before that. All figures are ledger cash flows, settled at $1 per winning share.</p>
+
+    <div class="kpis">
+      <div class="kpi pos"><div class="k">Net P&amp;L, 114 days</div><div class="v">+$291,797</div><div class="s">on $13.64M of cash out</div></div>
+      <div class="kpi blu"><div class="k">Trading edge</div><div class="v">+87.7 bps</div><div class="s">t = 7.97 · 95% CI [+66, +109]</div></div>
+      <div class="kpi amb"><div class="k">Locked share</div><div class="v">63.2%</div><div class="s">of gross — not the 89% a 3-week read suggested</div></div>
+      <div class="kpi amb"><div class="k">Rebate</div><div class="v">+123 bps</div><div class="s">at the 50% tier — the wallet climbed four tiers to get there</div></div>
+    </div>
+
+    <ul class="find">
+      <li class="pos"><b>Profitable and significant.</b>Trading net of fees earned $161,292 (+87.7 bps); rebates added $168,080. A weekly-block bootstrap puts the edge at [+47, +140] bps with P(edge&nbsp;&le;&nbsp;0) below 0.001.</li>
+      <li class="amb"><b>The rebate is a tier, not a constant.</b>Polymarket pays a share of taker fees that depends on 30-day weighted volume, from 3% to 50%. This wallet climbed four rungs during the sample, which is why rebates rose while trading fell — see §04.</li>
+      <li class="amb"><b>But the parameter moves.</b>Net trading bps fell from +457 in July to +0.7 in the first eight days of November, a trend of <b>&minus;33 bps per week</b> (t&nbsp;=&nbsp;&minus;6.2). A pooled average over that period describes no period in it.</li>
+      <li class="blu"><b>Size explains most of it.</b>Weekly edge regressed on dollars deployed per market gives <b>edge = 464 &minus; 0.620 &times; ($/market)</b>, t&nbsp;=&nbsp;&minus;4.21, R&sup2;&nbsp;=&nbsp;0.54. The wallet went from $114 to $784 per market and got proportionally less per dollar.</li>
+      <li class="neg"><b>The two candidate causes are indistinguishable here.</b>Size grew monotonically with time, so "the wallet became too big for the available liquidity" and "the market got more efficient" fit the identical regression. Distinguishing them needs another operator of a different size in the same window.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="capacity">
+  <div class="wrap">
+    <div class="sh"><span class="num">02</span><h2>The capacity curve</h2></div>
+    <p class="sub">Each point is one ISO week: how much the wallet deployed per 5-minute market against the net trading edge it earned that week. Bars are 95% intervals from the week's own residuals.</p>
+
+    <div class="panel">
+      <h3>Edge as a function of size</h3>
+      <p class="cap">Fit is OLS across the 17 weekly observations, weighted equally. The shaded zone left of the data is where the bot actually operates.</p>
+      <div id="cap-chart"></div>
+    </div>
+
+    <div class="cols">
+      <div class="note pos"><b>The interpretation that matters.</b>An edge that halves when you double your clip is not a signal problem, it is a liquidity problem. The wallet compensated for shrinking bps by growing notional 6&times;, which is exactly the wrong move: total dollar profit per market stayed flat while the risk per dollar rose.</div>
+      <div class="note amb"><b>Why the fit is trustworthy but the extrapolation is not.</b>R&sup2; = 0.54 with t = &minus;4.21 on 17 points is a solid relationship. But every observation sits between $114 and $784 per market, so the line's value at the bot's $30–50 is an extrapolation, not a measurement. It says "the small-size regime was the good one", not "you will earn 440 bps".</div>
+    </div>
+  </div>
+</section>
+
+<section id="months">
+  <div class="wrap">
+    <div class="sh"><span class="num">03</span><h2>Month by month</h2></div>
+    <p class="sub">The same story in calendar form. Trading collapses by a factor of 600, while the rebate <b>rises</b> — because the rebate is a refund of fees, and fees rose as the wallet took more liquidity.</p>
+
+    <div class="panel">
+      <h3>Net trading vs rebate, bps of notional</h3>
+      <p class="cap">Bars are rates on each month's own notional, so growth in size is already divided out.</p>
+      <div id="month-chart"></div>
+    </div>
+
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Month</th><th>Days</th><th>Markets</th><th>$/market</th><th>Fills/mkt</th><th>Taker</th><th>Gross</th><th>Net trading</th><th>Rebate</th><th>Total</th><th>Locked</th><th>Residual/mkt</th></tr></thead>
+        <tbody id="month-table"></tbody>
+      </table>
+    </div>
+
+    <div class="note"><b>The residual is not noise after all.</b>Across the full history the directional component is <b>+$4.39 per market (t = 9.1)</b>, where the three-week sample showed it as a drag. It also swings violently by month — +$0.25 in July, +$9.68 in October, &minus;$4.28 in November — so it is a real effect with unstable sign, not a stable earner. Treat it as variance with a positive drift.</div>
+  </div>
+</section>
+
+<section id="tier">
+  <div class="wrap">
+    <div class="sh"><span class="num">04</span><h2>The rebate is a tier, not a constant</h2></div>
+    <p class="sub">Polymarket's Taker Rebate Program is a ladder priced on <b>30-day weighted volume</b>, not a fixed refund. The wallet climbed four rungs inside this sample — and that climb, not any improvement in trading, is why the rebate rose while net trading fell.</p>
+
+    <div class="panel">
+      <h3>Rebate rate against trailing volume</h3>
+      <p class="cap">Green: the effective rate on each day (taker rebate &divide; prior day's fees). Blue: trailing 30-day notional, the quantity that sets the tier. Dashed lines are the published tier levels.</p>
+      <div id="rate-chart"></div>
+    </div>
+
+    <div class="cols">
+      <div>
+        <table>
+          <thead><tr><th>Tier</th><th>30-day wV</th><th>Rebate</th><th>Observed here</th></tr></thead>
+          <tbody>
+            <tr><td>Bronze</td><td class="m">$2,000</td><td class="m">3%</td><td class="m">&mdash;</td></tr>
+            <tr><td>Silver</td><td class="m">$20,000</td><td class="m">8%</td><td class="p">0.083 &middot; Jul 22&ndash;26</td></tr>
+            <tr><td>Gold</td><td class="m">$200,000</td><td class="m">18%</td><td class="m">not sustained &middot; one 0.16 reading Jul 21</td></tr>
+            <tr><td>Platinum</td><td class="m">$1,000,000</td><td class="m">32%</td><td class="p">0.323 &middot; Aug 5&ndash;15</td></tr>
+            <tr><td>Diamond</td><td class="m">$4,000,000</td><td class="m">44%</td><td class="p">0.440 &middot; Aug 18&ndash;20</td></tr>
+            <tr><td>Obsidian</td><td class="m">$10,000,000+</td><td class="m">50%</td><td class="p">0.500 &middot; Aug 29 &rarr; Nov 8</td></tr>
+          </tbody>
+        </table>
+        <p class="cap" style="margin-top:12px">Four observed rates land exactly on four published tier values &mdash; that is the whole explanation for the rebound in rebate yield. The lone 0.16 on Jul 21 is unexplained: it sits between Silver and Gold and coincides with a two-day gap in trading, so it is either a brief mid-day tier change or a day-pairing artifact.</p>
+      </div>
+      <div>
+        <ul class="find">
+          <li class="amb"><b>Volume, not skill, sets the refund.</b>wV is per fill: size &times; (1 &minus; price) &times; category weight, with crypto weighted highest at 2.3. For this wallet at ~55% taker share that works out to roughly 1.5&times; notional.</li>
+          <li class="neg"><b>This is a treadmill.</b>Holding Obsidian means turning over roughly $6.5&ndash;7M of 30-day notional. Drop below it and the rate falls 6 points, costing ~30 bps on every dollar traded. The volume needed to keep the tier is the same volume that destroys the edge.</li>
+          <li class="blu"><b>It also explains the decay.</b>At 8% you keep 92% of your fee burden; at 50% you keep half. Trades that were unprofitable at Silver become profitable at Obsidian — and those marginal trades are, by construction, the worst ones. The ladder subsidises exactly the behaviour that flattened gross edge.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="note amb"><b>What this does to every number above.</b>The +123 bps of rebate is an <b>Obsidian</b> figure. The same fee base at Gold would yield ~43 bps, at Silver ~19 bps, at Bronze ~7 bps. A $1,000-bankroll bot doing a few hundred dollars of notional a day sits in Bronze or Silver: to reach Gold it needs about <b>$130k of 30-day notional</b> (~$4.2k/day), and Platinum needs ~$670k (~$22k/day). The rebate is therefore not a floor under the strategy at small size &mdash; it is a scale reward that most accounts never reach.</div>
+  </div>
+</section>
+
+<section id="enough">
+  <div class="wrap">
+    <div class="sh"><span class="num">05</span><h2>How much data is "enough"?</h2></div>
+    <p class="sub">This is now measurable rather than a guess, because the same estimator was run at 21 days and at 112 days of activity. All three rows below use the identical method and the identical standard-error formula.</p>
+
+    <div class="cols">
+      <div class="panel" style="margin:0">
+        <h3>Precision versus sample length</h3>
+        <p class="cap">95% CI half-width on the trading edge, scaled from the observed standard error.</p>
+        <div id="ci-chart"></div>
+      </div>
+      <div class="panel" style="margin:0">
+        <h3>Days needed to detect a given edge</h3>
+        <p class="cap">Two-sided t = 2, using the observed day-level standard error.</p>
+        <table>
+          <thead><tr><th>True edge</th><th>Days</th><th>Weeks</th></tr></thead>
+          <tbody>
+            <tr><td>50 bps</td><td class="m">22</td><td class="m">3.1</td></tr>
+            <tr><td>30 bps</td><td class="p">60</td><td class="p">8.6</td></tr>
+            <tr><td>25 bps</td><td class="m">87</td><td class="m">12.4</td></tr>
+            <tr><td>20 bps</td><td class="m">135</td><td class="m">19.3</td></tr>
+            <tr><td>15 bps</td><td class="m">241</td><td class="m">34.4</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <table style="margin-top:24px">
+      <thead><tr><th>Sample</th><th>Days</th><th>Markets</th><th>Edge</th><th>Std. error</th><th>t</th><th>95% CI</th><th style="text-align:left">Verdict</th></tr></thead>
+      <tbody>
+        <tr><td>First 3 weeks</td><td class="m">21</td><td class="m">5,542</td><td class="m">+26.4 bps</td><td class="m">18.6</td><td class="m">1.42</td><td class="m">[&minus;10, +63]</td><td style="text-align:left"><span class="chip changed">inconclusive</span></td></tr>
+        <tr><td>Last 8 weeks</td><td class="m">56</td><td class="m">14,777</td><td class="m">+59.8 bps</td><td class="m">12.4</td><td class="m">4.81</td><td class="m">[+36, +84]</td><td style="text-align:left"><span class="chip same">significant</span></td></tr>
+        <tr><td>Full history</td><td class="m">112</td><td class="m">29,452</td><td class="p">+87.7 bps</td><td class="m">11.0</td><td class="p">7.97</td><td class="m">[+66, +109]</td><td style="text-align:left"><span class="chip same">significant</span></td></tr>
+      </tbody>
+    </table>
+
+    <div class="note blu"><b>The honest conclusion.</b>Eight to nine weeks is enough to settle a 30 bps question, and we now have sixteen. More history would keep tightening a number that is drifting downward as the wallet grows — precision is no longer the binding constraint. What would actually add information is <b>the same measurement at a fixed, small clip</b>, which the historical data cannot supply.</div>
+  </div>
+</section>
+
+<section id="equity">
+  <div class="wrap">
+    <div class="sh"><span class="num">06</span><h2>The full equity curve</h2></div>
+    <p class="sub">113 trading days. The shaded band is cumulative rebates; the grey line is trading before them.</p>
+    <div class="panel">
+      <h3>Cumulative P&amp;L</h3>
+      <p class="cap">Green: total including rebates. Grey: trading only. The gap widens steadily because the rebate is mechanical, not performance-linked.</p>
+      <div id="equity-chart"></div>
+    </div>
+    <div class="cols">
+      <div class="note pos"><b>Max drawdown of the daily curve: &minus;$518.</b>Against $329,326 of cumulative profit — the rebate stream absorbs almost everything the trading curve throws at it.</div>
+      <div class="note neg"><b>Max market-level drawdown: &minus;$5,865.</b>That is the real risk unit: a single 5-minute market can erase two weeks of rebate.</div>
+    </div>
+  </div>
+</section>
+
+<section id="weeks">
+  <div class="wrap">
+    <div class="sh"><span class="num">07</span><h2>Week by week</h2></div>
+    <p class="sub">Seventeen ISO weeks. The <span style="color:var(--pos)">green</span> edge column is the fitted rate; the interval is the week's own standard error.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Week</th><th>Days</th><th>Markets</th><th>$/mkt</th><th>Fills/mkt</th><th>Taker</th><th>Edge</th><th>&plusmn;95%</th><th>t</th><th>Net bps</th><th>Rebate bps</th></tr></thead>
+        <tbody id="week-table"></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="action">
+  <div class="wrap">
+    <div class="sh"><span class="num">08</span><h2>What this means for the bot</h2></div>
+    <p class="sub">DSP-v2.5 trades clips far smaller than this wallet's current size, which puts it on the favourable part of the curve — if the curve generalises.</p>
+    <ul class="find">
+      <li class="pos"><b>Benchmark against the small-size regime, not the current one.</b>The wallet at $750/market earns roughly zero. The bot at $30–50/market is not competing with that number; it is competing with the wallet's July and August, when the same strategy earned 300–500 bps.</li>
+      <li class="amb"><b>Validate at fixed size for at least 8 weeks.</b>Because the edge is a function of size, any sample whose size changes measures an average size, not the bot. Eight weeks at a constant clip resolves a 30 bps question.</li>
+      <li class="neg"><b>Model the rebate at <em>your</em> tier, not at the wallet's.</b>The 123 bps figure was earned at Obsidian. A small account earns Bronze or Silver, where the same fee base returns 7&ndash;19 bps. Booking Obsidian rebates into a $1,000-bankroll plan overstates the strategy by an order of magnitude.</li>
+      <li class="amb"><b>Watch the tier, not the strategy.</b>Rebate yield moves with 30-day weighted volume, so a quiet month drops the rate even if nothing about the trading changed. That is a revenue cliff with no relationship to performance.</li>
+      <li class="blu"><b>Expect the directional component to be variance, not income.</b>It averages +$4.39/market across 30k markets but flips sign by month. Size and cap against it; do not forecast it.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="method">
+  <div class="wrap">
+    <div class="sh"><span class="num">09</span><h2>Method and limits</h2></div>
+    <p class="sub">The pull script caps a request at 7 days and 100 rows per page, so the history is 17 tiled weekly windows merged on full fill identity.</p>
+    <div class="cols">
+      <div>
+        <ul class="find">
+          <li class="pos"><b>Integrity</b>1,191,338 rows: 1,135,104 trades, 55,983 redemptions, 225 daily rebate rows. Zero duplicates across window boundaries.</li>
+          <li class="amb"><b>Coverage</b>31,506 markets over 114 days ≈ 276/day, about 96% of available 5-minute slots. 1,767 markets unresolved at export (5.6%).</li>
+          <li class="blu"><b>Estimator</b>OLS through the origin of daily net P&amp;L on daily notional. Volume weighting is automatic; a thin Sunday contributes little information.</li>
+        </ul>
+      </div>
+      <div>
+        <ul class="find">
+          <li class="neg"><b>Not identifiable here</b>Capacity versus competition: size and calendar time are collinear across all 17 weeks.</li>
+          <li class="neg"><b>Not in the data</b>Unfilled quotes, queue position, intra-window mark-to-market, adverse selection beyond the next same-token fill.</li>
+          <li class="amb"><b>The rebate rule</b>A tiered share of the prior day's taker fees set by 30-day weighted volume: 3 / 8 / 18 / 32 / 44 / 50%. Within a fixed tier the rate is exact to the cent; across the sample it moved four times as volume grew. Maker rebates are a separate pool of 15&ndash;25% of collected taker fees by category.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="srcrow">
+      <div><b>Ledger</b>scratch/trades_full_history.csv · 1.19M rows · 498 MB</div>
+      <div><b>Computed</b>scratch/analysis_full.txt · 936 lines</div>
+      <div><b>Stats</b>scratch/significance_full.txt · scratch/trend_full.txt</div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    Generated from the public ledger of <code>0xc53375ff94e96100f2b30a4b5775db35218d69a9</code>. All figures USD; rebates credited on the day paid. Negative values carry a true minus sign.
+    <ul class="fine">
+      <li>Charts are static SVG drawn at build time from the ledger aggregates; no external scripts, fonts or trackers.</li>
+      <li>The estimator is volume-weighted, which is why the pooled +87.7 bps sits below the unweighted monthly average.</li>
+      <li>Weekly points are ISO weeks; the first and last are partial, and their intervals reflect that.</li>
+    </ul>
+  </div>
+</footer>
+
+<script>
+const WEEKS=[{"w":"2026-W29","days":3,"mk":434,"usd":49490,"perMkt":114,"edge":812.2,"se":248.7,"t":3.27,"netBps":753.4,"rebBps":21.3,"taker":40.4,"fills":9.1,"net":3729},{"w":"2026-W30","days":7,"mk":1450,"usd":199902,"perMkt":138,"edge":442.4,"se":89.8,"t":4.92,"netBps":476.4,"rebBps":38.7,"taker":43.2,"fills":7.6,"net":9524},{"w":"2026-W31","days":5,"mk":739,"usd":95738,"perMkt":130,"edge":203.1,"se":205.3,"t":0.99,"netBps":376.4,"rebBps":59.8,"taker":49.4,"fills":8.2,"net":3603},{"w":"2026-W32","days":7,"mk":1467,"usd":232810,"perMkt":159,"edge":334.5,"se":76.9,"t":4.35,"netBps":336.5,"rebBps":90.0,"taker":52.0,"fills":11.0,"net":7834},{"w":"2026-W33","days":7,"mk":1439,"usd":293672,"perMkt":204,"edge":294.0,"se":59.6,"t":4.93,"netBps":317.3,"rebBps":85.8,"taker":45.7,"fills":14.2,"net":9317},{"w":"2026-W34","days":7,"mk":1829,"usd":658284,"perMkt":360,"edge":112.8,"se":45.3,"t":2.49,"netBps":111.6,"rebBps":102.2,"taker":67.4,"fills":29.9,"net":7344},{"w":"2026-W35","days":7,"mk":2479,"usd":673572,"perMkt":272,"edge":323.6,"se":65.9,"t":4.91,"netBps":328.9,"rebBps":122.2,"taker":50.0,"fills":21.7,"net":22155},{"w":"2026-W36","days":7,"mk":2750,"usd":1180229,"perMkt":429,"edge":138.7,"se":17.2,"t":8.08,"netBps":141.5,"rebBps":113.6,"taker":35.8,"fills":28.3,"net":16700},{"w":"2026-W37","days":7,"mk":2359,"usd":827240,"perMkt":351,"edge":218.7,"se":44.3,"t":4.93,"netBps":226.4,"rebBps":128.6,"taker":54.3,"fills":19.7,"net":18726},{"w":"2026-W38","days":7,"mk":1795,"usd":942467,"perMkt":525,"edge":58.1,"se":23.9,"t":2.43,"netBps":67.3,"rebBps":130.7,"taker":66.7,"fills":31.7,"net":6341},{"w":"2026-W39","days":7,"mk":1923,"usd":857832,"perMkt":446,"edge":51.1,"se":42.0,"t":1.22,"netBps":81.3,"rebBps":140.8,"taker":67.9,"fills":29.0,"net":6976},{"w":"2026-W40","days":7,"mk":1759,"usd":787875,"perMkt":448,"edge":76.3,"se":47.1,"t":1.62,"netBps":105.1,"rebBps":130.9,"taker":65.0,"fills":29.8,"net":8284},{"w":"2026-W41","days":7,"mk":1862,"usd":1173127,"perMkt":630,"edge":154.2,"se":30.3,"t":5.1,"netBps":146.9,"rebBps":135.0,"taker":66.6,"fills":38.7,"net":17234},{"w":"2026-W42","days":7,"mk":1912,"usd":1467477,"perMkt":768,"edge":82.5,"se":26.8,"t":3.08,"netBps":76.7,"rebBps":125.9,"taker":65.4,"fills":70.1,"net":11256},{"w":"2026-W43","days":7,"mk":1912,"usd":1498546,"perMkt":784,"edge":-10.6,"se":35.8,"t":-0.3,"netBps":-7.2,"rebBps":131.4,"taker":63.7,"fills":82.6,"net":-1076},{"w":"2026-W44","days":7,"mk":1744,"usd":1301811,"perMkt":746,"edge":104.9,"se":18.3,"t":5.74,"netBps":99.7,"rebBps":133.8,"taker":59.3,"fills":84.8,"net":12973},{"w":"2026-W45","days":7,"mk":1886,"usd":1400924,"perMkt":743,"edge":-1.5,"se":22.2,"t":-0.07,"netBps":2.6,"rebBps":120.2,"taker":55.9,"fills":89.1,"net":371}];
+const MONTHS=[{"m":"2026-07","days":13,"mk":2276,"usd":309236,"perMkt":136,"grossBps":636.0,"netBps":457.4,"rebBps":32.5,"lockedShare":26.8,"residPerMkt":0.25,"netPerMkt":6.21,"fills":8.1,"taker":44.6},{"m":"2026-08","days":31,"mk":7943,"usd":2052160,"perMkt":258,"grossBps":462.8,"netBps":245.0,"rebBps":103.0,"lockedShare":67.6,"residPerMkt":1.88,"netPerMkt":6.33,"fills":20.1,"taker":54.2},{"m":"2026-09","days":30,"mk":9296,"usd":4060280,"perMkt":437,"grossBps":350.6,"netBps":123.3,"rebBps":128.4,"lockedShare":61.6,"residPerMkt":4.79,"netPerMkt":5.39,"fills":27.3,"taker":56.5},{"m":"2026-10","days":31,"mk":8185,"usd":5759611,"perMkt":704,"grossBps":320.6,"netBps":81.1,"rebBps":131.1,"lockedShare":55.4,"residPerMkt":9.68,"netPerMkt":5.71,"fills":64.4,"taker":63.8},{"m":"2026-11","days":8,"mk":2039,"usd":1459709,"perMkt":716,"grossBps":208.4,"netBps":0.7,"rebBps":124.8,"lockedShare":128.4,"residPerMkt":-4.28,"netPerMkt":0.05,"fills":86.1,"taker":55.6}];
+const DAYS=["07-17","07-18","07-19","07-20","07-21","07-22","07-23","07-24","07-25","07-26","07-27","07-30","07-31","08-01","08-02","08-03","08-04","08-05","08-06","08-07","08-08","08-09","08-10","08-11","08-12","08-13","08-14","08-15","08-16","08-17","08-18","08-19","08-20","08-21","08-22","08-23","08-24","08-25","08-26","08-27","08-28","08-29","08-30","08-31","09-01","09-02","09-03","09-04","09-05","09-06","09-07","09-08","09-09","09-10","09-11","09-12","09-13","09-14","09-15","09-16","09-17","09-18","09-19","09-20","09-21","09-22","09-23","09-24","09-25","09-26","09-27","09-28","09-29","09-30","10-01","10-02","10-03","10-04","10-05","10-06","10-07","10-08","10-09","10-10","10-11","10-12","10-13","10-14","10-15","10-16","10-17","10-18","10-19","10-20","10-21","10-22","10-23","10-24","10-25","10-26","10-27","10-28","10-29","10-30","10-31","11-01","11-02","11-03","11-04","11-05","11-06","11-07","11-08"];
+const CUMTOTAL=[42,1788,3834,4275,5775,7805,9075,11192,12998,14131,15117,15130,15151,17478,18307,19663,21782,22104,24025,26034,28001,28235,28956,31060,34514,35728,37750,39082,40071,40893,42330,42906,43880,46880,51865,54142,56963,59026,63003,67567,72230,77983,84530,86559,91516,96163,101638,108175,112170,114634,116436,121359,128739,134111,138168,141673,143997,146660,147649,150464,153575,157796,161557,162652,162971,165020,168755,172152,175585,178233,181710,182059,184719,188780,192846,193849,197515,200308,203150,210166,217627,224076,229068,232424,233377,232859,239002,243704,249557,255740,261274,263116,262899,268793,270668,271020,273568,278012,281730,287806,292730,297500,302354,308212,311009,312115,313425,318667,320541,322101,325127,328521,329326];
+const CUMNET=[42,1765,3729,4120,5447,7349,8503,10504,12192,13253,14173,14186,14144,16128,16856,18014,19798,19765,21396,22971,24627,24690,25279,27171,30276,30891,32384,33218,34007,34727,35483,35479,35350,36947,40434,41351,42918,43660,46546,50208,53505,57821,63507,64416,67534,69843,72953,76883,78564,80206,81201,84688,90251,93846,96405,97278,98932,100783,100345,101042,101789,103722,104814,105273,104372,104178,105551,106734,108214,109414,112249,111715,112390,114492,116967,116783,118529,120534,122280,126829,132014,135666,137089,137815,137768,136450,140588,142360,144441,147199,148891,149024,146885,149819,148154,145824,145192,146212,147948,152168,153881,155834,157730,160347,161191,160921,161559,163607,162165,160662,160375,161276,161292];
+const PERMKT=[115,123,104,159,150,142,143,142,105,107,144,95,175,90,112,165,162,142,190,151,127,163,117,198,284,258,271,111,77,231,215,378,418,445,412,398,419,335,321,242,243,183,263,413,519,526,570,461,227,248,282,340,329,382,735,207,230,376,637,609,584,693,328,351,580,622,553,511,379,195,247,519,514,413,476,783,234,307,671,609,736,924,826,291,293,681,760,944,910,1055,479,542,839,930,866,870,902,572,536,879,749,816,937,895,451,384,913,974,1011,1023,685,272,273];
+const RATE=[0.0,0.0,0.0647,0.0355,0.1603,0.0828,0.0829,0.083,0.0848,0.0896,0.0915,0.0,0.3255,0.328,0.3764,0.3357,0.3268,0.3264,0.3258,0.3232,0.3292,0.3531,0.3352,0.3242,0.3239,0.3215,0.3228,0.3236,0.4778,0.4807,0.4421,0.4409,0.4401,0.4404,0.4405,0.44,0.44,0.4404,0.4402,0.4414,0.4443,0.506,0.5073,0.505,0.5014,0.5019,0.5017,0.4784,0.5019,0.5176,0.5163,0.5041,0.5036,0.5028,0.5011,0.5001,0.5055,0.5026,0.5002,0.5,0.5,0.5005,0.5,0.5017,0.5009,0.5007,0.5004,0.5,0.501,0.5009,0.507,0.5033,0.5004,0.5,0.5006,0.5002,0.5,0.504,0.5033,0.5001,0.5,0.5,0.5,0.5002,0.5036,0.5024,0.5006,0.5,0.5,0.5,0.5,0.5002,0.5002,0.5,0.5,0.5,0.5,0.5,0.5,0.5009,0.5,0.5,0.5,0.5001,0.5,0.5001,0.5022,0.5,0.5,0.5,0.5,0.5,0.5025];
+const VOL30=[11052,32547,49490,84311,118741,151380,183594,215048,232668,249392,261959,269060,309236,321443,345130,382906,422033,455248,504379,538619,559170,577940,602431,643487,718527,784231,844082,862671,871611,919639,949424,1026214,1106623,1191005,1272358,1346301,1424616,1501497,1556604,1652446,1752229,1831720,1934408,2052160,2247413,2432542,2630823,2789562,2846504,2879317,2962217,3089294,3209499,3297981,3452512,3430059,3426706,3473500,3619932,3783211,3891123,4032532,3986706,3962469,4006063,4063240,4115720,4150555,4162236,4139162,4096830,4142994,4210993,4218209,4146042,4082732,3937195,3785383,3774173,3858684,3987260,4133411,4180800,4120048,4071825,4027428,4187588,4397042,4544302,4665069,4629405,4617902,4645888,4855501,4967091,5051014,5132494,5138734,5148042,5294098,5461090,5628490,5738221,5751765,5759611,5732634,5850415,6057930,6228358,6319904,6341711,6207283,6006750];
+
+const C = {pos:"#40d18f",neg:"#ff6b6b",amber:"#f3b544",blue:"#6aa8ff",muted:"#8b95a6",dim:"#5c6675"};
+
+function money(v,dp=0){
+  const s = Math.abs(v).toLocaleString("en-US",{minimumFractionDigits:dp,maximumFractionDigits:dp});
+  return (v<0?"\u2212$":"$")+s;
+}
+function compact(v){
+  const a=Math.abs(v);
+  if(a>=1000) return (v<0?"\u2212":"")+"$"+Math.round(a/1000)+"k";
+  return (v<0?"\u2212":"")+"$"+Math.round(a);
+}
+function svg(w,h,inner,label){
+  return '<svg viewBox="0 0 '+w+' '+h+'" class="chart" role="img" aria-label="'+(label||"chart")+'">'+inner+'</svg>';
+}
+
+/* ---------- capacity scatter ---------- */
+(function(){
+  const W=1100,H=500,P={l:82,r:180,t:34,b:66};
+  const iw=W-P.l-P.r, ih=H-P.t-P.b;
+  const x0=60,x1=860, y0=-160, y1=1000;
+  const X=v=>P.l+(v-x0)/(x1-x0)*iw;
+  const Y=v=>P.t+(y1-v)/(y1-y0)*ih;
+
+  // OLS of edge on perMkt
+  const n=WEEKS.length;
+  const sx=WEEKS.reduce((a,w)=>a+w.perMkt,0), sy=WEEKS.reduce((a,w)=>a+w.edge,0);
+  const mx=sx/n, my=sy/n;
+  let sxx=0,sxy=0;
+  WEEKS.forEach(w=>{sxx+=(w.perMkt-mx)**2; sxy+=(w.perMkt-mx)*(w.edge-my);});
+  const b1=sxy/sxx, b0=my-b1*mx;
+  let ssr=0, sst=0;
+  WEEKS.forEach(w=>{const f=b0+b1*w.perMkt; ssr+=(w.edge-f)**2; sst+=(w.edge-my)**2;});
+  const r2=1-ssr/sst;
+  const se_b1=Math.sqrt(ssr/(n-2)/sxx);
+  const tstat=b1/se_b1;
+
+  let g='<defs><clipPath id="capclip"><rect x="'+P.l+'" y="'+P.t+'" width="'+iw+'" height="'+ih+'"/></clipPath></defs>';
+  // extrapolation zone
+  const xminData=Math.min(...WEEKS.map(w=>w.perMkt));
+  g+='<rect x="'+X(x0)+'" y="'+P.t+'" width="'+(X(xminData)-X(x0))+'" height="'+ih+'" fill="'+C.blue+'" opacity="0.055"/>';
+  g+='<text class="ann blu" x="'+(X(x0)+10)+'" y="'+(P.t+18)+'" style="font-size:10px">no data here</text>';
+
+  for(let k=0;k<=6;k++){
+    const v=y0+(y1-y0)*k/6, y=Y(v);
+    g+='<line class="grid" x1="'+P.l+'" y1="'+y+'" x2="'+(P.l+iw)+'" y2="'+y+'"/>';
+    g+='<text class="ytick" x="'+(P.l-12)+'" y="'+(y+4)+'" text-anchor="end">'+(v>0?"+":"\u2212")+Math.abs(v).toFixed(0)+'</text>';
+  }
+  g+='<line class="zero" x1="'+P.l+'" y1="'+Y(0)+'" x2="'+(P.l+iw)+'" y2="'+Y(0)+'"/>';
+  for(let v=100;v<=800;v+=100){
+    g+='<line x1="'+X(v)+'" y1="'+P.t+'" x2="'+X(v)+'" y2="'+(P.t+ih)+'" stroke="rgba(255,255,255,.035)"/>';
+    g+='<text class="xtick" x="'+X(v)+'" y="'+(P.t+ih+22)+'" text-anchor="middle">$'+v+'</text>';
+  }
+
+  // fit line: dashed in extrapolation, solid in data range
+  const ly=v=>b0+b1*v;
+  g+='<line x1="'+X(x0)+'" y1="'+Y(ly(x0))+'" x2="'+X(xminData)+'" y2="'+Y(ly(xminData))+'" stroke="'+C.amber+'" stroke-width="1.8" stroke-dasharray="7 6" opacity=".85"/>';
+  g+='<line x1="'+X(xminData)+'" y1="'+Y(ly(xminData))+'" x2="'+X(x1)+'" y2="'+Y(ly(x1))+'" stroke="'+C.amber+'" stroke-width="2.2" opacity=".95"/>';
+
+  // points with CI bars
+  g+='<g clip-path="url(#capclip)">';
+  WEEKS.forEach((w,i)=>{
+    const cx=X(w.perMkt), cy=Y(w.edge);
+    const hi=Y(w.edge+1.96*w.se), lo=Y(w.edge-1.96*w.se);
+    g+='<line x1="'+cx+'" y1="'+hi+'" x2="'+cx+'" y2="'+lo+'" stroke="rgba(233,237,244,.22)" stroke-width="1.4"/>';
+    g+='<line x1="'+(cx-4)+'" y1="'+hi+'" x2="'+(cx+4)+'" y2="'+hi+'" stroke="rgba(233,237,244,.22)" stroke-width="1.4"/>';
+    g+='<line x1="'+(cx-4)+'" y1="'+lo+'" x2="'+(cx+4)+'" y2="'+lo+'" stroke="rgba(233,237,244,.22)" stroke-width="1.4"/>';
+    const col=w.edge>=0?C.pos:C.neg;
+    const r=5+Math.min(5,Math.sqrt(w.mk)/12);
+    g+='<circle cx="'+cx+'" cy="'+cy+'" r="'+r.toFixed(1)+'" fill="'+col+'" opacity="0.85" stroke="#08090c" stroke-width="1.5"><title>'+w.w+' · $'+w.perMkt+'/market · edge '+w.edge+' bps (t '+w.t+')</title></circle>';
+  });
+  g+='</g>';
+
+  // labels for the extremes
+  const first=WEEKS[0], last=WEEKS[WEEKS.length-1];
+  g+='<text class="ann" x="'+(X(first.perMkt)+12)+'" y="'+(Y(first.edge)-10)+'" style="font-size:10.5px">'+first.w+' · $'+first.perMkt+'</text>';
+  g+='<text class="ann" x="'+(X(last.perMkt)-6)+'" y="'+(Y(last.edge)+22)+'" text-anchor="end" style="font-size:10.5px">'+last.w+' · $'+last.perMkt+'</text>';
+
+  // equation box
+  const bx=P.l+iw+14, by=P.t+40;
+  g+='<text class="ann" x="'+bx+'" y="'+by+'" style="font-size:11px;fill:'+C.amber+'">fit</text>';
+  g+='<text class="ann" x="'+bx+'" y="'+(by+20)+'" style="font-size:11.5px;fill:#e9edf4">edge = '+b0.toFixed(0)+'</text>';
+  g+='<text class="ann" x="'+bx+'" y="'+(by+37)+'" style="font-size:11.5px;fill:#e9edf4">'+(b1<0?"\u2212":"+")+Math.abs(b1).toFixed(3)+' \u00d7 $/mkt</text>';
+  g+='<text class="ann" x="'+bx+'" y="'+(by+60)+'" style="font-size:10.5px">t = '+tstat.toFixed(2)+'</text>';
+  g+='<text class="ann" x="'+bx+'" y="'+(by+76)+'" style="font-size:10.5px">R\u00b2 = '+r2.toFixed(2)+'</text>';
+  g+='<text class="ann" x="'+bx+'" y="'+(by+92)+'" style="font-size:10.5px">n = '+n+' weeks</text>';
+  g+='<text class="ann" x="'+bx+'" y="'+(by+126)+'" style="font-size:10.5px;fill:'+C.blue+'">bot size</text>';
+  g+='<text class="ann" x="'+bx+'" y="'+(by+142)+'" style="font-size:10.5px;fill:'+C.blue+'">$30\u2013$50/mkt</text>';
+  g+='<text class="ann" x="'+bx+'" y="'+(by+166)+'" style="font-size:10.5px;fill:'+C.dim+'">extrapolated:</text>';
+  g+='<text class="ann" x="'+bx+'" y="'+(by+182)+'" style="font-size:10.5px;fill:'+C.dim+'">'+(b0+b1*40).toFixed(0)+' bps</text>';
+
+  g+='<text class="ann" x="'+(P.l+iw/2)+'" y="'+(H-14)+'" text-anchor="middle" style="font-size:11px">USD deployed per market</text>';
+  g+='<text class="ann" transform="translate(16,'+(P.t+ih/2)+') rotate(-90)" text-anchor="middle" style="font-size:11px">net trading edge (bps)</text>';
+
+  document.getElementById("cap-chart").innerHTML=svg(W,H,g,"Edge versus dollars deployed per market");
+})();
+
+/* ---------- monthly bars ---------- */
+(function(){
+  const W=1100,H=340,P={l:78,r:26,t:34,b:56};
+  const iw=W-P.l-P.r, ih=H-P.t-P.b;
+  const hi=500, lo=-40;
+  const Y=v=>P.t+(hi-v)/(hi-lo)*ih;
+  const n=MONTHS.length, slot=iw/n;
+  let g='';
+  for(let k=0;k<=5;k++){
+    const v=lo+(hi-lo)*k/5, y=Y(v);
+    g+='<line class="grid" x1="'+P.l+'" y1="'+y+'" x2="'+(P.l+iw)+'" y2="'+y+'"/>';
+    g+='<text class="ytick" x="'+(P.l-12)+'" y="'+(y+4)+'" text-anchor="end">'+v.toFixed(0)+'</text>';
+  }
+  g+='<line class="zero" x1="'+P.l+'" y1="'+Y(0)+'" x2="'+(P.l+iw)+'" y2="'+Y(0)+'"/>';
+  MONTHS.forEach((m,i)=>{
+    const cx=P.l+slot*i+slot/2, bw=54, gap=12;
+    [{v:m.netBps,c:(m.netBps>=0?C.blue:C.neg),k:"trading"},{v:m.rebBps,c:C.pos,k:"rebate"}].forEach((s,j)=>{
+      const x=cx-(bw+gap)/2+j*(bw+gap);
+      const top=Y(Math.max(0,s.v)), bot=Y(Math.min(0,s.v));
+      g+='<rect x="'+x+'" y="'+top+'" width="'+bw+'" height="'+Math.max(2,bot-top)+'" rx="3" fill="'+s.c+'" opacity="0.88"><title>'+m.m+' '+s.k+': '+s.v+' bps</title></rect>';
+      g+='<text class="bar-lbl" x="'+(x+bw/2)+'" y="'+(s.v>=0?top-8:bot+15)+'" text-anchor="middle" fill="'+s.c+'">'+(s.v>0?"+":"")+s.v.toFixed(0)+'</text>';
+    });
+    g+='<text class="xtick" x="'+cx+'" y="'+(P.t+ih+24)+'" text-anchor="middle" style="font-size:11.5px;fill:'+C.muted+'">'+m.m+'</text>';
+    g+='<text class="xtick" x="'+cx+'" y="'+(P.t+ih+40)+'" text-anchor="middle" style="font-size:9.5px">$'+m.perMkt+'/mkt · '+m.fills+' fills</text>';
+  });
+  const lx=P.l+iw-236, ly=P.t-8;
+  g+='<rect x="'+lx+'" y="'+ly+'" width="10" height="10" rx="2" fill="'+C.blue+'"/><text class="ann" x="'+(lx+16)+'" y="'+(ly+9)+'">net trading</text>';
+  g+='<rect x="'+(lx+112)+'" y="'+ly+'" width="10" height="10" rx="2" fill="'+C.pos+'"/><text class="ann" x="'+(lx+128)+'" y="'+(ly+9)+'">rebate</text>';
+  document.getElementById("month-chart").innerHTML=svg(W,H,g,"Net trading and rebate by month");
+})();
+
+/* ---------- CI width chart ---------- */
+(function(){
+  const SE=11.0, N=113;
+  const wks=[3,6,9,12,16,20,26];
+  const W=520,H=300,P={l:56,r:16,t:26,b:52};
+  const iw=W-P.l-P.r, ih=H-P.t-P.b;
+  const hi=60, lo=0;
+  const Y=v=>P.t+(hi-v)/(hi-lo)*ih;
+  const n=wks.length, slot=iw/n, bw=slot*0.56;
+  let g='';
+  for(let k=0;k<=4;k++){
+    const v=lo+(hi-lo)*k/4, y=Y(v);
+    g+='<line class="grid" x1="'+P.l+'" y1="'+y+'" x2="'+(P.l+iw)+'" y2="'+y+'"/>';
+    g+='<text class="ytick" x="'+(P.l-8)+'" y="'+(y+4)+'" text-anchor="end" style="font-size:9.5px">'+v.toFixed(0)+'</text>';
+  }
+  wks.forEach((w,i)=>{
+    const hw=1.96*SE*Math.sqrt(N/(w*7));
+    const x=P.l+slot*i+(slot-bw)/2;
+    const top=Y(hw), bot=Y(0);
+    const col = w>=16 ? C.pos : (w>=8 ? C.amber : C.neg);
+    g+='<rect x="'+x+'" y="'+top+'" width="'+bw+'" height="'+(bot-top)+'" rx="3" fill="'+col+'" opacity="0.85"><title>'+w+' weeks: +/- '+hw.toFixed(1)+' bps</title></rect>';
+    g+='<text class="bar-lbl" x="'+(x+bw/2)+'" y="'+(top-7)+'" text-anchor="middle" fill="'+col+'" style="font-size:10px">'+hw.toFixed(0)+'</text>';
+    g+='<text class="xtick" x="'+(x+bw/2)+'" y="'+(P.t+ih+18)+'" text-anchor="middle" style="font-size:9.5px">'+w+'w</text>';
+  });
+  g+='<text class="ann" x="'+(P.l+iw)+'" y="'+(P.t-8)+'" text-anchor="end" style="font-size:9.5px">\u00b1 bps at 95%</text>';
+  g+='<text class="ann" x="'+(P.l+iw/2)+'" y="'+(H-10)+'" text-anchor="middle" style="font-size:10px">sample length</text>';
+  document.getElementById("ci-chart").innerHTML=svg(W,H,g,"Confidence interval width versus sample length");
+})();
+
+/* ---------- equity ---------- */
+(function(){
+  const W=1100,H=420,P={l:80,r:152,t:30,b:48};
+  const iw=W-P.l-P.r, ih=H-P.t-P.b;
+  const all=CUMNET.concat(CUMTOTAL);
+  const lo=Math.min(...all)-25000, hi=Math.max(...all)+25000;
+  const X=i=>P.l+i*(iw/(DAYS.length-1));
+  const Y=v=>P.t+(hi-v)/(hi-lo)*ih;
+  let g='';
+  for(let k=0;k<=6;k++){
+    const v=lo+(hi-lo)*k/6, y=Y(v);
+    g+='<line class="grid" x1="'+P.l+'" y1="'+y+'" x2="'+(P.l+iw)+'" y2="'+y+'"/>';
+    g+='<text class="ytick" x="'+(P.l-12)+'" y="'+(y+4)+'" text-anchor="end">'+compact(v)+'</text>';
+  }
+  let band='M'+X(0)+','+Y(CUMNET[0]);
+  for(let i=1;i<CUMNET.length;i++) band+='L'+X(i)+','+Y(CUMNET[i]);
+  for(let i=CUMTOTAL.length-1;i>=0;i--) band+='L'+X(i)+','+Y(CUMTOTAL[i]);
+  band+='Z';
+  g+='<path d="'+band+'" fill="'+C.pos+'" opacity="0.10"/>';
+  const line=(arr,col,w,op)=>{
+    let d='M'+X(0)+','+Y(arr[0]);
+    for(let i=1;i<arr.length;i++) d+='L'+X(i)+','+Y(arr[i]);
+    return '<path d="'+d+'" fill="none" stroke="'+col+'" stroke-width="'+w+'" stroke-linejoin="round" opacity="'+op+'"/>';
+  };
+  g+=line(CUMTOTAL,C.pos,2.3,1);
+  g+=line(CUMNET,"#9aa5b8",1.7,.85);
+  DAYS.forEach((d,i)=>{ if(i%14===0||i===DAYS.length-1) g+='<text class="xtick" x="'+X(i)+'" y="'+(P.t+ih+22)+'" text-anchor="middle">'+d+'</text>'; });
+  const ex=P.l+iw+12;
+  const ty=Y(CUMTOTAL[CUMTOTAL.length-1]), ny=Y(CUMNET[CUMNET.length-1]);
+  g+='<text class="ann pos" x="'+ex+'" y="'+(ty+4)+'" style="font-size:12px;font-weight:600">'+money(CUMTOTAL[CUMTOTAL.length-1])+'</text>';
+  g+='<text class="ann" x="'+ex+'" y="'+(ty+20)+'" style="font-size:10px">total incl. rebate</text>';
+  g+='<text class="ann" x="'+ex+'" y="'+(ny+4)+'" style="font-size:12px;font-weight:600;fill:#9aa5b8">'+money(CUMNET[CUMNET.length-1])+'</text>';
+  g+='<text class="ann" x="'+ex+'" y="'+(ny+20)+'" style="font-size:10px">trading only</text>';
+  g+='<text class="ann" x="'+(P.l+iw*0.42)+'" y="'+(Y(200000))+'" style="font-size:11px;fill:'+C.pos+'" opacity=".85">cumulative rebates +$168,080</text>';
+  document.getElementById("equity-chart").innerHTML=svg(W,H,g,"Cumulative equity with and without rebates");
+})();
+
+/* ---------- rebate rate vs trailing volume ---------- */
+(function(){
+  const W=1100,H=450,P={l:70,r:126,t:46,b:56};
+  const iw=W-P.l-P.r, ih=H-P.t-P.b;
+  const n=DAYS.length;
+  const X=i=>P.l+i*(iw/(n-1));
+  const YL=v=>P.t+(0.56-v)/0.56*ih;
+  const YR=v=>P.t+(1-v/7.4e6)*ih;
+  let g='';
+
+  // volume area + line
+  let area='M'+X(0)+','+(P.t+ih);
+  for(let i=0;i<n;i++) area+='L'+X(i)+','+YR(VOL30[i]);
+  area+='L'+X(n-1)+','+(P.t+ih)+'Z';
+  g+='<path d="'+area+'" fill="'+C.blue+'" opacity="0.10"/>';
+  let vp='M'+X(0)+','+YR(VOL30[0]);
+  for(let i=1;i<n;i++) vp+='L'+X(i)+','+YR(VOL30[i]);
+  g+='<path d="'+vp+'" fill="none" stroke="'+C.blue+'" stroke-width="1.2" opacity="0.5"/>';
+
+  // tier guides
+  [[0.03,'3%'],[0.08,'8%'],[0.18,'18%'],[0.32,'32%'],[0.44,'44%'],[0.50,'50%']].forEach(function(t){
+    const y=YL(t[0]);
+    g+='<line x1="'+P.l+'" y1="'+y+'" x2="'+(P.l+iw)+'" y2="'+y+'" stroke="rgba(233,237,244,.16)" stroke-width="1" stroke-dasharray="3 5"/>';
+    g+='<text class="xtick" x="'+(P.l+5)+'" y="'+(y-5)+'" style="font-size:9.5px;fill:rgba(233,237,244,.42)">'+t[1]+'</text>';
+  });
+
+  // volume axis labels (right)
+  [[0,'0'],[2e6,'$2M'],[4e6,'$4M'],[6e6,'$6M']].forEach(function(t){
+    const y=YR(t[0]);
+    g+='<text class="ytick" x="'+(P.l+iw+10)+'" y="'+(y+4)+'" style="fill:'+C.blue+';opacity:.75">'+t[1]+'</text>';
+  });
+
+  // rate step line
+  let rp='M'+X(1)+','+YL(RATE[1]);
+  for(let i=1;i<n-1;i++){
+    rp+='L'+X(i+1)+','+YL(RATE[i])+'L'+X(i+1)+','+YL(RATE[i+1]);
+  }
+  g+='<path d="'+rp+'" fill="none" stroke="'+C.pos+'" stroke-width="2.2" stroke-linejoin="round"/>';
+
+  // x labels
+  DAYS.forEach(function(d,i){ if(i%14===0||i===n-1) g+='<text class="xtick" x="'+X(i)+'" y="'+(P.t+ih+22)+'" text-anchor="middle">'+d+'</text>'; });
+
+  // legend
+  g+='<rect x="'+P.l+'" y="'+(P.t-30)+'" width="18" height="2.5" fill="'+C.pos+'"/><text class="ann" x="'+(P.l+24)+'" y="'+(P.t-24)+'" style="font-size:10.5px">effective rebate rate</text>';
+  g+='<rect x="'+(P.l+186)+'" y="'+(P.t-30)+'" width="18" height="2.5" fill="'+C.blue+'" opacity=".6"/><text class="ann" x="'+(P.l+210)+'" y="'+(P.t-24)+'" style="font-size:10.5px">30-day trailing notional (right)</text>';
+
+  document.getElementById("rate-chart").innerHTML=svg(W,H,g,"Rebate rate stepped up as trailing volume grew");
+})();
+
+/* ---------- tables ---------- */
+(function(){
+  document.getElementById("month-table").innerHTML = MONTHS.map(m=>{
+    const tot=m.netBps+m.rebBps;
+    return '<tr><td>'+m.m+'</td><td class="m">'+m.days+'</td><td class="m">'+m.mk.toLocaleString()+'</td>'
+      +'<td class="m">$'+m.perMkt+'</td><td class="m">'+m.fills+'</td><td class="m">'+m.taker+'%</td>'
+      +'<td class="m">'+m.grossBps+'</td>'
+      +'<td class="'+(m.netBps>=0?"p":"n")+'">'+(m.netBps>0?"+":"")+m.netBps+'</td>'
+      +'<td class="p">+'+m.rebBps+'</td><td class="'+(tot>=0?"p":"n")+'">'+(tot>0?"+":"")+tot.toFixed(0)+'</td>'
+      +'<td class="m">'+m.lockedShare+'%</td><td class="'+(m.residPerMkt>=0?"p":"n")+'">'+(m.residPerMkt>0?"+":"")+m.residPerMkt+'</td></tr>';
+  }).join("");
+
+  document.getElementById("week-table").innerHTML = WEEKS.map(w=>{
+    const e=w.edge, col=e>=0?"p":"n";
+    return '<tr><td>'+w.w+'</td><td class="m">'+w.days+'</td><td class="m">'+w.mk.toLocaleString()+'</td>'
+      +'<td class="m">$'+w.perMkt+'</td><td class="m">'+w.fills+'</td><td class="m">'+w.taker+'%</td>'
+      +'<td class="'+col+'">'+(e>0?"+":"\u2212")+Math.abs(e).toFixed(1)+'</td>'
+      +'<td class="m">\u00b1'+(1.96*w.se).toFixed(0)+'</td>'
+      +'<td class="'+(Math.abs(w.t)>=2?"p":"m")+'">'+w.t.toFixed(2)+'</td>'
+      +'<td class="'+(w.netBps>=0?"m":"n")+'">'+(w.netBps>0?"+":"")+w.netBps+'</td>'
+      +'<td class="m">+'+w.rebBps+'</td></tr>';
+  }).join("");
+})();
+</script>
+</body>
+</html>
