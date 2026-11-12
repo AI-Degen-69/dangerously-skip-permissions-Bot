@@ -328,6 +328,7 @@ def write_state(
     ws_status: dict | None = None,
     recent_ticks: list[dict] | None = None,
     odds_history: list[dict] | None = None,
+    closed: bool = False,
 ) -> None:
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     cfg = load_cfg()
@@ -343,6 +344,10 @@ def write_state(
         "strategySymbol": strat.get("symbol", C.STRATEGY_SYMBOL),
         "strategyName": strat.get("name", C.STRATEGY_NAME),
     }
+    if closed:
+        # Past the cutoff the window is holding, not trading: the flag lets the
+        # next window claim the state while this snapshot stays readable.
+        payload["closed"] = True
     if ws_status is not None:
         payload["ws"] = ws_status
     if recent_ticks is not None:
@@ -808,7 +813,7 @@ def trade_window(
     # window. The next window overwrites it, and settle_slug removes it once the
     # outcome is known.
     try:
-        write_state(slug, end_ms, started_ms, fills,
+        write_state(slug, end_ms, started_ms, fills, closed=True,
                     ws_status=streamer.get_status(), recent_ticks=streamer.get_recent_ticks(30))
     except Exception as ex:
         log(f"warning: failed to persist the held window state: {type(ex).__name__}")

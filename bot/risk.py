@@ -120,6 +120,12 @@ def assert_single_window(active_slug: str, state_path: Path | str = "bot/state.j
     if not owner or owner == active_slug:
         return
 
+    if data.get("closed"):
+        # The window stopped trading and is only holding to resolution, so it no
+        # longer owns the desk. The next window may claim the state file, and the
+        # held snapshot stays readable until that write replaces it.
+        return
+
     now_ms = int(time.time() * 1000)
     is_expired = bool(end_ms and now_ms >= end_ms)
     heartbeat_stale = bool(updated_at and (now_ms - updated_at) > (HEARTBEAT_STALE_S * 1000))
