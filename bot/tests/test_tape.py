@@ -8,7 +8,7 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
-from bot import api, live_paper
+from bot import api, live_paper, runs
 from bot.runs import RunWorkspace
 
 
@@ -59,6 +59,52 @@ class TestTapeStats(unittest.TestCase):
             stats["mb"],
             round((stats["printsBytes"] + stats["bookBytes"]) / (1024 * 1024), 4),
         )
+
+
+class TestTapeStatsIncremental(unittest.TestCase):
+    """tape_stats() must not re-read the whole file on every call."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.ws = RunWorkspace("run_tape_inc", runs_root=self.tmp)
+        self.ws.init_workspace(config={}, mode="paper", label="unit")
+        self.ws.tape_dir.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_appended_lines_are_added_not_recounted(self):
+        book = self.ws.tape_dir / "book.jsonl"
+        book.write_text('{"a": 1}\n', encoding="utf-8")
+        self.assertEqual(self.ws.tape_stats()["books"], 1)
+        with book.open("a", encoding="utf-8") as f:
+            f.write('{"a": 2}\n{"a": 3}\n')
+        self.assertEqual(self.ws.tape_stats()["books"], 3)
+
+    def test_partial_line_is_not_counted_until_complete(self):
+        prints = self.ws.tape_dir / "prints.jsonl"
+        prints.write_text('{"p": 1}\n{"p": ', encoding="utf-8")
+        self.assertEqual(self.ws.tape_stats()["prints"], 1)
+        with prints.open("a", encoding="utf-8") as f:
+            f.write('2}\n')
+        self.assertEqual(self.ws.tape_stats()["prints"], 2)
+
+    def test_truncated_file_is_recounted_from_zero(self):
+        book = self.ws.tape_dir / "book.jsonl"
+        book.write_text('{"a": 1}\n{"a": 2}\n', encoding="utf-8")
+        self.assertEqual(self.ws.tape_stats()["books"], 2)
+        book.write_text('{"b": 1}\n', encoding="utf-8")
+        self.assertEqual(self.ws.tape_stats()["books"], 1)
+
+    def test_counts_are_reused_after_cache_is_dropped(self):
+        book = self.ws.tape_dir / "book.jsonl"
+        book.write_text('{"a": 1}\n{"a": 2}\n', encoding="utf-8")
+        self.assertEqual(self.ws.tape_stats()["books"], 2)
+        # Simulate a fresh process: in-memory state gone, .tape_stats.json remains.
+        runs._TAPE_COUNTS.clear()
+        runs._TAPE_LOADED.clear()
+        self.assertEqual(self.ws.tape_stats()["books"], 2)
+        self.assertTrue((self.ws.tape_dir / ".tape_stats.json").exists())
 
 
 class TestTapeDirIfEnabled(unittest.TestCase):

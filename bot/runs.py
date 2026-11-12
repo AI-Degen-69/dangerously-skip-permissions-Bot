@@ -22,6 +22,7 @@ import logging
 import os
 import re
 import shutil
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -76,6 +77,81 @@ class RunMeta:
         }
 
 
+# --- tape stats -------------------------------------------------------------
+# The recorder appends to multi-GB files (book.jsonl passed 5 GB in one run),
+# so re-counting every line per desk request took ~30s per call. Counts are
+# incremental: only bytes appended since the last count are read, and the
+# offsets are kept in `.tape_stats.json` next to the tape files so an API
+# restart does not trigger a full rescan of several GB.
+_TAPE_LOCK = threading.Lock()
+_TAPE_COUNTS: dict[str, dict[str, int]] = {}
+_TAPE_LOADED: set[str] = set()
+
+
+def _tape_cache_file(tape_dir: Path) -> Path:
+    return tape_dir / ".tape_stats.json"
+
+
+def _count_appended_lines(path: Path, offset: int) -> tuple[int, int]:
+    """Count complete lines appended after `offset`; return (lines, new_offset).
+
+    A trailing partial line is left uncounted and re-read on the next call, so
+    a line still being written is never counted twice.
+    """
+    lines = 0
+    consumed = 0
+    pending = b""
+    with path.open("rb") as f:
+        f.seek(offset)
+        while True:
+            block = f.read(1 << 20)
+            if not block:
+                break
+            data = pending + block
+            nl = data.rfind(b"\n")
+            if nl < 0:
+                pending = data
+                continue
+            lines += data.count(b"\n", 0, nl + 1)
+            consumed += nl + 1
+            pending = data[nl + 1 :]
+    return lines, offset + consumed
+
+
+def _load_tape_counts(tape_dir: Path) -> None:
+    key = str(tape_dir)
+    if key in _TAPE_LOADED:
+        return
+    _TAPE_LOADED.add(key)
+    try:
+        raw = json.loads(_tape_cache_file(tape_dir).read_text(encoding="utf-8"))
+    except Exception:
+        return
+    for name, entry in raw.items():
+        try:
+            _TAPE_COUNTS[str(tape_dir / name)] = {
+                "offset": int(entry["offset"]),
+                "lines": int(entry["lines"]),
+            }
+        except Exception:
+            continue
+
+
+def _save_tape_counts(tape_dir: Path) -> None:
+    payload = {
+        Path(key).name: entry
+        for key, entry in _TAPE_COUNTS.items()
+        if Path(key).parent == tape_dir
+    }
+    target = _tape_cache_file(tape_dir)
+    try:
+        tmp = target.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        os.replace(tmp, target)
+    except OSError:
+        pass
+
+
 class RunWorkspace:
     """Manages files and paths for a single execution or archived run."""
 
@@ -100,7 +176,12 @@ class RunWorkspace:
         self.tape_dir = self.root / "tape"
 
     def tape_stats(self) -> dict[str, Any]:
-        """Count tape files for the #35 trade-print recorder (prints + top-5 book)."""
+        """Count tape files for the #35 trade-print recorder (prints + top-5 book).
+
+        Counting is incremental and cached (see `_count_appended_lines`): the
+        recorder writes multi-GB files, so a full re-read per request stalled the
+        desk API for ~30s on a 5 GB book.jsonl.
+        """
         prints_path = self.tape_dir / "prints.jsonl"
         book_path = self.tape_dir / "book.jsonl"
         out: dict[str, Any] = {
@@ -116,16 +197,29 @@ class RunWorkspace:
         ):
             try:
                 if path.exists():
-                    out[size_key] = path.stat().st_size
-                    count = 0
-                    with path.open("r", encoding="utf-8") as f:
-                        for _ in f:
-                            count += 1
-                    out[key] = count
+                    size = path.stat().st_size
+                    out[size_key] = size
+                    out[key] = self._count_lines(path, size)
             except Exception:
                 pass
         out["mb"] = round((out["printsBytes"] + out["bookBytes"]) / (1024 * 1024), 4)
         return out
+
+    def _count_lines(self, path: Path, size: int) -> int:
+        key = str(path)
+        with _TAPE_LOCK:
+            _load_tape_counts(self.tape_dir)
+            entry = _TAPE_COUNTS.get(key) or {"offset": 0, "lines": 0}
+            offset = int(entry.get("offset", 0))
+            lines = int(entry.get("lines", 0))
+            if size < offset:  # truncated or replaced under us
+                offset, lines = 0, 0
+            if size > offset:
+                added, offset = _count_appended_lines(path, offset)
+                lines += added
+                _TAPE_COUNTS[key] = {"offset": offset, "lines": lines}
+                _save_tape_counts(self.tape_dir)
+            return lines
 
     def exists(self) -> bool:
         return self.root.exists() and self.meta_file.exists()
