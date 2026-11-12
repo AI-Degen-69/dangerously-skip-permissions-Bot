@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { Badge, Card, EmptyState } from './ui'
 import { cx } from '../lib/cx'
 import type { BotTrade } from '../lib/bot'
+import { rebateFor, takerFeePerShare, useAccountTier } from '../lib/rebates'
 import { buildWindows, resolveWindowIndex, slotOfSlug, windowSlotOf } from '../lib/windows'
 
 const money = (value: number | null | undefined) =>
@@ -44,6 +45,7 @@ export interface OrdersAndFillsProps {
 }
 
 export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsProps) {
+  const [tier] = useAccountTier()
   const [typeFilter, setTypeFilter] = useState<'all' | 'maker' | 'taker'>('all')
   const [sideFilter, setSideFilter] = useState<'all' | 'Up' | 'Down'>('all')
   // null = follow the running window; a slot pins the view to that window.
@@ -92,7 +94,10 @@ export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsP
             <h2 className="text-[14px] font-semibold">Orders & Fills</h2>
             <Badge tone="neutral">{filteredItems.length}</Badge>
           </div>
-          <p className="text-[12px] text-muted">Execution logs with millisecond timestamps & Maker/Taker routing.</p>
+          <p className="text-[12px] text-muted">
+            Execution logs with millisecond timestamps, Maker/Taker routing, fees and rebates at {tier.name} (
+            {Math.round(tier.rate * 100)}%).
+          </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -177,7 +182,7 @@ export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsP
         />
       ) : (
         <div className="scrollbar-thin mt-3 max-h-[480px] overflow-x-auto overflow-y-auto">
-          <table className="w-full min-w-[620px] text-left text-[12.5px]">
+          <table className="w-full min-w-[780px] text-left text-[12.5px]">
             <thead className="sticky top-0 z-10 border-b border-line bg-surface-1/95 text-[11px] font-semibold uppercase tracking-wider text-faint backdrop-blur">
               <tr>
                 <th className="py-2.5 px-3 font-medium">Time (ms)</th>
@@ -186,6 +191,8 @@ export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsP
                 <th className="py-2.5 px-3 text-right font-medium">Size</th>
                 <th className="py-2.5 px-3 text-right font-medium">Price</th>
                 <th className="py-2.5 px-3 text-right font-medium">Total Cost</th>
+                <th className="py-2.5 px-3 text-right font-medium">Fee</th>
+                <th className="py-2.5 px-3 text-right font-medium">Rebate</th>
                 <th className="py-2.5 px-3 font-medium">Status</th>
               </tr>
             </thead>
@@ -203,6 +210,21 @@ export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsP
                 const orderType = isMaker ? 'MAKER' : isTaker ? 'TAKER' : role || 'TAKER'
 
                 const isSettled = trade.kind === 'settle'
+
+                // The run file records the fee it charged; older fills without it
+                // fall back to the same 0.07 · p · (1 − p) formula.
+                const detailFee = typeof detail?.feeUsd === 'number' ? detail.feeUsd : 0
+                const feeUsd = isSettled
+                  ? null
+                  : detailFee > 0
+                    ? detailFee
+                    : isMaker
+                      ? 0
+                      : trade.price != null && trade.shares != null
+                        ? trade.shares * takerFeePerShare(trade.price)
+                        : null
+                const rebateUsd =
+                  feeUsd == null ? null : rebateFor(trade.price, trade.shares, !!isMaker, tier.rate, feeUsd)
                 const tapeStatus = (detail?.tapeStatus as string | undefined) ?? undefined
                 const statusLabel = isSettled
                   ? 'Settled'
@@ -298,7 +320,29 @@ export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsP
                       {cost != null ? money(cost) : <span className="font-normal text-faint">—</span>}
                     </td>
 
-                    {/* 7. Status */}
+                    {/* 7. Fee */}
+                    <td className="py-2.5 px-3 text-right font-mono text-[12.5px] tabular-nums">
+                      {feeUsd == null ? (
+                        <span className="text-faint">—</span>
+                      ) : feeUsd > 0 ? (
+                        <span className="font-medium text-danger">−{money(feeUsd)}</span>
+                      ) : (
+                        <span className="text-faint">$0.00</span>
+                      )}
+                    </td>
+
+                    {/* 8. Rebate */}
+                    <td className="py-2.5 px-3 text-right font-mono text-[12.5px] tabular-nums">
+                      {rebateUsd == null ? (
+                        <span className="text-faint">—</span>
+                      ) : rebateUsd > 0 ? (
+                        <span className="font-medium text-success">+{money(rebateUsd)}</span>
+                      ) : (
+                        <span className="text-faint">$0.00</span>
+                      )}
+                    </td>
+
+                    {/* 9. Status */}
                     <td className="py-2.5 px-3">
                       <span className="inline-flex items-center gap-1.5 font-mono text-[11.5px] font-medium text-fg">
                         <span

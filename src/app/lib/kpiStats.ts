@@ -1,4 +1,5 @@
 import type { BotPerf, PerfWindow } from './bot'
+import { MAKER_REBATE_SHARE, windowRebate } from './rebates'
 
 export interface CalculatedKpis {
   settled: number
@@ -10,6 +11,15 @@ export interface CalculatedKpis {
   roiPct: number
   costUsd: number
   payoutUsd: number
+  /** Taker fees already embedded in costUsd. */
+  feesUsd: number
+  takerRebateUsd: number
+  makerRebateUsd: number
+  rebatesUsd: number
+  /** Net with fees but before any rebate credit. */
+  netBeforeRebateUsd: number
+  rebatesPerWindow: number
+  rebateRate: number
 
   // Core KPIs
   winRate: number
@@ -84,48 +94,57 @@ export function computeKpiStats(
   windows: PerfWindow[],
   startingCapital: number = 1000,
   apiSummary?: BotPerf['summary'],
+  tierRate: number = 0,
 ): CalculatedKpis {
   const settled = windows.filter((w) => !w.pending)
   const pending = windows.filter((w) => w.pending)
 
+  // The paper run already charges the taker fee inside costUsd, so a rebate only
+  // ever adds to a window's net. Tier rate scales the taker side; the maker side
+  // is a fixed share of the fees its fills were matched against.
+  const netOf = (w: PerfWindow) => (w.netUsd ?? 0) + windowRebate(w, tierRate)
+
+  const feesUsd = settled.reduce((sum, w) => sum + (w.feesUsd ?? 0), 0)
+  const takerRebateUsd = tierRate * feesUsd
+  const makerRebateUsd =
+    MAKER_REBATE_SHARE * settled.reduce((sum, w) => sum + (w.makerFeeBaseUsd ?? 0), 0)
+  const rebatesUsd = takerRebateUsd + makerRebateUsd
+  const netBeforeRebateUsd =
+    settled.length > 0
+      ? settled.reduce((sum, w) => sum + (w.netUsd ?? 0), 0)
+      : (apiSummary?.netUsd ?? 0)
+  const netUsd = netBeforeRebateUsd + rebatesUsd
+
   const costUsd = apiSummary?.costUsd ?? settled.reduce((sum, w) => sum + w.costUsd, 0)
   const payoutUsd = apiSummary?.payoutUsd ?? settled.reduce((sum, w) => sum + w.payoutUsd, 0)
-  const netUsd = apiSummary?.netUsd ?? settled.reduce((sum, w) => sum + (w.netUsd ?? 0), 0)
   const currentCapital = startingCapital + netUsd
   const capitalReturnPct = startingCapital > 0 ? (netUsd / startingCapital) * 100 : 0
   const roiPct = costUsd > 0 ? (netUsd / costUsd) * 100 : 0
 
-  const nets = settled.map((w) => w.netUsd ?? 0)
+  const nets = settled.map(netOf)
   const wins = nets.filter((n) => n > 0)
   const losses = nets.filter((n) => n < 0).map((n) => Math.abs(n))
   const scratches = nets.filter((n) => n === 0)
 
-  const winsCount = apiSummary?.winsCount ?? apiSummary?.profitable ?? wins.length
-  const lossesCount = apiSummary?.lossesCount ?? losses.length
+  const winsCount = wins.length
+  const lossesCount = losses.length
   const scratchCount = scratches.length
   const winRate = settled.length > 0 ? winsCount / settled.length : 0
   const lossRate = settled.length > 0 ? lossesCount / settled.length : 0
 
-  const grossProfitUsd = apiSummary?.grossProfitUsd ?? wins.reduce((sum, n) => sum + n, 0)
-  const grossLossUsd = apiSummary?.grossLossUsd ?? losses.reduce((sum, n) => sum + n, 0)
+  const grossProfitUsd = wins.reduce((sum, n) => sum + n, 0)
+  const grossLossUsd = losses.reduce((sum, n) => sum + n, 0)
 
   const profitFactor =
-    apiSummary?.profitFactor ??
-    (grossLossUsd > 0 ? grossProfitUsd / grossLossUsd : grossProfitUsd > 0 ? 99 : 0)
+    grossLossUsd > 0 ? grossProfitUsd / grossLossUsd : grossProfitUsd > 0 ? 99 : 0
 
-  const avgWinUsd =
-    apiSummary?.avgWinUsd ?? (winsCount > 0 ? grossProfitUsd / winsCount : 0)
-  const avgLossUsd =
-    apiSummary?.avgLossUsd ?? (lossesCount > 0 ? grossLossUsd / lossesCount : 0)
+  const avgWinUsd = winsCount > 0 ? grossProfitUsd / winsCount : 0
+  const avgLossUsd = lossesCount > 0 ? grossLossUsd / lossesCount : 0
 
-  const payoffRatio =
-    apiSummary?.payoffRatio ??
-    (avgLossUsd > 0 ? avgWinUsd / avgLossUsd : avgWinUsd > 0 ? 99 : 0)
+  const payoffRatio = avgLossUsd > 0 ? avgWinUsd / avgLossUsd : avgWinUsd > 0 ? 99 : 0
 
-  const expectancyUsd =
-    apiSummary?.expectancyUsd ?? (settled.length > 0 ? netUsd / settled.length : 0)
-  const expectancyRatio =
-    apiSummary?.expectancyRatio ?? (winRate * payoffRatio - lossRate)
+  const expectancyUsd = settled.length > 0 ? netUsd / settled.length : 0
+  const expectancyRatio = winRate * payoffRatio - lossRate
   const activeRate = (winsCount + lossesCount) / (settled.length || 1)
   const breakEvenWinRate =
     apiSummary?.breakEvenWinRate !== undefined
@@ -142,8 +161,8 @@ export function computeKpiStats(
 
   // 105,120 5-minute windows in a 365-day year
   const ANNUAL_FACTOR = Math.sqrt(288 * 365)
-  let sharpeRatio = apiSummary?.sharpeRatio ?? 0
-  let sortinoRatio = apiSummary?.sortinoRatio ?? 0
+  let sharpeRatio = 0
+  let sortinoRatio = 0
   let windowSharpe = 0
   let volatilityUsd = 0
 
@@ -156,9 +175,7 @@ export function computeKpiStats(
 
     if (stdev > 0.0001) {
       windowSharpe = mean / stdev
-      if (!apiSummary?.sharpeRatio) {
-        sharpeRatio = windowSharpe * ANNUAL_FACTOR
-      }
+      sharpeRatio = windowSharpe * ANNUAL_FACTOR
     }
 
     const downsideSquares = nets.reduce(
@@ -168,12 +185,10 @@ export function computeKpiStats(
     const downsideVariance = downsideSquares / nets.length
     const downsideStdev = Math.sqrt(downsideVariance)
 
-    if (!apiSummary?.sortinoRatio) {
-      if (downsideStdev > 0.0001) {
-        sortinoRatio = (mean / downsideStdev) * ANNUAL_FACTOR
-      } else if (mean > 0) {
-        sortinoRatio = 99
-      }
+    if (downsideStdev > 0.0001) {
+      sortinoRatio = (mean / downsideStdev) * ANNUAL_FACTOR
+    } else if (mean > 0) {
+      sortinoRatio = 99
     }
   }
 
@@ -185,7 +200,7 @@ export function computeKpiStats(
   let maxDdPct = 0
 
   for (const w of sortedChronological) {
-    const n = w.netUsd ?? 0
+    const n = netOf(w)
     equity += n
     if (equity > peak) peak = equity
     const dd = peak - equity
@@ -204,7 +219,7 @@ export function computeKpiStats(
   let streak = 0
 
   for (const w of sortedChronological) {
-    const n = w.netUsd ?? 0
+    const n = netOf(w)
     if (n > 0) {
       streak = streak > 0 ? streak + 1 : 1
       if (streak > maxWinStreak) maxWinStreak = streak
@@ -220,10 +235,10 @@ export function computeKpiStats(
   // Directional metrics
   const upWindows = settled.filter((w) => w.winner === 'Up')
   const downWindows = settled.filter((w) => w.winner === 'Down')
-  const upWins = upWindows.filter((w) => (w.netUsd ?? 0) > 0).length
-  const downWins = downWindows.filter((w) => (w.netUsd ?? 0) > 0).length
-  const upNetUsd = upWindows.reduce((sum, w) => sum + (w.netUsd ?? 0), 0)
-  const downNetUsd = downWindows.reduce((sum, w) => sum + (w.netUsd ?? 0), 0)
+  const upWins = upWindows.filter((w) => netOf(w) > 0).length
+  const downWins = downWindows.filter((w) => netOf(w) > 0).length
+  const upNetUsd = upWindows.reduce((sum, w) => sum + netOf(w), 0)
+  const downNetUsd = downWindows.reduce((sum, w) => sum + netOf(w), 0)
   const upWinRate = upWindows.length > 0 ? upWins / upWindows.length : 0
   const downWinRate = downWindows.length > 0 ? downWins / downWindows.length : 0
 
@@ -245,6 +260,13 @@ export function computeKpiStats(
     roiPct,
     costUsd,
     payoutUsd,
+    feesUsd,
+    takerRebateUsd,
+    makerRebateUsd,
+    rebatesUsd,
+    netBeforeRebateUsd,
+    rebatesPerWindow: settled.length > 0 ? rebatesUsd / settled.length : 0,
+    rebateRate: tierRate,
 
     winRate,
     lossRate,
@@ -262,8 +284,8 @@ export function computeKpiStats(
     breakEvenWinRate,
     edgePct,
 
-    sharpeRatio: apiSummary?.sharpeRatio ?? sharpeRatio,
-    sortinoRatio: apiSummary?.sortinoRatio ?? sortinoRatio,
+    sharpeRatio,
+    sortinoRatio,
     windowSharpe,
     volatilityUsd,
     maxDrawdownUsd: apiSummary?.maxDrawdownUsd ?? maxDdUsd,
@@ -277,8 +299,8 @@ export function computeKpiStats(
         ? apiSummary.currentDrawdownPct * 100
         : currentDrawdownPct,
     highWaterUsd: peak,
-    bestUsd: apiSummary?.bestUsd ?? (nets.length > 0 ? Math.max(...nets) : 0),
-    worstUsd: apiSummary?.worstUsd ?? (nets.length > 0 ? Math.min(...nets) : 0),
+    bestUsd: nets.length > 0 ? Math.max(...nets) : 0,
+    worstUsd: nets.length > 0 ? Math.min(...nets) : 0,
 
     currentStreak: apiSummary?.currentStreak ?? currentStreak,
     maxWinStreak: apiSummary?.maxWinStreak ?? maxWinStreak,
@@ -286,12 +308,12 @@ export function computeKpiStats(
 
     upCount: upWindows.length,
     downCount: downWindows.length,
-    upWins: apiSummary?.upWinRate !== undefined ? (apiSummary.upWins ?? upWins) : upWins,
-    downWins: apiSummary?.downWinRate !== undefined ? (apiSummary.downWins ?? downWins) : downWins,
-    upWinRate: apiSummary?.upWinRate ?? upWinRate,
-    downWinRate: apiSummary?.downWinRate ?? downWinRate,
-    upNetUsd: apiSummary?.upNetUsd ?? upNetUsd,
-    downNetUsd: apiSummary?.downNetUsd ?? downNetUsd,
+    upWins,
+    downWins,
+    upWinRate,
+    downWinRate,
+    upNetUsd,
+    downNetUsd,
     upFills: apiSummary?.upFills ?? settled.reduce((sum, w) => sum + w.upFills, 0),
     downFills: apiSummary?.downFills ?? settled.reduce((sum, w) => sum + w.downFills, 0),
 
