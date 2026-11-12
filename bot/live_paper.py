@@ -535,6 +535,16 @@ def trade_window(
                 continue
             try:
                 changed = verify_fills(fills, _tape_dir, window_start_s=float(slot))
+                if changed > 0:
+                    # Persist the new statuses: the sync loop preserves whatever
+                    # fills it last read, so without this write the API keeps
+                    # serving stale statuses until the next fill calls write_state().
+                    with _STATE_LOCK:
+                        if STATE_PATH.exists():
+                            st = json.loads(STATE_PATH.read_text())
+                            if st.get("slug") == slug:
+                                st["fills"] = fills
+                                _atomic_write_json(STATE_PATH, st)
                 if changed > 0 and verbose:
                     stats = {s: 0 for s in ("verified", "partial", "unverified", "pending")}
                     for f in fills:

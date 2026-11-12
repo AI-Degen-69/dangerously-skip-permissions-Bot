@@ -109,6 +109,14 @@ class TestVerifySingleFill(unittest.TestCase):
         result = verify_single_fill(fill, prints)
         self.assertEqual(result["tapeStatus"], "pending")
 
+    def test_grace_period_bypassed_when_forced(self):
+        # The window-close final pass force-verifies, so a fill younger than
+        # the grace period must still get a definitive status.
+        fill = _make_fill(ts_ms=int(time.time() * 1000))  # just now
+        prints = [_make_print(price=0.42, size=100.0, ts=time.time())]
+        result = verify_single_fill(fill, prints, force=True)
+        self.assertEqual(result["tapeStatus"], "verified")
+
     def test_wrong_outcome_ignored(self):
         fill = _make_fill(outcome="Down", price=0.42, shares=10, ts_ms=int((time.time() - 60) * 1000))
         prints = [_make_print(outcome="Up", price=0.42, size=100.0, ts=time.time() - 30)]

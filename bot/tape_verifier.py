@@ -70,11 +70,15 @@ def verify_single_fill(
     fill: dict,
     prints: list[dict],
     now_s: float | None = None,
+    force: bool = False,
 ) -> dict[str, Any]:
     """Verify one fill against a list of prints for the same window.
 
     Returns a dict of detail fields to merge into fill['detail']:
       tapeStatus, tapePrintSize, tapePrintCount, tapeCheckedAt
+
+    If force=True, the grace period is bypassed so a recent fill that is never
+    revisited (the window-close final pass) still gets a definitive status.
     """
     if now_s is None:
         now_s = time.time()
@@ -95,8 +99,8 @@ def verify_single_fill(
             "tapeCheckedAt": _utc_now_iso(),
         }
 
-    # Grace period: too recent to verify
-    if now_s - fill_ts_s < GRACE_PERIOD_S:
+    # Grace period: too recent to verify (bypassed by the forced final pass)
+    if not force and now_s - fill_ts_s < GRACE_PERIOD_S:
         return {
             "tapeStatus": "pending",
             "tapePrintSize": 0,
@@ -177,7 +181,7 @@ def verify_fills(
         if not force and current == "unverified-taker":
             continue
 
-        result = verify_single_fill(fill, prints, now_s=now_s)
+        result = verify_single_fill(fill, prints, now_s=now_s, force=force)
 
         # Check if status actually changed
         if result["tapeStatus"] != current:
