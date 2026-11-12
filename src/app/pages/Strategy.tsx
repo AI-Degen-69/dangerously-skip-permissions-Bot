@@ -40,16 +40,24 @@ const cents = (v: number | undefined | null) => {
 const usd = (v: number | undefined | null, digits = 3) => (v == null ? '—' : `$${Number(v).toFixed(digits)}`)
 const sh = (v: number | undefined | null) => (v == null ? '—' : `${Number(v)} sh`)
 
-/** bot/executor.py dip_curve_shares(): linear in price, rounded to whole shares. */
-function curveShares(curve: { lo: number; hi: number; sharesLo: number; sharesHi: number }, price: number) {
+/** bot/executor.py dip_curve_shares(): linear in price, rounded to whole shares.
+ *  Python's round() is half-to-even, so mirror that instead of Math.round. */
+function curveShares(
+  curve: { lo: number; hi: number; sharesLo: number; sharesHi: number },
+  price: number,
+  maxClip: number,
+) {
   const lo = Number(curve.lo)
   const hi = Number(curve.hi)
   const a = hi > lo ? Math.min(Math.max((price - lo) / (hi - lo), 0), 1) : 0
-  return Math.round(Number(curve.sharesLo) + (Number(curve.sharesHi) - Number(curve.sharesLo)) * a)
+  const raw = Number(curve.sharesLo) + (Number(curve.sharesHi) - Number(curve.sharesLo)) * a
+  const floor = Math.floor(raw)
+  const halfToEven = Math.abs(raw - floor) === 0.5 ? (floor % 2 === 0 ? floor : floor + 1) : Math.round(raw)
+  return Math.min(Math.max(0, halfToEven), maxClip)
 }
 
-/** Where the dollar cap actually bites on the live curve: a clip that costs more
- *  than maxUnhedgedUsd is refused whenever it leaves a net unhedged lead. */
+/** Where the dollar cap actually bites on the live curve: a clip is refused when
+ *  it would leave more than maxUnhedgedUsd of net unhedged cost. */
 function curveProfile(picked: StrategySetup) {
   const e = picked.entry
   const curve = e.dipCurve
@@ -57,11 +65,13 @@ function curveProfile(picked: StrategySetup) {
   if (!curve) return null
   const loC = Math.round(Number(curve.lo) * 100)
   const hiC = Math.round(Number(curve.hi) * 100)
+  const maxClip = Number(e.maxShares)
+  const costAt = (c: number) => curveShares(curve, c / 100, maxClip) * (c / 100)
   let peakCost = 0
   let peakPx = loC
   const refused: number[] = []
   for (let c = loC; c <= hiC; c++) {
-    const cost = curveShares(curve, c / 100) * (c / 100)
+    const cost = costAt(c)
     if (cost > peakCost) {
       peakCost = cost
       peakPx = c
@@ -69,8 +79,8 @@ function curveProfile(picked: StrategySetup) {
     if (gapUsd > 0 && cost > gapUsd) refused.push(c)
   }
   return {
-    costLo: curveShares(curve, Number(curve.lo)) * Number(curve.lo),
-    costHi: curveShares(curve, Number(curve.hi)) * Number(curve.hi),
+    costLo: costAt(loC),
+    costHi: costAt(hiC),
     peakCost,
     peakPx,
     refusedFrom: refused.length ? refused[0] : null,
@@ -87,7 +97,7 @@ function sizingLine(picked: StrategySetup) {
     const gapUsd = Number(entry.maxUnhedgedUsd ?? 0)
     const refused =
       profile.refusedFrom != null
-        ? ` Above ${usd(gapUsd, 2)} a clip is refused, so fresh dips between ${profile.refusedFrom}¢ and ${profile.refusedTo}¢ never fill (the cap only bites when the fill leaves a net unhedged lead).`
+        ? ` The cap refuses a clip that would leave more than ${usd(gapUsd, 2)} of net unhedged cost. From a flat book that means fresh dips between ${profile.refusedFrom}¢ and ${profile.refusedTo}¢ never fill, though they can fill when the other side already holds shares that keep the net lead small.`
         : ''
     return {
       label: 'Inverse-dip curve',
@@ -134,7 +144,7 @@ function specRows(picked: StrategySetup) {
       key: 'Unhedged gap cap',
       value: gapUsd > 0 ? `≤ ${usd(gapUsd, 2)} net unhedged cost · ≤ ${sh(lead)} lead` : `never ${sh(lead)} on one side`,
       note: gapUsd > 0
-        ? `Both vetoes are live: the ${usd(gapUsd, 2)} cap refuses a clip that would cost more than that, and the ${sh(lead)} share knob refuses a clip that would push the leading side to it. The knob binds first on deep dips — a second ${sh(e.dipCurve?.sharesLo ?? e.clipSharesDefault)} clip at ${cents(e.dipCurve?.lo ?? e.minFillPrice)} costs only $${(2 * Number(e.dipCurve?.sharesLo ?? e.clipSharesDefault) * Number(e.dipCurve?.lo ?? e.minFillPrice)).toFixed(2)} but would leave ${sh(2 * Number(e.dipCurve?.sharesLo ?? e.clipSharesDefault))} shares unhedged. Paired volume stays uncapped.`
+        ? `Both vetoes are live: the ${usd(gapUsd, 2)} cap refuses a clip that would leave more than that in net unhedged cost, and the ${sh(lead)} share knob refuses a clip that would push the leading side to it. The knob binds first on deep dips — a second ${sh(e.dipCurve?.sharesLo ?? e.clipSharesDefault)} clip at ${cents(e.dipCurve?.lo ?? e.minFillPrice)} costs only $${(2 * Number(e.dipCurve?.sharesLo ?? e.clipSharesDefault) * Number(e.dipCurve?.lo ?? e.minFillPrice)).toFixed(2)} but would leave ${2 * Number(e.dipCurve?.sharesLo ?? e.clipSharesDefault)} shares unhedged. Paired volume stays uncapped.`
         : `The share knob is a strict veto, so the largest unhedged lead ever held is ${sh(lead - 1)}.`,
     },
     {
@@ -312,7 +322,9 @@ export function Strategy() {
       if (el) observer.observe(el)
     }
     return () => observer.disconnect()
-  }, [])
+    // Re-run once the sections exist: they mount only after the API reports the
+    // active setup, and the observer has no targets before that.
+  }, [picked?.id])
 
   const jumpTo = (id: string) => {
     setActiveId(id)
@@ -323,6 +335,7 @@ export function Strategy() {
   const entry = picked?.entry
   const others = allSetups.filter((s) => s.id !== picked?.id)
   const gapUsd = Number(entry?.maxUnhedgedUsd ?? 0)
+  const profile = picked ? curveProfile(picked) : null
   const rescuePx = entry?.rescueCeilingPrice
   const rescuePc = entry?.rescuePairCostMax
   // Deepest-dip clip, used for the "knob binds first" example.
@@ -460,7 +473,9 @@ export function Strategy() {
                 {gapUsd > 0 ? usd(gapUsd, 2) : `${entry.maxShareLead} sh`}
               </p>
               <p className="text-[11.5px] text-muted">
-                {gapUsd > 0 ? `net cost at risk · ${entry.maxShareLead} sh knob as backup` : 'net lead never reaches the knob'}
+                {gapUsd > 0
+                  ? `net cost at risk · ${entry.maxShareLead} sh knob also live`
+                  : 'net lead never reaches the knob'}
               </p>
             </div>
 
@@ -545,16 +560,20 @@ export function Strategy() {
                       <span className="text-[13.5px] font-semibold text-fg">2. Price-aware clip sizing</span>
                     </div>
                     <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted">
-                      {entry?.dipCurve ? (
+                      {profile && entry?.dipCurve ? (
                         <>
                           Clips are linear in price, then rounded to whole shares:{' '}
                           <code className="font-mono">{entry.dipCurve.sharesLo} sh</code> at{' '}
                           <code className="font-mono">{cents(entry.dipCurve.lo)}</code> falling to{' '}
                           <code className="font-mono">{entry.dipCurve.sharesHi} sh</code> at{' '}
-                          <code className="font-mono">{cents(entry.dipCurve.hi)}</code>. The cost of a clip rises with
-                          the price and peaks in the middle of the band, where the{' '}
+                          <code className="font-mono">{cents(entry.dipCurve.hi)}</code>. A clip therefore costs about{' '}
+                          <code className="font-mono">${profile.costLo.toFixed(2)}</code> at the bottom of the band,
+                          peaks at <code className="font-mono">${profile.peakCost.toFixed(2)}</code> around{' '}
+                          <code className="font-mono">{profile.peakPx}¢</code>, then falls back to{' '}
+                          <code className="font-mono">${profile.costHi.toFixed(2)}</code> as the share count thins —
+                          and that peak is where the{' '}
                           <code className="font-mono">{usd(Number(entry.maxUnhedgedUsd ?? 0), 2)}</code> unhedged cap
-                          refuses it.
+                          refuses the clip.
                         </>
                       ) : (
                         <>
@@ -810,7 +829,7 @@ export function Strategy() {
                   </p>
                   <p className="text-[12px] text-muted">
                     {gapUsd > 0
-                      ? `Net unhedged cost vetoed above the cap; the ${entry?.maxShareLead} sh knob is a backup`
+                      ? `Net unhedged cost vetoed above the cap; the ${entry?.maxShareLead} sh knob is a second, independent veto`
                       : 'A fill leaving the leader at the knob is vetoed, so the knob is never held'}
                   </p>
                 </div>
@@ -971,8 +990,14 @@ export function Strategy() {
               {picked ? `${picked.symbol} — ${picked.name}` : 'No active setup reported'}
             </p>
             <p className="text-[12.5px] text-muted">
-              This page mirrors <code className="font-mono">bot/config.json</code>; the engine re-reads it every
-              window. Running on port 5173 → {BOT_ORIGIN}.
+              {picked ? (
+                <>
+                  This page mirrors <code className="font-mono">bot/config.json</code>; the engine re-reads it every
+                  window. Running on port 5173 → {BOT_ORIGIN}.
+                </>
+              ) : (
+                <>Running on port 5173 → {BOT_ORIGIN}.</>
+              )}
             </p>
           </div>
         </div>
