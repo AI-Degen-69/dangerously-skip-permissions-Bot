@@ -802,10 +802,16 @@ def trade_window(
             (ws.windows_dir / f"{slug}.json").write_text(json.dumps(result, indent=2))
         except Exception as ex:
             log(f"warning: failed to save {slug}.json to workspace {ws.run_id}: {ex}")
+    # Keep this window's state on disk after the cutoff. The market still has to
+    # resolve and the desk has to show what is being held into resolution; the
+    # old unlink() here blanked the position strip for the last 75s of every
+    # window. The next window overwrites it, and settle_slug removes it once the
+    # outcome is known.
     try:
-        STATE_PATH.unlink()
-    except OSError:
-        pass
+        write_state(slug, end_ms, started_ms, fills,
+                    ws_status=streamer.get_status(), recent_ticks=streamer.get_recent_ticks(30))
+    except Exception as ex:
+        log(f"warning: failed to persist the held window state: {type(ex).__name__}")
     log(f"window closed, {len(fills)} fills, cost ${cost:.2f} — settling in background…")
     snap = {
         "slug": slug,
@@ -885,6 +891,17 @@ def settle_slug(slug: str, snap: dict, origin: str | None, budget_s: int = 900) 
             (ws.windows_dir / f"{slug}.json").write_text(json.dumps(result, indent=2))
     except OSError:
         pass
+    # The window is resolved, so the held-position snapshot has done its job.
+    # Only clear it if it still belongs to this slug — the loop may already have
+    # written the next window's state.
+    with _STATE_LOCK:
+        try:
+            if STATE_PATH.exists():
+                st = json.loads(STATE_PATH.read_text())
+                if st.get("slug") == slug:
+                    STATE_PATH.unlink()
+        except (OSError, ValueError):
+            pass
     log_event("settle", "paper-resolve", slug,
               detail={"winner": winner, "fills": len(fills), "cost": cost,
                       "payout": payout, "net": net})
