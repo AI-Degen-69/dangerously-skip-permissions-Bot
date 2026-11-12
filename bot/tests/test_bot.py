@@ -116,6 +116,24 @@ class RiskTests(unittest.TestCase):
             assert_single_window("btc-updown-5m-new", p)
             self.assertFalse(p.exists())
 
+    def test_single_window_yields_when_owner_is_only_holding(self):
+        import time
+
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "state.json"
+            future_ms = int((time.time() + 30) * 1000)
+            p.write_text(json.dumps({
+                "slug": "btc-updown-5m-holding",
+                "endMs": future_ms,
+                "updatedAtMs": int(time.time() * 1000),
+                "closed": True,
+            }))
+            # Past its cutoff the owner is holding to resolution, not trading, so
+            # the next window may claim the desk — without deleting the snapshot
+            # the desk still reads for the held position.
+            assert_single_window("btc-updown-5m-next", p)
+            self.assertTrue(p.exists())
+
     def test_single_window_retires_stale_heartbeat(self):
         import time
 
