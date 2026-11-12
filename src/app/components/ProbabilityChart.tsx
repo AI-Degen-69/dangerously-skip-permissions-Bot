@@ -101,9 +101,13 @@ export function ProbabilityChart({
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     window.addEventListener('resize', measure)
+    window.addEventListener('focus', measure)
+    document.addEventListener('visibilitychange', measure)
     return () => {
       ro.disconnect()
       window.removeEventListener('resize', measure)
+      window.removeEventListener('focus', measure)
+      document.removeEventListener('visibilitychange', measure)
     }
   }, [measure])
 
@@ -160,16 +164,16 @@ export function ProbabilityChart({
     return { marks, labels }
   }, [ticks, plotW, span, market.startMs])
 
-  // Fills are drawn where they happened: x from the fill time, y from its price,
-  // so the marker sits on the curve at the moment the bot paid for that side.
-  // Outside-window fills are dropped rather than clamped onto an edge.
+  // Fills are drawn at their fill time (x-axis) and fill price (y-axis).
+  // Pre-open pipeline fills (placed up to ~15 s before startMs) are clamped to
+  // the left edge of the chart so they remain visible rather than being dropped.
   const marks = useMemo(
     () =>
       fills
-        .filter((f) => f.atMs >= market.startMs && f.atMs <= market.endMs)
+        .filter((f) => f.atMs <= market.endMs && f.atMs >= market.startMs - 30_000)
         .map((f) => ({
           ...f,
-          x: projectX(f.atMs, market.startMs, span, plotW),
+          x: projectX(Math.max(f.atMs, market.startMs), market.startMs, span, plotW),
           // The axis is implied-Up odds, so a Down fill belongs at its complement.
           y: projectY(f.side === 'Down' ? 1 - f.price : f.price, PAD, floorY),
         })),

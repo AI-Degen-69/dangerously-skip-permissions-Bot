@@ -427,6 +427,7 @@ class TradesViewLiveTests(unittest.TestCase):
                 "risk": {"dailyLossCapUsd": 1500.0}
             }))
             with patch.object(api, "CONFIG_PATH", cfg_file), \
+                 patch.object(api, "runs", return_value=[]), \
                  patch.object(api, "state", return_value=None), \
                  patch.object(api, "is_view_only", return_value=False), \
                  patch.object(api, "live_markets", return_value=[]):

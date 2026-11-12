@@ -359,6 +359,36 @@ def visible_slots(now_ts: int | None = None) -> list[int]:
 _WINDOW_SPEC_CACHE: dict[str, object] = {}
 _LAST_MARKETS: list[dict] = []
 _ODDS_HISTORY: dict[str, list[dict]] = {}
+_BACKGROUND_SAMPLER_STOP = threading.Event()
+_BACKGROUND_SAMPLER_THREAD: threading.Thread | None = None
+
+
+def _background_odds_sampler() -> None:
+    """Continuously record odds history in the background so data is never lost
+    even if the user is tabbed out, the browser is closed, or polling pauses."""
+    while not _BACKGROUND_SAMPLER_STOP.is_set():
+        try:
+            st = state()
+            if st and st.get("slug") and st.get("oddsHistory"):
+                _ODDS_HISTORY[st["slug"]] = list(st["oddsHistory"])
+            elif not is_view_only():
+                cfg = load_config()
+                live_markets(cfg)
+        except Exception:
+            pass
+        _BACKGROUND_SAMPLER_STOP.wait(1.5)
+
+
+def start_background_sampler() -> None:
+    global _BACKGROUND_SAMPLER_THREAD
+    if _BACKGROUND_SAMPLER_THREAD is None or not _BACKGROUND_SAMPLER_THREAD.is_alive():
+        _BACKGROUND_SAMPLER_STOP.clear()
+        _BACKGROUND_SAMPLER_THREAD = threading.Thread(
+            target=_background_odds_sampler,
+            daemon=True,
+            name="Api-OddsSampler",
+        )
+        _BACKGROUND_SAMPLER_THREAD.start()
 
 
 def live_markets(cfg: dict) -> list[dict]:
@@ -451,10 +481,25 @@ def live_markets(cfg: dict) -> list[dict]:
             imp_up = None
 
         hist = _ODDS_HISTORY.setdefault(slug, [])
-        if imp_up is not None and (not hist or now_ms - hist[-1]["t"] >= 1500):
-            hist.append({"t": now_ms, "v": imp_up})
-            if len(hist) > 500:
-                hist.pop(0)
+        state_hist = curr_state.get("oddsHistory") if (curr_state and curr_state.get("slug") == slug) else None
+        # Trust state history only when its latest sample is fresh (within 2× the
+        # sampler interval). When it is stale — e.g. the sync loop fell behind —
+        # keep the history and append a fresh REST-derived sample so the chart
+        # continues recording even if WebSocket quotes are unavailable.
+        _STATE_HIST_MAX_AGE_MS = 3_000  # 2× the 1.5 s sampler interval
+        if state_hist and (now_ms - state_hist[-1]["t"]) < _STATE_HIST_MAX_AGE_MS:
+            hist = list(state_hist)
+            _ODDS_HISTORY[slug] = hist
+        else:
+            if state_hist:
+                # Stale: seed in-memory history from state so we don't lose points,
+                # then fall through to append the fresh REST-derived sample below.
+                hist = list(state_hist)
+                _ODDS_HISTORY[slug] = hist
+            if imp_up is not None and (not hist or now_ms - hist[-1]["t"] >= 1500):
+                hist.append({"t": now_ms, "v": imp_up})
+                if len(hist) > 500:
+                    hist.pop(0)
 
         out.append({
             "slug": slug, "interval": "5m", "startMs": start_ms, "endMs": end_ms,
@@ -481,6 +526,7 @@ def live_markets(cfg: dict) -> list[dict]:
 
 
 def snapshot() -> dict:
+    start_background_sampler()
     cfg = load_config()
     bankroll = float(cfg.get("bankrollUsd", BANKROLL_DEFAULT))
     all_runs = runs()
@@ -1816,6 +1862,7 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=8789)
     args = ap.parse_args()
     try:
+        start_background_sampler()
         server = QuietThreadingHTTPServer(("127.0.0.1", args.port), Handler)
         print(f"paper desk API on http://127.0.0.1:{args.port} (loopback only, no keys)", flush=True)
         server.serve_forever()

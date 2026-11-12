@@ -470,6 +470,8 @@ export const useBotSnapshot = () =>
     placeholderData: (prev) => prev,
     refetchInterval: 2_000,
     refetchIntervalInBackground: true,
+    refetchOnWindowFocus: true,
+    staleTime: 1_000,
     retry: false,
   })
 
@@ -478,6 +480,8 @@ export const useBotEvents = () =>
     queryKey: ['bot', 'events'],
     queryFn: () => getJson<{ items: BotEvent[] }>('/events?limit=150'),
     refetchInterval: 3_000,
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: true,
     retry: false,
   })
 
@@ -488,6 +492,8 @@ export const useBotTrades = () =>
     // window's fills and drop its oldest chart markers.
     queryFn: () => getJson<{ items: BotTrade[] }>('/trades?limit=500'),
     refetchInterval: 5_000,
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: true,
     retry: false,
   })
 
@@ -496,6 +502,8 @@ export const useBotKpis = () =>
     queryKey: ['bot', 'kpis'],
     queryFn: () => getJson<{ kpis: BotKpis }>('/kpis'),
     refetchInterval: 5_000,
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: true,
     retry: false,
   })
 
@@ -505,6 +513,8 @@ export const useBotControl = () =>
     queryFn: () => getJson<BotControl>('/control'),
     placeholderData: (prev) => prev,
     refetchInterval: 3_000,
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: true,
     retry: false,
   })
 
@@ -514,6 +524,9 @@ export const useBotWsTicks = () =>
     queryFn: () => getJson<{ status: WsStatus; ticks: WsTick[] }>('/ws-ticks'),
     placeholderData: (prev) => prev,
     refetchInterval: 1_000,
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: true,
+    staleTime: 500,
     retry: false,
   })
 
@@ -522,6 +535,8 @@ export const useBotPerf = () =>
     queryKey: ['bot', 'perf'],
     queryFn: () => getJson<BotPerf>('/perf'),
     refetchInterval: 5_000,
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: true,
     retry: false,
   })
 
