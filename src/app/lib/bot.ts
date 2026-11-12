@@ -135,6 +135,11 @@ export interface StrategySetup {
     targetPairCost: number
     maxPairCost: number
     maxShareLead: number
+    maxUnhedgedUsd?: number
+    dipCurve?: { lo: number; hi: number; sharesLo: number; sharesHi: number }
+    rescuePairCostMax?: number
+    rescueCeilingPrice?: number
+    maxDepthShares?: number
     startAfterOpenSec: number
     stopBeforeCloseSec: number
     minSpacingMoveSec: number

@@ -2,13 +2,11 @@ import {
   Activity,
   AlertTriangle,
   BookOpen,
-  CheckCircle2,
   Clock,
   Coins,
   Cpu,
   Layers,
   Radio,
-  Scale,
   ShieldAlert,
   ShieldCheck,
   Sigma,
@@ -25,99 +23,157 @@ import { BOT_ORIGIN, useBotControl, useStrategySetups, mergeStrategySetups, type
 import { STRATEGY_PRESETS } from '../botDefaults'
 
 // ----------------------------------------------------------------------
-// 🎯 HAPCS-v1 Strategy Documentation:
-// Hybrid Arbitrage Pairing & Certainty Sniping v1
-// Reconstructed quantitatively from 27,091 on-chain fills across two consecutive
-// 24-hour ledgers (Nov 6–7: 17,416 rows; Nov 7–8: 10,748 rows) of wallet
-// 0xc53375ff94e96100f2b30a4b5775db35218d69a9 on Polymarket 5m BTC Up/Down.
+// This page documents whatever setup bot/config.json currently selects.
+// Every number below is read from the active setup's live entry block, so
+// switching setups on the Config page changes this text. The only fixed
+// content is the reference tape section, which is explicitly not live.
 // ----------------------------------------------------------------------
 
-const CONSTANTS_TABLE = [
-  {
-    name: 'STRATEGY_ID / SYMBOL',
-    value: 'hapcs-v1 · 🎯 HAPCS-v1',
-    location: 'bot/constants.py',
-    meaning: 'Identifies the reconstructed Hybrid Arbitrage Pairing & Certainty Sniping v1 engine across API and UI.',
-  },
-  {
-    name: 'STRADDLE_BAND',
-    value: '[0.34, 0.55] (34¢ – 55¢, median 43¢)',
-    location: 'bot/constants.py',
-    meaning: 'Opening straddle IQR measured across the first 30 seconds (T+0..30s) in the 24h ledger (median 43¢). Opens on the cheaper side first before hedging the opposite side.',
-  },
-  {
-    name: 'PRICE_FLOOR (minFillPrice)',
-    value: '0.07 (7¢)',
-    location: 'bot/constants.py · config.json',
-    meaning: 'Hard lower bound. Fills below 7¢ went 1-for-170 (−89.8% ROI) on the tape and are strictly refused.',
-  },
-  {
-    name: 'DIP_LADDER_MAX',
-    value: '0.50 (50¢)',
-    location: 'bot/constants.py',
-    meaning: 'Upper bound of passive Maker Dip Grid [7¢–50¢]. 67.5% of fills accumulate the cheaper leg at 0% fee with resting limit bids.',
-  },
-  {
-    name: 'DEAD_ZONE_BAND',
-    value: '(0.50, 0.75) (50¢ – 75¢)',
-    location: 'bot/constants.py',
-    meaning: 'Mid-band dead zone (only 14.4% of tape fills). Skipped unless equalizing a share deficit at pair cost ≤ $0.965; pivots to opposite token dip instead.',
-  },
-  {
-    name: 'HEDGE_FAV_BAND',
-    value: '[0.75, 0.95] (75¢ – 95¢)',
-    location: 'bot/constants.py',
-    meaning: 'Dynamic Arbitrage Pairing (Lagging-Leg Equalizer). Fills here aggressively buy the lagging share side to lock in matched pairs (+5.7% to +11.5% ROI/$).',
-  },
-  {
-    name: 'RESOLUTION_SNIPE_BAND',
-    value: '[0.90, 0.975] (90¢ – 97.5¢)',
-    location: 'bot/constants.py · executor.py',
-    meaning: 'Minute 4 (T-60s) resolution certainty snipe window. Captures high-certainty winner resolution up to 97.5¢ subject to pair cost cap.',
-  },
-  {
-    name: 'PRICE_CEILING (maxFillPrice)',
-    value: '0.975 (97.5¢)',
-    location: 'bot/constants.py · config.json',
-    meaning: 'Hard upper price cap (up to 97.5¢ for Minute 4 certainty sniping). Fills > 97.5¢ are strictly refused.',
-  },
-  {
-    name: 'HARD_CUTOFF_SBC (stopBeforeCloseSec)',
-    value: '12s before close (T+288s)',
-    location: 'bot/constants.py · config.json',
-    meaning: '99.83% of all on-chain fills occur ≥ 12s before expiry; the final 11 seconds have zero fills across 24 hours.',
-  },
-  {
-    name: 'PRE_OPEN_PIPELINE_S',
-    value: '10s (T-310s to T-300s)',
-    location: 'bot/constants.py · live_paper.py',
-    meaning: 'Phase 0 pre-open discovery, book initialization & resting limit order placement before window start.',
-  },
-  {
-    name: 'TAKER_FEE_COEFF',
-    value: '0.07 → fee = 0.07 · p · (1 − p)',
-    location: 'bot/constants.py · executor.py',
-    meaning: 'Exact Polymarket parabolic taker fee formula (peaks at 1.75¢/share at p = 0.50; 0¢ on passive Maker fills).',
-  },
-  {
-    name: 'PAIR_COST_BENCHMARK / MEAN / MAX',
-    value: '$0.965 benchmark (median $0.9654) · $0.9462 mean · ≤ $0.990 hard max',
-    location: 'bot/constants.py · executor.py',
-    meaning: 'Measured median combined cost (avg_Up + avg_Down) across 256 dual-sided windows is $0.9654 ($0.965 benchmark), and mean is $0.9462. Hard ceiling is strictly capped at ≤ $0.990 (< $1.00 bound); any pair cost > $1.00 is a guaranteed losing pair.',
-  },
-  {
-    name: 'MAX_SHARE_LEAD',
-    value: '90 shares (3x 30sh clips)',
-    location: 'bot/constants.py · executor.py',
-    meaning: 'Prevents one-sided runaway dip stacking; once a dipping side leads by 90 shares, further adds require opposite leg hedging or deep discount.',
-  },
-  {
-    name: 'LADDER_CLIPS',
-    value: '(50, 30, 25, 20, 15, 10, 5) shares',
-    location: 'bot/constants.py · executor.py',
-    meaning: 'Submitted order sizes are whole numbers (30 default, 50 max). The CSV 13.86 median is an artifact of partial Maker fills.',
-  },
-]
+const HARD_CUTOFF_S = 12 // bot/constants.py HARD_CUTOFF_SBC
+const PRE_OPEN_S = 10 // bot/constants.py PRE_OPEN_PIPELINE_S
+
+const cents = (v: number | undefined | null) => {
+  if (v == null) return '—'
+  const c = Math.round(Number(v) * 1000) / 10 // 0.985 -> 98.5, 0.45 -> 45
+  return `${Number.isInteger(c) ? c : c.toFixed(1)}¢`
+}
+const usd = (v: number | undefined | null, digits = 3) => (v == null ? '—' : `$${Number(v).toFixed(digits)}`)
+const sh = (v: number | undefined | null) => (v == null ? '—' : `${Number(v)} sh`)
+
+/** bot/executor.py dip_curve_shares(): linear in price, rounded to whole shares.
+ *  Python's round() is half-to-even, so mirror that instead of Math.round. */
+function curveShares(
+  curve: { lo: number; hi: number; sharesLo: number; sharesHi: number },
+  price: number,
+  maxClip: number,
+) {
+  const lo = Number(curve.lo)
+  const hi = Number(curve.hi)
+  const a = hi > lo ? Math.min(Math.max((price - lo) / (hi - lo), 0), 1) : 0
+  const raw = Number(curve.sharesLo) + (Number(curve.sharesHi) - Number(curve.sharesLo)) * a
+  const floor = Math.floor(raw)
+  const halfToEven = Math.abs(raw - floor) === 0.5 ? (floor % 2 === 0 ? floor : floor + 1) : Math.round(raw)
+  return Math.min(Math.max(0, halfToEven), maxClip)
+}
+
+/** Where the dollar cap actually bites on the live curve: a clip is refused when
+ *  it would leave more than maxUnhedgedUsd of net unhedged cost. */
+function curveProfile(picked: StrategySetup) {
+  const e = picked.entry
+  const curve = e.dipCurve
+  const gapUsd = Number(e.maxUnhedgedUsd ?? 0)
+  if (!curve) return null
+  const loC = Math.round(Number(curve.lo) * 100)
+  const hiC = Math.round(Number(curve.hi) * 100)
+  const maxClip = Number(e.maxShares)
+  const costAt = (c: number) => curveShares(curve, c / 100, maxClip) * (c / 100)
+  let peakCost = 0
+  let peakPx = loC
+  const refused: number[] = []
+  for (let c = loC; c <= hiC; c++) {
+    const cost = costAt(c)
+    if (cost > peakCost) {
+      peakCost = cost
+      peakPx = c
+    }
+    if (gapUsd > 0 && cost > gapUsd) refused.push(c)
+  }
+  return {
+    costLo: costAt(loC),
+    costHi: costAt(hiC),
+    peakCost,
+    peakPx,
+    refusedFrom: refused.length ? refused[0] : null,
+    refusedTo: refused.length ? refused[refused.length - 1] : null,
+  }
+}
+
+/** Sizing sentence + dollar cost of one clip, derived from the active entry block. */
+function sizingLine(picked: StrategySetup) {
+  const { entry } = picked
+  const curve = entry.dipCurve
+  const profile = curveProfile(picked)
+  if (curve && profile) {
+    const gapUsd = Number(entry.maxUnhedgedUsd ?? 0)
+    const refused =
+      profile.refusedFrom != null
+        ? ` The cap refuses a clip that would leave more than ${usd(gapUsd, 2)} of net unhedged cost. From a flat book that means fresh dips between ${profile.refusedFrom}¢ and ${profile.refusedTo}¢ never fill, though they can fill when the other side already holds shares that keep the net lead small.`
+        : ''
+    return {
+      label: 'Inverse-dip curve',
+      value: `${sh(curve.sharesLo)} at ${cents(curve.lo)} → ${sh(curve.sharesHi)} at ${cents(curve.hi)} (linear, whole shares)`,
+      cost: `One clip costs ≈ $${profile.costLo.toFixed(2)} at ${cents(curve.lo)} and ≈ $${profile.costHi.toFixed(2)} at ${cents(curve.hi)}, peaking at ≈ $${profile.peakCost.toFixed(2)} around ${profile.peakPx}¢.${refused}`,
+    }
+  }
+  return {
+    label: 'Clip sizing',
+    value: `${sh(entry.clipSharesDefault)} default · ${sh(entry.maxShares)} max`,
+    cost: 'Deficit-closing fills snap straight to the deficit instead of the default clip.',
+  }
+}
+
+function specRows(picked: StrategySetup) {
+  const e = picked.entry
+  const sizing = sizingLine(picked)
+  const gapUsd = Number(e.maxUnhedgedUsd ?? 0)
+  const lead = Number(e.maxShareLead)
+  const rescuePx = e.rescueCeilingPrice
+  const rescuePc = e.rescuePairCostMax
+  return [
+    {
+      key: 'Fresh dip band',
+      value: `${cents(e.minFillPrice)} – ${cents(e.maxFillPrice)}`,
+      note: 'Only prices inside this band are bought as fresh dips. Above it the engine waits for a hedge instead of chasing.',
+    },
+    { key: sizing.label, value: sizing.value, note: sizing.cost },
+    ...(e.dipCurve
+      ? [
+          {
+            key: 'Clip ceiling',
+            value: `${sh(e.maxShares)} on a deficit close`,
+            note: 'A deficit-closing fill snaps to the deficit, capped at the max clip.',
+          },
+        ]
+      : []),
+    {
+      key: 'Pair-cost gates',
+      value: `fresh ≤ ${usd(e.targetPairCost)} · gap-close ≤ ${usd(e.maxPairCost)}${rescuePc ? ` · rescue ≤ ${usd(rescuePc)}` : ''}`,
+      note: 'A pair must cost under $1.00 to be entered. Closing an existing deficit is allowed a wider gate because the alternative is a naked leg.',
+    },
+    {
+      key: 'Unhedged gap cap',
+      value: gapUsd > 0 ? `≤ ${usd(gapUsd, 2)} net unhedged cost · ≤ ${sh(lead)} lead` : `never ${sh(lead)} on one side`,
+      note: gapUsd > 0
+        ? `Both vetoes are live: the ${usd(gapUsd, 2)} cap refuses a clip that would leave more than that in net unhedged cost, and the ${sh(lead)} share knob refuses a clip that would push the leading side to it. The knob binds first on deep dips — a second ${sh(e.dipCurve?.sharesLo ?? e.clipSharesDefault)} clip at ${cents(e.dipCurve?.lo ?? e.minFillPrice)} costs only $${(2 * Number(e.dipCurve?.sharesLo ?? e.clipSharesDefault) * Number(e.dipCurve?.lo ?? e.minFillPrice)).toFixed(2)} but would leave ${2 * Number(e.dipCurve?.sharesLo ?? e.clipSharesDefault)} shares unhedged. Paired volume stays uncapped.`
+        : `The share knob is a strict veto, so the largest unhedged lead ever held is ${sh(lead - 1)}.`,
+    },
+    {
+      key: 'Rescue hedge ceiling',
+      value: `${cents(rescuePx)} per share${rescuePc ? ` at pair cost ≤ ${usd(rescuePc)}` : ''}`,
+      note: `Much higher than the ${cents(e.maxFillPrice)} fresh-dip ceiling: this is the price of closing a leg that would otherwise redeem at $0.00.`,
+    },
+    {
+      key: 'Late cutoff',
+      value: `no new dips after T−${e.stopBeforeCloseSec}s · hard stop T−${HARD_CUTOFF_S}s`,
+      note: 'Between the two the loop only equalizes an existing imbalance with resting maker orders.',
+    },
+    {
+      key: 'Fill spacing',
+      value: `${e.minSpacingMoveSec}s after a price move · ${e.minSpacingStaticSec}s on a static quote`,
+      note: `Prevents double-filling the same quote. Inside the sweep window (T−${e.stopBeforeCloseSec}s → T−${HARD_CUTOFF_S}s, while imbalanced) the spacing collapses to a flat ${e.minSpacingMoveSec}s.`,
+    },
+    {
+      key: 'Fees',
+      value: '0% maker · taker 0.07 · p · (1 − p)',
+      note: 'Passive fills pay nothing. The parabolic taker fee peaks at 1.75¢/share at 50¢.',
+    },
+    {
+      key: 'Window risk caps',
+      value: '500 fills per window · daily stop −$500 · 1 window at a time',
+      note: 'Enforced by check_window() before every clip, and by the daily settled-PnL check.',
+    },
+  ]
+}
 
 const CALIBRATION_SUMMARY = [
   {
@@ -127,57 +183,57 @@ const CALIBRATION_SUMMARY = [
     implied: '4.5%',
     actualWin: '0.6%',
     roiPct: '−89.8%',
-    verdict: 'Blocked by PRICE_FLOOR = 0.07',
+    verdict: 'Blocked by the 7¢ price floor',
     tone: 'danger' as const,
   },
   {
     band: '0.07 – 0.30',
-    role: 'Regime 2: Deep Maker Dip Ladder',
+    role: 'Deep Maker Dip Ladder',
     fills: '2,949 (28.8%)',
     implied: '19.1%',
     actualWin: '19.8%',
     roiPct: '+3.7%',
-    verdict: 'Lowers avg cost & accumulates cheap shares at 0% fee',
+    verdict: 'Lowers avg cost and accumulates shares at 0% fee',
     tone: 'success' as const,
   },
   {
     band: '0.30 – 0.50',
-    role: 'Regime 2: Core Maker Straddle Grid',
+    role: 'Core Maker Straddle Grid',
     fills: '3,932 (38.4%)',
     implied: '40.2%',
     actualWin: '41.9%',
     roiPct: '+4.2%',
-    verdict: 'Primary liquidity provision zone; 73% passive Maker',
+    verdict: 'Primary liquidity-provision zone, mostly passive maker',
     tone: 'success' as const,
   },
   {
     band: '0.50 – 0.75',
-    role: 'Regime 3: Mid-Band Dead Zone',
+    role: 'Mid-Band Dead Zone',
     fills: '1,475 (14.4%)',
     implied: '60.8%',
     actualWin: '59.4%',
     roiPct: '−2.3%',
-    verdict: 'Skipped unless equalizing deficit at pair cost < $0.98',
+    verdict: 'No fresh buys; only a deficit hedge may fill here',
     tone: 'warning' as const,
   },
   {
     band: '0.75 – 0.95',
-    role: 'Regime 1: Dynamic Pairing Equalizer',
+    role: 'Dynamic Pairing Equalizer',
     fills: '1,706 (16.7%)',
     implied: '83.1%',
     actualWin: '90.1%',
     roiPct: '+8.4%',
-    verdict: 'High-conviction share catch-up on lagging side',
+    verdict: 'High-conviction share catch-up on the lagging side',
     tone: 'accent' as const,
   },
   {
     band: '0.90 – 0.975',
-    role: 'Phase 3: Minute 4 Certainty Snipe',
+    role: 'Reference-only: M4 snipe tail',
     fills: 'Tape tail',
     implied: '93.5%',
     actualWin: '98.2%',
     roiPct: '+4.8%',
-    verdict: 'Certainty snipe & deficit close in final minute',
+    verdict: 'DSP setups never buy fresh here — only hedge a deficit',
     tone: 'info' as const,
   },
   {
@@ -187,60 +243,55 @@ const CALIBRATION_SUMMARY = [
     implied: '98.5%',
     actualWin: '75.0%',
     roiPct: '−20.7%',
-    verdict: 'Blocked by PRICE_CEILING = 0.975',
+    verdict: 'Blocked by the 97.5¢ ceiling of that tape (today a rescue hedge may pay 98.5¢)',
     tone: 'danger' as const,
   },
 ]
 
 const TOC = [
   {
-    id: 'strategy-overview',
-    label: '1. How It Works & Why It Has Edge',
-    short: '1. Edge & Core Thesis',
+    id: 'strategy-active',
+    label: '1. What the Active Engine Does',
+    short: '1. Active Engine',
     icon: Zap,
     children: [
       { id: 'core-thesis', label: 'The Sub-$1.00 Pair Arbitrage' },
-      { id: 'four-pillars', label: 'Four Pillars of Measured Edge' },
-      { id: 'calibration-proof', label: 'Calibration & Regime ROI Table' },
+      { id: 'four-pillars', label: 'Four Pillars of This Setup' },
     ],
   },
   {
-    id: 'strategy-regimes',
-    label: '2. Three-Regime Inventory & Fee Engine',
-    short: '2. 3-Regime Engine',
-    icon: Layers,
-    children: [
-      { id: 'price-spectrum', label: 'Bimodal Price Spectrum (0¢–100¢)' },
-      { id: 'three-regimes', label: 'Regimes 1, 2 & 3 Decision Logic' },
-      { id: 'fee-and-clip-math', label: 'Parabolic Fee & Ladder Clip Math' },
-    ],
-  },
-  {
-    id: 'strategy-constants',
-    label: '3. Reconstructed Constants',
-    short: '3. Constants Table',
+    id: 'strategy-spec',
+    label: '2. Active Parameters & Gates',
+    short: '2. Parameters',
     icon: Sigma,
-    children: [{ id: 'constants-ledger', label: 'Measured Constants Ledger' }],
+    children: [{ id: 'spec-table', label: 'Live Entry Block' }],
   },
   {
-    id: 'strategy-wiring',
-    label: '4. Live Paper Loop & API Wiring',
-    short: '4. Loop & API Wiring',
+    id: 'strategy-lifecycle',
+    label: '3. Window Lifecycle & Wiring',
+    short: '3. Lifecycle',
     icon: Cpu,
     children: [
-      { id: 'window-lifecycle', label: '300-Second Window Lifecycle' },
-      { id: 'ws-and-api', label: 'Zero-REST Dual-Book & Isolated API' },
+      { id: 'window-lifecycle', label: '300-Second Window' },
+      { id: 'ws-and-api', label: 'Dual-Book & API Wiring' },
     ],
   },
   {
     id: 'strategy-risks',
-    label: '5. Risks & What Worth Knowing',
-    short: '5. Risks & Nuances',
+    label: '4. Risks & Guardrails',
+    short: '4. Risks',
     icon: ShieldAlert,
     children: [
       { id: 'failure-modes', label: 'When a Window Loses Money' },
       { id: 'guardrails', label: 'Active Safety Guardrails' },
     ],
+  },
+  {
+    id: 'strategy-reference',
+    label: '5. Reference Tape (Not Live)',
+    short: '5. Reference Tape',
+    icon: BookOpen,
+    children: [{ id: 'tape-calibration', label: 'Price-Regime Calibration' }],
   },
 ] as const
 
@@ -251,7 +302,10 @@ export function Strategy() {
   const setupsQuery = useStrategySetups()
   const allSetups = mergeStrategySetups(setupsQuery.data?.setups, STRATEGY_PRESETS as unknown as Record<string, StrategySetup>)
   const pickedId = control.data?.strategy?.id ?? setupsQuery.data?.activeSetupId
-  const picked = allSetups.find((s) => s.id === pickedId) ?? allSetups[0]
+  // Never fall back to a preset: if the API cannot say which setup is active,
+  // naming any of them would claim a strategy is running when nothing says so.
+  const picked = pickedId ? allSetups.find((s) => s.id === pickedId) : undefined
+  const loading = control.isLoading || setupsQuery.isLoading
   const [activeId, setActiveId] = useState<string>(TOC[0].id)
 
   useEffect(() => {
@@ -268,22 +322,41 @@ export function Strategy() {
       if (el) observer.observe(el)
     }
     return () => observer.disconnect()
-  }, [])
+    // Re-run once the sections exist: they mount only after the API reports the
+    // active setup, and the observer has no targets before that.
+  }, [picked?.id])
 
   const jumpTo = (id: string) => {
     setActiveId(id)
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
+  const rows = picked ? specRows(picked) : []
+  const entry = picked?.entry
+  const others = allSetups.filter((s) => s.id !== picked?.id)
+  const gapUsd = Number(entry?.maxUnhedgedUsd ?? 0)
+  const profile = picked ? curveProfile(picked) : null
+  const rescuePx = entry?.rescueCeilingPrice
+  const rescuePc = entry?.rescuePairCostMax
+  // Deepest-dip clip, used for the "knob binds first" example.
+  const loPx = Number(entry?.dipCurve?.lo ?? entry?.minFillPrice ?? 0)
+  const loSh = Number(entry?.dipCurve?.sharesLo ?? entry?.clipSharesDefault ?? 0)
+
   return (
     <div className="mx-auto max-w-[1180px] p-5 sm:p-8">
       <PageHeader
         title={picked ? `Strategy · ${picked.symbol}` : 'Strategy'}
-        subtitle={picked ? `${picked.name} — ${picked.signature}` : 'Recovered from 27,091 on-chain fills.'}
+        subtitle={
+          picked
+            ? `${picked.name} — ${picked.signature}`
+            : loading
+              ? 'Reading the active setup from the bot API…'
+              : 'The bot API did not report an active setup.'
+        }
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone="accent" className="font-mono font-semibold">
-              {picked ? `${picked.symbol} · Engine` : 'Engine'}
+              {picked ? `${picked.symbol} · Active` : loading ? 'Reading setup…' : 'Setup unknown'}
             </Badge>
             <Badge tone="info" className="font-mono text-[11px]">
               API {BOT_ORIGIN}
@@ -298,241 +371,517 @@ export function Strategy() {
         }
       />
 
-      {picked && (
+      {picked && entry && (
         <Card className="mt-5 border-accent/40 p-5">
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone="success">Currently picked: {picked.symbol}</Badge>
             <span className="text-[14px] font-semibold text-fg">{picked.name}</span>
+            <Badge tone="neutral" className="font-mono text-[11px]">
+              {picked.id}
+            </Badge>
           </div>
           <p className="mt-1 font-mono text-[11.5px] text-muted">{picked.signature}</p>
           <p className="mt-2 text-[12.5px] leading-relaxed text-muted">{picked.description}</p>
           <div className="mt-3 flex flex-wrap gap-2 font-mono text-[11.5px]">
-            <span className="rounded-[8px] border border-line bg-surface px-2 py-1">Clip {picked.entry.clipSharesDefault} / max {picked.entry.maxShares} sh</span>
-            <span className="rounded-[8px] border border-line bg-surface px-2 py-1">Gap veto ≥{picked.entry.maxShareLead} sh</span>
-            <span className="rounded-[8px] border border-line bg-surface px-2 py-1">Pair cap ${Number(picked.entry.maxPairCost).toFixed(3)}</span>
-            <span className="rounded-[8px] border border-line bg-surface px-2 py-1">Max buy {Math.round(Number(picked.entry.maxFillPrice) * 100)}¢</span>
-            <span className="rounded-[8px] border border-line bg-surface px-2 py-1">Cutoff {picked.entry.stopBeforeCloseSec}s</span>
+            <span className="rounded-[8px] border border-line bg-surface px-2 py-1">
+              Band {cents(entry.minFillPrice)}–{cents(entry.maxFillPrice)}
+            </span>
+            <span className="rounded-[8px] border border-line bg-surface px-2 py-1">
+              {entry.dipCurve
+                ? `Curve ${entry.dipCurve.sharesLo}→${entry.dipCurve.sharesHi} sh`
+                : `Clip ${entry.clipSharesDefault} / max ${entry.maxShares} sh`}
+            </span>
+            <span className="rounded-[8px] border border-line bg-surface px-2 py-1">
+              {gapUsd > 0 ? `Gap cap $${gapUsd.toFixed(2)}` : `Gap veto ≥${entry.maxShareLead} sh`}
+            </span>
+            <span className="rounded-[8px] border border-line bg-surface px-2 py-1">
+              Pair cap ${Number(entry.maxPairCost).toFixed(3)}
+            </span>
+            <span className="rounded-[8px] border border-line bg-surface px-2 py-1">
+              Cutoff {entry.stopBeforeCloseSec}s
+            </span>
           </div>
+          {others.length > 0 && (
+            <details className="mt-4 border-t border-line pt-3">
+              <summary className="cursor-pointer text-[12.5px] font-medium text-muted hover:text-fg">
+                {others.length} other setup{others.length === 1 ? '' : 's'} in the registry — not active
+              </summary>
+              <ul className="mt-2 space-y-1">
+                {others.map((s) => (
+                  <li key={s.id} className="flex flex-wrap items-baseline gap-2 text-[12px] text-faint">
+                    <span className="font-mono text-[11.5px] text-muted">{s.symbol}</span>
+                    <span>{s.name}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
         </Card>
       )}
 
       {/* Top Executive Banner */}
-      <Card className="mt-5 border-accent/40 bg-accent-soft/15 p-6">
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge tone="accent">🎯 HAPCS-v1 (hapcs-v1)</Badge>
-          <Badge tone="success">72.95% Maker (0% Fee)</Badge>
-          <Badge tone="info">$0.965 Benchmark · $0.9462 Mean</Badge>
-          <Badge tone="warning">Hard Cap ≤ $0.990 (&lt; $1.00)</Badge>
-          <Badge tone="neutral">Hold-to-Redeem (0 Sells)</Badge>
-        </div>
-
-        <h2 className="mt-4 text-[17px] font-bold text-fg">
-          How It Works in Plain English: Buying $1.00 of Guaranteed Payout for $0.946–$0.965
-        </h2>
-        <p className="mt-2 text-[14px] leading-relaxed text-muted">
-          Instead of predicting whether Bitcoin will finish higher or lower in 5 minutes,{' '}
-          <strong className="font-semibold text-fg">🎯 HAPCS-v1</strong> harvests intra-window volatility by accumulating{' '}
-          <strong className="font-semibold text-fg">both outcomes (Up and Down)</strong> across the 300-second window so
-          that the combined average price of 1 Up share + 1 Down share stays{' '}
-          <strong className="font-semibold text-success">below $1.00 (measured median: $0.9654, mean: $0.9462)</strong>. Because every
-          binary market resolves to exactly $1.00 on one side and $0.00 on the other, holding equal shares of both sides
-          below $1.00 (with a strict hard cap at <strong className="font-semibold text-fg">≤ $0.990</strong>, ensuring zero losing pairs)
-          locks in <strong className="font-semibold text-fg">+$0.035 to +$0.054 per pair</strong>{' '}
-          regardless of which direction Bitcoin moves.
-        </p>
-
-        <div className="mt-5 grid gap-3 sm:grid-cols-4">
-          <div className="rounded-tile border border-line bg-surface p-3.5">
-            <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-faint">
-              <Coins className="size-3.5 text-success" /> Paired Straddle PnL
-            </span>
-            <p className="mt-1.5 font-mono text-[16px] font-bold text-success">+$4,123.52</p>
-            <p className="text-[11.5px] text-muted">249 dual-sided markets (64.6% win)</p>
+      {picked && entry && (
+        <Card className="mt-5 border-accent/40 bg-accent-soft/15 p-6">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone="accent">{picked.symbol}</Badge>
+            <Badge tone="info">Dip band {cents(entry.minFillPrice)}–{cents(entry.maxFillPrice)}</Badge>
+            <Badge tone="success">Fresh gate ≤ {usd(entry.targetPairCost)}</Badge>
+            {gapUsd > 0 && <Badge tone="warning">Gap cap {usd(gapUsd, 2)}</Badge>}
+            <Badge tone="neutral">Hold to redeem (no sells)</Badge>
           </div>
 
-          <div className="rounded-tile border border-line bg-surface p-3.5">
-            <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-faint">
-              <Scale className="size-3.5 text-accent" /> Mean Pair Cost
-            </span>
-            <p className="mt-1.5 font-mono text-[16px] font-bold text-fg">$0.9462</p>
-            <p className="text-[11.5px] text-muted">67.3% of windows &lt; $1.00 combined</p>
-          </div>
+          <h2 className="mt-4 text-[17px] font-bold text-fg">
+            How it works: buying $1.00 of guaranteed payout for under $1.00
+          </h2>
+          <p className="mt-2 text-[14px] leading-relaxed text-muted">
+            A binary market pays exactly $1.00 to one outcome and $0.00 to the other. Buy 1 Up share and 1 Down
+            share for a combined {usd(entry.targetPairCost)} and the pair is worth $1.00 at resolution no matter
+            what BTC does. <strong className="font-semibold text-fg">{picked.symbol}</strong> spends the 300-second
+            window accumulating both sides inside those gates: fresh dips only between{' '}
+            <strong className="font-semibold text-fg">{cents(entry.minFillPrice)} and {cents(entry.maxFillPrice)}</strong>,
+            then hedging the lagging side before the {entry.stopBeforeCloseSec}s cutoff.
+          </p>
 
-          <div className="rounded-tile border border-line bg-surface p-3.5">
-            <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-faint">
-              <Layers className="size-3.5 text-info" /> Maker / Taker Split
-            </span>
-            <p className="mt-1.5 font-mono text-[16px] font-bold text-fg">73.0% / 27.0%</p>
-            <p className="text-[11.5px] text-muted">0% fee on resting 1¢ grid bids</p>
-          </div>
+          <div className="mt-5 grid gap-3 sm:grid-cols-4">
+            <div className="rounded-tile border border-line bg-surface p-3.5">
+              <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-faint">
+                <Coins className="size-3.5 text-success" /> Fresh dip band
+              </span>
+              <p className="mt-1.5 font-mono text-[16px] font-bold text-fg">
+                {cents(entry.minFillPrice)} – {cents(entry.maxFillPrice)}
+              </p>
+              <p className="text-[11.5px] text-muted">Above the band: hedge only, never a fresh buy</p>
+            </div>
 
-          <div className="rounded-tile border border-line bg-surface p-3.5">
-            <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-faint">
-              <Clock className="size-3.5 text-warning" /> Hard Cutoff
-            </span>
-            <p className="mt-1.5 font-mono text-[16px] font-bold text-fg">T−12s (288s)</p>
-            <p className="text-[11.5px] text-muted">99.83% of fills land ≥12s pre-close</p>
-          </div>
-        </div>
-      </Card>
+            <div className="rounded-tile border border-line bg-surface p-3.5">
+              <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-faint">
+                <Layers className="size-3.5 text-accent" /> Clip sizing
+              </span>
+              <p className="mt-1.5 font-mono text-[16px] font-bold text-fg">
+                {entry.dipCurve ? `${entry.dipCurve.sharesLo}→${entry.dipCurve.sharesHi} sh` : `${entry.clipSharesDefault} sh`}
+              </p>
+              <p className="text-[11.5px] text-muted">
+                {entry.dipCurve ? `Fattest clips at ${cents(entry.dipCurve.lo)}, thinnest at ${cents(entry.dipCurve.hi)}` : `max ${entry.maxShares} sh`}
+              </p>
+            </div>
 
-      {/* Quick Jump Bar */}
-      <div className="mt-6 flex gap-2 overflow-x-auto pb-1" aria-label="Jump to section">
-        {TOC.map((item) => {
-          const isActive = activeId === item.id || item.children.some((child) => child.id === activeId)
-          const Icon = item.icon
-          return (
-            <Button
-              key={item.id}
-              variant={isActive ? 'primary' : 'secondary'}
-              size="md"
-              onClick={() => jumpTo(item.id)}
-              className="min-w-[165px] flex-1 whitespace-nowrap"
-              aria-current={isActive ? 'true' : undefined}
-            >
-              <Icon />
-              {item.short}
-            </Button>
-          )
-        })}
-      </div>
+            <div className="rounded-tile border border-line bg-surface p-3.5">
+              <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-faint">
+                <ShieldCheck className="size-3.5 text-warning" /> Unhedged cap
+              </span>
+              <p className="mt-1.5 font-mono text-[16px] font-bold text-fg">
+                {gapUsd > 0 ? usd(gapUsd, 2) : `${entry.maxShareLead} sh`}
+              </p>
+              <p className="text-[11.5px] text-muted">
+                {gapUsd > 0
+                  ? `net cost at risk · ${entry.maxShareLead} sh knob also live`
+                  : 'net lead never reaches the knob'}
+              </p>
+            </div>
+
+            <div className="rounded-tile border border-line bg-surface p-3.5">
+              <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-faint">
+                <Clock className="size-3.5 text-info" /> Cutoff
+              </span>
+              <p className="mt-1.5 font-mono text-[16px] font-bold text-fg">T−{entry.stopBeforeCloseSec}s</p>
+              <p className="text-[11.5px] text-muted">sweep until T−{HARD_CUTOFF_S}s, then hold to redeem</p>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {picked ? (
+        <>
+          {/* Quick Jump Bar */}
+          <div className="mt-6 flex gap-2 overflow-x-auto pb-1" aria-label="Jump to section">
+            {TOC.map((item) => {
+              const isActive = activeId === item.id || item.children.some((child) => child.id === activeId)
+              const Icon = item.icon
+              return (
+                <Button
+                  key={item.id}
+                  variant={isActive ? 'primary' : 'secondary'}
+                  size="md"
+                  onClick={() => jumpTo(item.id)}
+                  className="min-w-[165px] flex-1 whitespace-nowrap"
+                  aria-current={isActive ? 'true' : undefined}
+                >
+                  <Icon />
+                  {item.short}
+                </Button>
+              )
+            })}
+          </div>
 
       <div className="mt-6 grid gap-8 lg:grid-cols-[minmax(0,1fr)_240px]">
         <div className="min-w-0 space-y-8">
           {/* ================================================================
-              SECTION 1: HOW IT WORKS & WHY IT HAS AN EDGE
+              SECTION 1: WHAT THE ACTIVE ENGINE DOES
              ================================================================ */}
-          <section id="strategy-overview" aria-label="How it works and why it has edge" className="scroll-mt-16 space-y-6">
+          <section id="strategy-active" aria-label="What the active engine does" className="scroll-mt-16 space-y-6">
             <Card id="core-thesis" className="scroll-mt-16 p-6">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h3 className="text-[16px] font-semibold text-fg">1. Why This Strategy Has an Edge</h3>
-                  <p className="text-[13px] text-muted">
-                    Decomposing the +$3,415.73 settled gross PnL (+2.69% on $126.9k deployed) + $789.49 rebates
-                  </p>
+                  <h3 className="text-[16px] font-semibold text-fg">
+                    1. What {picked?.symbol ?? 'the active setup'} actually does
+                  </h3>
+                  <p className="text-[13px] text-muted">Market-neutral volatility harvest, one 5-minute BTC Up/Down window at a time</p>
                 </div>
-                <Badge tone="success">Market-Neutral Volatility Harvest</Badge>
+                <Badge tone="success">Pairs under $1.00</Badge>
               </div>
 
               <p className="mt-4 text-[13.5px] leading-relaxed text-muted">
-                On a simultaneous orderbook snapshot, <code className="font-mono text-fg">best_ask(Up) + best_ask(Down) &gt; $1.01</code>{' '}
-                (plus taker fees), so a naive bot that crosses the spread on both sides loses money on every trade.
-                The on-chain ledger proves that <strong className="font-semibold text-fg">0xc533…69a9</strong> beats the
-                spread by combining <strong className="font-semibold text-fg">asynchronous timing</strong> (buying Up
-                when Up dips, and buying Down seconds or minutes later when Down dips) with{' '}
-                <strong className="font-semibold text-fg">passive Maker limit orders</strong>:
+                On a simultaneous snapshot, buying both outcomes at the ask costs more than $1.00 plus taker fees,
+                so a bot that crosses the spread on both sides loses on every trade. This engine beats
+                that spread with <strong className="font-semibold text-fg">asynchronous timing</strong> — buying Up
+                when Up dips, then Down seconds or minutes later when Down dips — and with{' '}
+                <strong className="font-semibold text-fg">passive maker bids</strong> that pay no fee.
               </p>
 
-              <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <div className="rounded-tile border border-success/30 bg-success-soft/20 p-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[12px] font-bold uppercase tracking-wider text-success">
-                      Paired Dual-Sided Windows (97.0%)
-                    </span>
-                    <Badge tone="success">249 Settled</Badge>
-                  </div>
-                  <p className="mt-2 font-mono text-[20px] font-bold text-success">+$4,123.52 PnL</p>
-                  <p className="mt-1 text-[12.5px] leading-relaxed text-muted">
-                    <strong>64.6% market win rate</strong> (161W / 88L). In <strong>67.3%</strong> of these windows, the
-                    bot locked in <code className="font-mono">avg_price_Up + avg_price_Down &lt; $1.00</code> (mean{' '}
-                    <code className="font-mono">$0.9462</code>).
-                  </p>
-                </div>
-
-                <div className="rounded-tile border border-danger/30 bg-danger-soft/20 p-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[12px] font-bold uppercase tracking-wider text-danger">
-                      Unhedged Single-Sided Windows (3.0%)
-                    </span>
-                    <Badge tone="danger">8 Settled</Badge>
-                  </div>
-                  <p className="mt-2 font-mono text-[20px] font-bold text-danger">−$707.79 PnL</p>
-                  <p className="mt-1 text-[12.5px] leading-relaxed text-muted">
-                    <strong>25.0% market win rate</strong> (2W / 6L). When BTC trends non-stop from the opening second
-                    and never lets the second leg fill, the unhedged position bleeds.
-                  </p>
-                </div>
-              </div>
-
               <div id="four-pillars" className="mt-6 scroll-mt-16 space-y-3">
-                <h4 className="text-[14px] font-semibold text-fg">The Four Structural Pillars of Edge</h4>
+                <h4 className="text-[14px] font-semibold text-fg">The four pillars of this setup</h4>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="rounded-tile border border-line bg-surface-2/40 p-4">
                     <div className="flex items-center gap-2">
-                      <CheckCircle2 className="size-4 text-success" />
-                      <span className="text-[13.5px] font-semibold text-fg">1. 0%-Fee Maker Bid Grid (72.95% of Fills)</span>
+                      <Target className="size-4 text-success" />
+                      <span className="text-[13.5px] font-semibold text-fg">1. Sub-$1.00 pair arbitration</span>
                     </div>
                     <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted">
-                      Polymarket charges takers a parabolic fee <code className="font-mono">0.07 · p · (1 − p)</code>{' '}
-                      (up to 1.75¢/share at 50¢), while passive Makers pay <strong>0% fee</strong> and earn rebates.
-                      72.95% of all fills in the ledger have exact <code className="font-mono">shares × price == USD</code>{' '}
-                      (0% fee Maker orders resting on the 1¢ grid).
+                      Every fill is simulated against current inventory before execution. Fresh dips need a projected
+                      pair cost of <code className="font-mono">{usd(entry?.targetPairCost)}</code> or less; closing an
+                      existing gap is allowed up to <code className="font-mono">{usd(entry?.maxPairCost)}</code>.
+                      Anything at or above $1.00 is refused.
                     </p>
                   </div>
 
                   <div className="rounded-tile border border-line bg-surface-2/40 p-4">
                     <div className="flex items-center gap-2">
                       <TrendingUp className="size-4 text-accent" />
-                      <span className="text-[13.5px] font-semibold text-fg">2. Lagging-Leg Share Equalization</span>
+                      <span className="text-[13.5px] font-semibold text-fg">2. Price-aware clip sizing</span>
                     </div>
                     <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted">
-                      Low average pair cost (<code className="font-mono">$0.94</code>) only guarantees a profit if{' '}
-                      <code className="font-mono">shares_Up ≈ shares_Down</code>. When one side rallies into{' '}
-                      <code className="font-mono">[75¢, 95¢]</code> and has fewer shares than the dip side, the bot
-                      aggressively buys the lagging side to equalize share counts.
+                      {profile && entry?.dipCurve ? (
+                        <>
+                          Clips are linear in price, then rounded to whole shares:{' '}
+                          <code className="font-mono">{entry.dipCurve.sharesLo} sh</code> at{' '}
+                          <code className="font-mono">{cents(entry.dipCurve.lo)}</code> falling to{' '}
+                          <code className="font-mono">{entry.dipCurve.sharesHi} sh</code> at{' '}
+                          <code className="font-mono">{cents(entry.dipCurve.hi)}</code>. A clip therefore costs about{' '}
+                          <code className="font-mono">${profile.costLo.toFixed(2)}</code> at the bottom of the band,
+                          peaks at <code className="font-mono">${profile.peakCost.toFixed(2)}</code> around{' '}
+                          <code className="font-mono">{profile.peakPx}¢</code>, then falls back to{' '}
+                          <code className="font-mono">${profile.costHi.toFixed(2)}</code> as the share count thins —
+                          and that peak is where the{' '}
+                          <code className="font-mono">{usd(Number(entry.maxUnhedgedUsd ?? 0), 2)}</code> unhedged cap
+                          refuses the clip.
+                        </>
+                      ) : (
+                        <>
+                          Dips are sized at <code className="font-mono">{entry?.clipSharesDefault} sh</code> by default,
+                          up to <code className="font-mono">{entry?.maxShares} sh</code> when closing a deficit.
+                        </>
+                      )}
                     </p>
                   </div>
 
                   <div className="rounded-tile border border-line bg-surface-2/40 p-4">
                     <div className="flex items-center gap-2">
-                      <Target className="size-4 text-info" />
-                      <span className="text-[13.5px] font-semibold text-fg">3. Mid-Band Dead-Zone Avoidance</span>
+                      <Activity className="size-4 text-info" />
+                      <span className="text-[13.5px] font-semibold text-fg">3. Deficit equalizer with rescue</span>
                     </div>
                     <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted">
-                      Whenever one outcome trades in <code className="font-mono">(50¢, 75¢)</code>, its complement
-                      automatically trades in <code className="font-mono">(25¢, 50¢)</code>. Rather than paying 60¢
-                      for a noisy favorite, the bot bids passively on the complement at 40¢.
+                      A cheap average pair cost only pays if both sides hold similar share counts. When one side leads,
+                      the lagging side is bought first — at any price up to{' '}
+                      <code className="font-mono">{cents(rescuePx)}</code>
+                      {rescuePc ? <> with pair cost up to <code className="font-mono">{usd(rescuePc)}</code></> : null}.
+                      Closing the naked leg beats letting it redeem at $0.00.
                     </p>
                   </div>
 
                   <div className="rounded-tile border border-line bg-surface-2/40 p-4">
                     <div className="flex items-center gap-2">
                       <ShieldCheck className="size-4 text-warning" />
-                      <span className="text-[13.5px] font-semibold text-fg">4. Strict Tail Truncation (&lt;7¢ &amp; &gt;97.5¢)</span>
+                      <span className="text-[13.5px] font-semibold text-fg">4. Hard unhedged cap</span>
                     </div>
                     <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted">
-                      On-chain calibration proves two negative-EV traps: lottery tickets <code className="font-mono">&lt;7¢</code>{' '}
-                      (0.6% win rate, −89.8% ROI) and extreme certainty tail <code className="font-mono">&gt;97.5¢</code>{' '}
-                      where downside asymmetry destroys edge. 🎯 HAPCS-v1 blocks both tails while capturing high-certainty snipes up to 97.5¢ in Minute 4.
+                      {gapUsd > 0 ? (
+                        <>
+                          A fill that would leave more than <code className="font-mono">{usd(gapUsd, 2)}</code> of net
+                          unhedged cost is vetoed, and so is one that would push the leading side to{' '}
+                          <code className="font-mono">{entry?.maxShareLead} sh</code>. At deep dips the share knob binds
+                          first: a second <code className="font-mono">{loSh}</code> clip at{' '}
+                          <code className="font-mono">{cents(loPx)}</code> costs only{' '}
+                          <code className="font-mono">${(2 * loSh * loPx).toFixed(2)}</code> but would leave{' '}
+                          <code className="font-mono">{2 * loSh} sh</code>{' '}
+                          unhedged. Below that knob both sides stay eligible; once one side reaches it, only the
+                          lagging side may be bought. Total paired volume is uncapped.
+                        </>
+                      ) : (
+                        <>
+                          A fill that would leave the leading side at or above{' '}
+                          <code className="font-mono">{entry?.maxShareLead} sh</code> is vetoed, so that lead is never
+                          held. Once a side reaches the knob, only the lagging side may be bought.
+                        </>
+                      )}
                     </p>
                   </div>
                 </div>
               </div>
             </Card>
+          </section>
 
-            {/* Calibration Proof Table */}
-            <Card id="calibration-proof" className="scroll-mt-16 p-6">
+          {/* ================================================================
+              SECTION 2: ACTIVE PARAMETERS & GATES
+             ================================================================ */}
+          <section id="strategy-spec" aria-label="Active parameters" className="scroll-mt-16 space-y-6">
+            <Card id="spec-table" className="scroll-mt-16 p-6">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h3 className="text-[15.5px] font-semibold text-fg">Empirical Calibration across Price Regimes</h3>
-                  <p className="text-[12.5px] text-muted">
-                    Measured across 10,007 settled fills (Nov 7–8 ledger) — why 🎯 HAPCS-v1 trades bimodal bands
+                  <h3 className="text-[16px] font-semibold text-fg">
+                    2. Active parameters &amp; gates (<code className="font-mono text-[14px]">bot/config.json</code>)
+                  </h3>
+                  <p className="text-[13px] text-muted">
+                    The entry block the engine re-reads at the start of every window — not a historical reconstruction
                   </p>
                 </div>
-                <Badge tone="info">10,007 Settled Fills</Badge>
+                <Badge tone="neutral">{picked?.symbol ?? 'No setup'} · live values</Badge>
               </div>
 
               <div className="mt-4 overflow-x-auto">
                 <table className="w-full min-w-[680px] text-left text-[12.5px]">
                   <thead className="border-b border-line text-[11px] font-semibold uppercase tracking-wider text-faint">
                     <tr>
-                      <th className="py-2 px-2.5">Price Band</th>
-                      <th className="py-2 px-2.5">🎯 HAPCS-v1 Regime</th>
+                      <th className="py-2 px-2.5">Parameter</th>
+                      <th className="py-2 px-2.5">Active value</th>
+                      <th className="py-2 px-2.5">What it means</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-line">
+                    {rows.map((r) => (
+                      <tr key={r.key} className="hover:bg-surface-2/40">
+                        <td className="py-2.5 px-2.5 font-mono text-[12px] font-semibold text-fg">{r.key}</td>
+                        <td className="py-2.5 px-2.5 font-mono text-[12px] text-accent">{r.value}</td>
+                        <td className="py-2.5 px-2.5 text-[12px] leading-relaxed text-muted">{r.note}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-3 text-[11.5px] text-faint">
+                Source of truth: <code className="font-mono">bot/config.json</code>, mirrored in{' '}
+                <code className="font-mono">bot/constants.py</code> and enforced by{' '}
+                <code className="font-mono">bot/executor.py</code>. Change a value on the Config page and this table
+                follows on the next refresh — except the clip curve and the dollar cap, which belong to the setup
+                itself and only change when the setup is switched.
+              </p>
+            </Card>
+          </section>
+
+          {/* ================================================================
+              SECTION 3: WINDOW LIFECYCLE & WIRING
+             ================================================================ */}
+          <section id="strategy-lifecycle" aria-label="Window lifecycle" className="scroll-mt-16 space-y-6">
+            <Card id="window-lifecycle" className="scroll-mt-16 p-6">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-[16px] font-semibold text-fg">
+                    3. Window lifecycle (fills from T+0s, T−{entry?.stopBeforeCloseSec ?? 75}s cutoff)
+                  </h3>
+                  <p className="text-[13px] text-muted">How one 300-second market is traded end to end</p>
+                </div>
+                <Badge tone="accent">Single-window lock</Badge>
+              </div>
+
+              <div className="mt-5 grid gap-3 sm:grid-cols-5">
+                <div className="rounded-tile border border-line bg-surface-2/40 p-3.5">
+                  <span className="font-mono text-[11px] font-bold uppercase text-info">0. T−{PRE_OPEN_S}s</span>
+                  <p className="mt-1 text-[13.5px] font-semibold text-fg">Pre-open pipeline</p>
+                  <p className="mt-1 text-[12px] leading-relaxed text-muted">
+                    Market discovery and WebSocket book initialization before the window opens.
+                  </p>
+                </div>
+
+                <div className="rounded-tile border border-line bg-surface-2/40 p-3.5">
+                  <span className="font-mono text-[11px] font-bold uppercase text-danger">1. T+0s — opening leg</span>
+                  <p className="mt-1 text-[13.5px] font-semibold text-fg">First fill</p>
+                  <p className="mt-1 text-[12px] leading-relaxed text-muted">
+                    The engine can fill from T+0s: <code className="font-mono">startAfterOpenSec</code> (
+                    {entry?.startAfterOpenSec ?? 4}s) decides when the next window is picked up, not when fills start.
+                    The first fill is the opening leg on the cheaper side.
+                  </p>
+                </div>
+
+                <div className="rounded-tile border border-line bg-surface-2/40 p-3.5">
+                  <span className="font-mono text-[11px] font-bold uppercase text-success">2. Grid &amp; equalizer</span>
+                  <p className="mt-1 text-[13.5px] font-semibold text-fg">Dip curve, then hedge</p>
+                  <p className="mt-1 text-[12px] leading-relaxed text-muted">
+                    Fresh dips between {cents(entry?.minFillPrice)}–{cents(entry?.maxFillPrice)}; the lagging side is
+                    hedged whenever a deficit exists.
+                  </p>
+                </div>
+
+                <div className="rounded-tile border border-line bg-surface-2/40 p-3.5">
+                  <span className="font-mono text-[11px] font-bold uppercase text-accent">3. T−{entry?.stopBeforeCloseSec ?? 75}s sweep</span>
+                  <p className="mt-1 text-[13.5px] font-semibold text-fg">Maker-only close</p>
+                  <p className="mt-1 text-[12px] leading-relaxed text-muted">
+                    No new dips. While imbalanced, the gap is closed with resting no-fee orders until T−{HARD_CUTOFF_S}s.
+                  </p>
+                </div>
+
+                <div className="rounded-tile border border-line bg-surface-2/40 p-3.5">
+                  <span className="font-mono text-[11px] font-bold uppercase text-warning">4. T−{HARD_CUTOFF_S}s → settle</span>
+                  <p className="mt-1 text-[13.5px] font-semibold text-fg">Cutoff &amp; redeem</p>
+                  <p className="mt-1 text-[12px] leading-relaxed text-muted">
+                    Zero fills. Inventory is held to binary resolution and the winning token redeems at $1.00.
+                  </p>
+                </div>
+              </div>
+
+              <div id="ws-and-api" className="mt-6 grid scroll-mt-16 gap-4 sm:grid-cols-2">
+                <div className="rounded-tile border border-line bg-surface p-4">
+                  <div className="flex items-center gap-2">
+                    <Radio className="size-4 text-success" />
+                    <h4 className="text-[14px] font-semibold text-fg">
+                      Dual-book reads with no extra REST (<code className="font-mono text-[12.5px]">live_quote_pair</code>)
+                    </h4>
+                  </div>
+                  <p className="mt-2 text-[12.5px] leading-relaxed text-muted">
+                    <code className="font-mono">live_bid_price()</code> reads{' '}
+                    <code className="font-mono">book.best_bid</code> straight from the in-memory WebSocket orderbook,
+                    so maker bids are distinguished from taker sweeps without doubling REST traffic. Spacing gates
+                    fills by <code className="font-mono">{entry?.minSpacingMoveSec ?? 0.5}s</code> on a price change and{' '}
+                    <code className="font-mono">{entry?.minSpacingStaticSec ?? 2.5}s</code> on a static quote.
+                  </p>
+                </div>
+
+                <div className="rounded-tile border border-line bg-surface p-4">
+                  <div className="flex items-center gap-2">
+                    <Activity className="size-4 text-accent" />
+                    <h4 className="text-[14px] font-semibold text-fg">
+                      Desk API &amp; telemetry (<code className="font-mono text-[12.5px]">:5173 → :8789</code>)
+                    </h4>
+                  </div>
+                  <p className="mt-2 text-[12.5px] leading-relaxed text-muted">
+                    The UI runs on port <code className="font-mono">5173</code> and{' '}
+                    <code className="font-mono">bot/api.py</code> on <code className="font-mono">127.0.0.1:8789</code>.
+                    Each fill streams its <code className="font-mono">role</code> (
+                    <code className="font-mono">MAKER</code>/<code className="font-mono">TAKER</code>),{' '}
+                    <code className="font-mono">subReason</code>, <code className="font-mono">feeUsd</code> and live{' '}
+                    <code className="font-mono">pairCost</code> into the state file and the Live Fills table.
+                  </p>
+                </div>
+              </div>
+            </Card>
+          </section>
+
+          {/* ================================================================
+              SECTION 4: RISKS & GUARDRAILS
+             ================================================================ */}
+          <section id="strategy-risks" aria-label="Risks and guardrails" className="scroll-mt-16 space-y-6">
+            <Card id="failure-modes" className="scroll-mt-16 p-6">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-[16px] font-semibold text-fg">4. Risks &amp; what bounds them</h3>
+                  <p className="text-[13px] text-muted">
+                    When {picked?.symbol ?? 'the engine'} loses money on a window, and what stops the loss growing
+                  </p>
+                </div>
+                <Badge tone="warning">
+                  {gapUsd > 0 ? `${usd(gapUsd, 2)} max unhedged cost` : `${entry?.maxShareLead ?? 90} sh max unhedged lead`}
+                </Badge>
+              </div>
+
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <div className="rounded-tile border border-warning/30 bg-warning-soft/20 p-4">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="size-4 text-warning" />
+                    <h4 className="text-[14px] font-semibold text-fg">Failure mode 1: one-way runaway open</h4>
+                  </div>
+                  <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted">
+                    If BTC trends straight up or down from the open without a pullback, the favored side never
+                    re-enters the {cents(entry?.minFillPrice)}–{cents(entry?.maxFillPrice)} band and the first leg stays
+                    naked. Only a rescue hedge — up to <code className="font-mono">{cents(rescuePx)}</code>
+                    {rescuePc ? <> at pair cost <code className="font-mono">{usd(rescuePc)}</code></> : null} — can close
+                    it, which turns a total loss into a thin one. The unhedged gap cap bounds how much can be exposed
+                    before that hedge is forced.
+                  </p>
+                </div>
+
+                <div className="rounded-tile border border-danger/30 bg-danger-soft/20 p-4">
+                  <div className="flex items-center gap-2">
+                    <ShieldAlert className="size-4 text-danger" />
+                    <h4 className="text-[14px] font-semibold text-fg">Failure mode 2: V-reversal share imbalance</h4>
+                  </div>
+                  <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted">
+                    Cheap clips accumulate on the side that dipped. If BTC V-reverses late in the window, the other side
+                    wins while the engine still holds fewer winning shares than dollars spent. Equalizing before the
+                    T−{entry?.stopBeforeCloseSec ?? 75}s cutoff is what converts that into a small loss; if the quote
+                    never becomes hedgeable under the gates, the window takes the full hit on the unhedged side.
+                  </p>
+                </div>
+              </div>
+
+              <div id="guardrails" className="mt-6 grid scroll-mt-16 gap-4 sm:grid-cols-3">
+                <div className="rounded-tile border border-line bg-surface p-3.5">
+                  <span className="font-mono text-[11px] uppercase text-faint">Unhedged exposure</span>
+                  <p className="mt-1 text-[15.5px] font-bold text-fg">
+                    {gapUsd > 0 ? usd(gapUsd, 2) : `${entry?.maxShareLead ?? 90} sh`}
+                  </p>
+                  <p className="text-[12px] text-muted">
+                    {gapUsd > 0
+                      ? `Net unhedged cost vetoed above the cap; the ${entry?.maxShareLead} sh knob is a second, independent veto`
+                      : 'A fill leaving the leader at the knob is vetoed, so the knob is never held'}
+                  </p>
+                </div>
+
+                <div className="rounded-tile border border-line bg-surface p-3.5">
+                  <span className="font-mono text-[11px] uppercase text-faint">Per-window cap</span>
+                  <p className="mt-1 text-[15.5px] font-bold text-fg">500 fills</p>
+                  <p className="text-[12px] text-muted">Enforced by check_window() before every clip</p>
+                </div>
+
+                <div className="rounded-tile border border-line bg-surface p-3.5">
+                  <span className="font-mono text-[11px] uppercase text-faint">Daily stop-loss</span>
+                  <p className="mt-1 text-[15.5px] font-bold text-fg">$500.00 realized</p>
+                  <p className="text-[12px] text-muted">Halts new entries once settled daily net PnL reaches −$500</p>
+                </div>
+              </div>
+            </Card>
+          </section>
+
+          {/* ================================================================
+              SECTION 5: REFERENCE TAPE — NOT LIVE CONFIG
+             ================================================================ */}
+          <section id="strategy-reference" aria-label="Reference tape" className="scroll-mt-16 space-y-6">
+            <Card id="tape-calibration" className="scroll-mt-16 border-line-strong p-6">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-[15.5px] font-semibold text-fg">5. Reference tape: price-regime calibration</h3>
+                  <p className="text-[12.5px] text-muted">
+                    Measured across 10,236 settled fills of the HAPCS-v1 reconstruction tape (Nov 7–8, 2026)
+                  </p>
+                </div>
+                <Badge tone="neutral">Evidence, not active config</Badge>
+              </div>
+
+              <p className="mt-3 rounded-tile border border-line bg-surface-2/40 p-3 text-[12.5px] leading-relaxed text-muted">
+                This table is the historical evidence behind the 7¢ price floor and the mid-band skip. It comes from
+                the same wallet (0xc533…69a9) but an earlier Nov 6–8 ledger and a different engine generation
+                (HAPCS-v1), so its names, fills and ROI figures do not describe the setup running now — nothing on
+                this page above reads from it.
+              </p>
+
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full min-w-[680px] text-left text-[12.5px]">
+                  <thead className="border-b border-line text-[11px] font-semibold uppercase tracking-wider text-faint">
+                    <tr>
+                      <th className="py-2 px-2.5">Price band</th>
+                      <th className="py-2 px-2.5">Tape regime</th>
                       <th className="py-2 px-2.5 text-right">Fills</th>
-                      <th className="py-2 px-2.5 text-right">Price Paid</th>
-                      <th className="py-2 px-2.5 text-right">Actual Win</th>
+                      <th className="py-2 px-2.5 text-right">Price paid</th>
+                      <th className="py-2 px-2.5 text-right">Actual win</th>
                       <th className="py-2 px-2.5 text-right">ROI / $</th>
-                      <th className="py-2 px-2.5">Engine Action</th>
+                      <th className="py-2 px-2.5">What it implies</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-line">
@@ -559,371 +908,6 @@ export function Strategy() {
                     ))}
                   </tbody>
                 </table>
-              </div>
-            </Card>
-          </section>
-
-          {/* ================================================================
-              SECTION 2: THREE-REGIME INVENTORY & FEE ENGINE
-             ================================================================ */}
-          <section id="strategy-regimes" aria-label="Three-regime engine" className="scroll-mt-16 space-y-6">
-            <Card id="price-spectrum" className="scroll-mt-16 p-6">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-[16px] font-semibold text-fg">
-                    2. The 3-Regime Inventory &amp; Fee Engine (<code className="font-mono text-[14px]">bot/executor.py</code>)
-                  </h3>
-                  <p className="text-[13px] text-muted">
-                    How <code className="font-mono">evaluate_microstructure_ladder()</code> maps every live quote into
-                    an action
-                  </p>
-                </div>
-                <Badge tone="accent">Bimodal Execution</Badge>
-              </div>
-
-              {/* Visual 0-100c Price Spectrum Bar */}
-              <div className="mt-6">
-                <p className="mb-2 text-[12px] font-medium text-muted">
-                  Token Price Spectrum (<code className="font-mono">0¢ → 100¢</code>):
-                </p>
-                <div className="grid h-11 w-full grid-cols-12 overflow-hidden rounded-tile border border-line text-[11px] font-semibold text-white shadow-xs">
-                  <div className="col-span-1 flex items-center justify-center bg-danger/85 px-1 text-center" title="0¢–7¢ Refused">
-                    &lt;7¢
-                  </div>
-                  <div className="col-span-5 flex items-center justify-center bg-success/85 px-2 text-center" title="7¢–50¢ Maker Dip Grid">
-                    Regime 2: Maker Dip [7¢–50¢]
-                  </div>
-                  <div className="col-span-3 flex items-center justify-center bg-warning/80 px-2 text-center" title="50¢–75¢ Dead Zone">
-                    Regime 3: Dead Zone
-                  </div>
-                  <div className="col-span-2 flex items-center justify-center bg-info/85 px-1.5 text-center" title="75¢–95¢ Lagging Equalizer">
-                    Regime 1: [75–95¢]
-                  </div>
-                  <div className="col-span-1 flex items-center justify-center bg-accent/90 px-1 text-center" title="90¢–97.5¢ Minute 4 Certainty Snipe">
-                    M4 Snipe
-                  </div>
-                </div>
-                <div className="mt-2 grid grid-cols-12 font-mono text-[10.5px] text-faint">
-                  <div className="col-span-1">0¢</div>
-                  <div className="col-span-5">7¢ (Floor) → 50¢ (67.2% of fills)</div>
-                  <div className="col-span-3">50¢ → 75¢ (Skip / Pivot)</div>
-                  <div className="col-span-2">75¢ → 95¢ (Pair Arbitrage)</div>
-                  <div className="col-span-1 text-right">97.5¢ (Ceil)</div>
-                </div>
-              </div>
-
-              {/* Detailed 3 Regimes Cards */}
-              <div id="three-regimes" className="mt-6 grid scroll-mt-16 gap-4 sm:grid-cols-3">
-                <div className="rounded-tile border border-info/30 bg-info-soft/20 p-4">
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-[11px] font-bold uppercase text-info">Dynamic Pairing &amp; M4 Snipe</span>
-                    <Badge tone="info">Pair Arbitrage</Badge>
-                  </div>
-                  <h4 className="mt-1.5 text-[14px] font-semibold text-fg">Regime 1 &amp; M4: Dynamic Equalizer &amp; Snipe</h4>
-                  <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted">
-                    Checks any side with a share deficit (<code className="font-mono">deficit = shares_opp − shares_side &gt; 0</code>).
-                    Buys the lagging leg at any price in <code className="font-mono">[7¢, 97.5¢]</code> as long as projected{' '}
-                    <code className="font-mono">pair_cost ≤ $0.990</code> (strictly &lt; $1.00 bound). In Minute 4 (T-60s), executes resolution certainty snipes up to <code className="font-mono">97.5¢</code>.
-                  </p>
-                </div>
-
-                <div className="rounded-tile border border-success/30 bg-success-soft/20 p-4">
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-[11px] font-bold uppercase text-success">Passive Grid · [7¢, 50¢]</span>
-                    <Badge tone="success">0% Maker</Badge>
-                  </div>
-                  <h4 className="mt-1.5 text-[14px] font-semibold text-fg">Regime 2: Passive Maker Dip Grid</h4>
-                  <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted">
-                    Evaluates resting <code className="font-mono">best_bid</code> on both outcomes in{' '}
-                    <code className="font-mono">[0.07, 0.50]</code>. Prioritizes the deficit side, capped at{' '}
-                    <code className="font-mono">MAX_SHARE_LEAD = 90</code> shares to prevent runaway unhedged stacking. Executes as{' '}
-                    <code className="font-mono">MAKER</code> at <code className="font-mono">0%</code> fee whenever
-                    projected <code className="font-mono">pair_cost ≤ $0.965</code> (or <code className="font-mono">≤ $0.990</code> if equalizing).
-                  </p>
-                </div>
-
-                <div className="rounded-tile border border-warning/30 bg-warning-soft/20 p-4">
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-[11px] font-bold uppercase text-warning">Mid-Band · (50¢, 75¢)</span>
-                    <Badge tone="warning">Dead Zone</Badge>
-                  </div>
-                  <h4 className="mt-1.5 text-[14px] font-semibold text-fg">Regime 3: Complement Pivot / Skip</h4>
-                  <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted">
-                    When the preferred side is in <code className="font-mono">(0.50, 0.75)</code>, the engine checks the
-                    opposite token first (which sits in <code className="font-mono">[0.25, 0.50]</code>, Regime 2). Inside
-                    opening straddle upper band <code className="font-mono">[0.50, 0.55]</code> or when equalizing, it only
-                    fills if projected <code className="font-mono">pair_cost ≤ $0.965</code>; otherwise logs <code className="font-mono">dead-zone-skip</code>.
-                  </p>
-                </div>
-              </div>
-
-              {/* Math Boxes */}
-              <div id="fee-and-clip-math" className="mt-6 scroll-mt-16 space-y-4">
-                <div className="rounded-card border border-line bg-surface-2/30 p-5">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h4 className="text-[14px] font-bold text-fg">
-                      A. Exact Maker vs. Parabolic Taker Fee Accounting (<code className="font-mono">compute_fill_usd</code>)
-                    </h4>
-                    <Badge tone="accent">0% Maker / Parabolic Taker</Badge>
-                  </div>
-                  <div className="my-3 overflow-x-auto rounded-tile border border-line bg-surface p-3.5 text-center font-mono text-[13.5px] text-fg shadow-xs">
-                    MAKER: usd = round(shares × p, 2) &nbsp;|&nbsp; TAKER: usd = round(shares × (p + 0.07 · p · (1 − p)), 2)
-                  </div>
-                  <p className="text-[12.5px] text-muted">
-                    Recovered directly from the CSV residuals <code className="font-mono">(USD_Amount / Shares) − Price</code>:
-                    72.95% of fills had zero residual (Maker), while 27.05% followed the exact parabola{' '}
-                    <code className="font-mono">0.07 · p · (1 − p)</code> ($814.70 total taker fees on Nov 7–8).
-                  </p>
-                </div>
-
-                <div className="rounded-card border border-line bg-surface-2/30 p-5">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h4 className="text-[14px] font-bold text-fg">
-                      B. Projected Combined Pair-Cost Gate (<code className="font-mono">_projected_pair_cost</code>)
-                    </h4>
-                    <Badge tone="success">Strict Sub-$1.00 Profit Bound</Badge>
-                  </div>
-                  <div className="my-3 overflow-x-auto rounded-tile border border-line bg-surface p-3.5 text-center font-mono text-[13.5px] text-fg shadow-xs">
-                    pair_cost = (cost_Up / shares_Up) + (cost_Down / shares_Down) ≤ $0.965 (Target) &nbsp;|&nbsp; ≤ $0.990 (Hard Ceiling)
-                  </div>
-                  <p className="text-[12.5px] text-muted">
-                    Every candidate fill is simulated against current window inventory <code className="font-mono">inv[&quot;Up&quot;]</code>{' '}
-                    and <code className="font-mono">inv[&quot;Down&quot;]</code> before execution. Because a binary token resolves to $1.00,
-                    any matched pair with <code className="font-mono">pair_cost &gt; $1.00</code> is a guaranteed loss. 🎯 HAPCS-v1 strictly
-                    enforces a hard ceiling of <code className="font-mono">≤ $0.990</code> (locking in ≥ +1.0¢/share arbitrage profit).
-                  </p>
-                </div>
-
-                <div className="rounded-card border border-line bg-surface-2/30 p-5">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h4 className="text-[14px] font-bold text-fg">
-                      C. Whole-Share Ladder Clip Sizing (<code className="font-mono">select_ladder_clip</code>)
-                    </h4>
-                    <Badge tone="info">Whole-Number Rungs</Badge>
-                  </div>
-                  <div className="my-3 overflow-x-auto rounded-tile border border-line bg-surface p-3.5 text-center font-mono text-[13.5px] text-fg shadow-xs">
-                    deficit ≥ 50 → 50 sh &nbsp;|&nbsp; deficit &gt; 0 → snap to (50, 30, 25, 20, 15, 10, 5) &nbsp;|&nbsp; base → 30 / 25 / 20 sh
-                  </div>
-                  <p className="text-[12.5px] text-muted">
-                    Grouping on-chain fills by <code className="font-mono">(tx_hash, token, price)</code> revealed that
-                    the bot submits whole-number clips (<code className="font-mono">30</code>, <code className="font-mono">50</code>,{' '}
-                    <code className="font-mono">25</code>, <code className="font-mono">20</code>, <code className="font-mono">10</code>).
-                    Fractional fill rows in the raw CSV are partial fills of resting Maker orders.
-                  </p>
-                </div>
-              </div>
-            </Card>
-          </section>
-
-          {/* ================================================================
-              SECTION 3: RECONSTRUCTED MICROSTRUCTURE CONSTANTS
-             ================================================================ */}
-          <section id="strategy-constants" aria-label="Reconstructed constants" className="scroll-mt-16 space-y-6">
-            <Card id="constants-ledger" className="scroll-mt-16 p-6">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-[16px] font-semibold text-fg">
-                    3. Reconstructed Microstructure Constants (<code className="font-mono text-[14px]">bot/constants.py</code>)
-                  </h3>
-                  <p className="text-[13px] text-muted">
-                    Cross-validated across both 24h ledgers (Nov 6–7 &amp; Nov 7–8) and wired into{' '}
-                    <code className="font-mono">bot/config.json</code>
-                  </p>
-                </div>
-                <Badge tone="neutral">Zero Invented Thresholds</Badge>
-              </div>
-
-              <div className="mt-4 overflow-x-auto">
-                <table className="w-full min-w-[680px] text-left text-[12.5px]">
-                  <thead className="border-b border-line text-[11px] font-semibold uppercase tracking-wider text-faint">
-                    <tr>
-                      <th className="py-2 px-2.5">Constant / Key</th>
-                      <th className="py-2 px-2.5">Measured Value</th>
-                      <th className="py-2 px-2.5">Source File</th>
-                      <th className="py-2 px-2.5">Role in 🎯 HAPCS-v1</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-line">
-                    {CONSTANTS_TABLE.map((c) => (
-                      <tr key={c.name} className="hover:bg-surface-2/40">
-                        <td className="py-2.5 px-2.5 font-mono text-[12px] font-semibold text-fg">{c.name}</td>
-                        <td className="py-2.5 px-2.5 font-mono text-[12px] text-accent">{c.value}</td>
-                        <td className="py-2.5 px-2.5 font-mono text-[11.5px] text-faint">{c.location}</td>
-                        <td className="py-2.5 px-2.5 text-[12px] leading-relaxed text-muted">{c.meaning}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
-          </section>
-
-          {/* ================================================================
-              SECTION 4: LIVE PAPER LOOP & API WIRING
-             ================================================================ */}
-          <section id="strategy-wiring" aria-label="Live paper loop and API wiring" className="scroll-mt-16 space-y-6">
-            <Card id="window-lifecycle" className="scroll-mt-16 p-6">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-[16px] font-semibold text-fg">
-                    4. Live Paper Loop &amp; API Wiring (<code className="font-mono text-[14px]">bot/live_paper.py</code> &amp;{' '}
-                    <code className="font-mono text-[14px]">bot/api.py</code>)
-                  </h3>
-                  <p className="text-[13px] text-muted">
-                    How the real-time WebSocket streamer, execution loop, background resolver, and isolated UI desk
-                    fit together
-                  </p>
-                </div>
-                <Badge tone="accent">Event-Driven ≤250ms Wake</Badge>
-              </div>
-
-              <div className="mt-5 grid gap-3 sm:grid-cols-5">
-                <div className="rounded-tile border border-line bg-surface-2/40 p-3.5">
-                  <span className="font-mono text-[11px] font-bold uppercase text-info">0. T-310s (Pre-Open)</span>
-                  <p className="mt-1 text-[13.5px] font-semibold text-fg">Phase 0 Pipeline</p>
-                  <p className="mt-1 text-[12px] leading-relaxed text-muted">
-                    Pre-open discovery &amp; WebSocket book initialization 10s before window open.
-                  </p>
-                </div>
-
-                <div className="rounded-tile border border-line bg-surface-2/40 p-3.5">
-                  <span className="font-mono text-[11px] font-bold uppercase text-danger">1. T+0s – T+4s (sbc 296–300)</span>
-                  <p className="mt-1 text-[13.5px] font-semibold text-fg">Opening Buffer</p>
-                  <p className="mt-1 text-[12px] leading-relaxed text-muted">
-                    Observes opening book liquidity. Strictly 0 fills occur in the first 4s (sbc 296–300).
-                  </p>
-                </div>
-
-                <div className="rounded-tile border border-line bg-surface-2/40 p-3.5">
-                  <span className="font-mono text-[11px] font-bold uppercase text-accent">2. T+4s First Touch</span>
-                  <p className="mt-1 text-[13.5px] font-semibold text-fg">Opening Straddle Leg</p>
-                  <p className="mt-1 text-[12px] leading-relaxed text-muted">
-                    Opens on cheaper token in <code className="font-mono">[34¢, 55¢]</code> (preferring Maker at 0% fee), priming the hedge.
-                  </p>
-                </div>
-
-                <div className="rounded-tile border border-line bg-surface-2/40 p-3.5">
-                  <span className="font-mono text-[11px] font-bold uppercase text-success">3. M0–M4 Trading</span>
-                  <p className="mt-1 text-[13.5px] font-semibold text-fg">Dynamic Grid &amp; Snipe</p>
-                  <p className="mt-1 text-[12px] leading-relaxed text-muted">
-                    Maker dip grid [7¢–50¢], dynamic pairing equalizer, and Minute 4 certainty snipes up to 97.5¢.
-                  </p>
-                </div>
-
-                <div className="rounded-tile border border-line bg-surface-2/40 p-3.5">
-                  <span className="font-mono text-[11px] font-bold uppercase text-warning">4. T+288s (sbc 0–12)</span>
-                  <p className="mt-1 text-[13.5px] font-semibold text-fg">Cutoff &amp; Async Settle</p>
-                  <p className="mt-1 text-[12px] leading-relaxed text-muted">
-                    Strictly 0 fills in final 12s. Holds inventory to binary resolution and redeems winning token at $1.00.
-                  </p>
-                </div>
-              </div>
-
-              <div id="ws-and-api" className="mt-6 grid scroll-mt-16 gap-4 sm:grid-cols-2">
-                <div className="rounded-tile border border-line bg-surface p-4">
-                  <div className="flex items-center gap-2">
-                    <Radio className="size-4 text-success" />
-                    <h4 className="text-[14px] font-semibold text-fg">
-                      Zero-Extra-REST Dual-Book Reads (<code className="font-mono text-[12.5px]">live_quote_pair</code>)
-                    </h4>
-                  </div>
-                  <p className="mt-2 text-[12.5px] leading-relaxed text-muted">
-                    To distinguish passive <code className="font-mono">MAKER</code> bid fills from{' '}
-                    <code className="font-mono">TAKER</code> ask sweeps without doubling REST traffic,{' '}
-                    <code className="font-mono">live_bid_price()</code> reads <code className="font-mono">book.best_bid</code>{' '}
-                    directly from <code className="font-mono">LiveBookStreamer</code>’s in-memory WebSocket orderbook
-                    in O(1) time. Anti-runaway spacing gates fills by <code className="font-mono">0.5s</code> on price
-                    changes and <code className="font-mono">3.0s</code> on static quotes.
-                  </p>
-                </div>
-
-                <div className="rounded-tile border border-line bg-surface p-4">
-                  <div className="flex items-center gap-2">
-                    <Activity className="size-4 text-accent" />
-                    <h4 className="text-[14px] font-semibold text-fg">
-                      Desk API &amp; Telemetry (<code className="font-mono text-[12.5px]">:5173 → :8789</code>)
-                    </h4>
-                  </div>
-                  <p className="mt-2 text-[12.5px] leading-relaxed text-muted">
-                    This desk serves the UI on port <code className="font-mono">5173</code> and{' '}
-                    <code className="font-mono">bot/api.py</code> on <code className="font-mono">127.0.0.1:8789</code>.
-                    Every fill event streams <code className="font-mono">role</code> (<code className="font-mono">MAKER</code>{' '}
-                    vs <code className="font-mono">TAKER</code>), <code className="font-mono">subReason</code> (
-                    <code className="font-mono">maker-dip-ladder</code> vs <code className="font-mono">hedge-equalizer</code>),{' '}
-                    <code className="font-mono">feeUsd</code>, and live <code className="font-mono">pairCost</code> into{' '}
-                    <code className="font-mono">state.json</code> and the Live Fills table.
-                  </p>
-                </div>
-              </div>
-            </Card>
-          </section>
-
-          {/* ================================================================
-              SECTION 5: RISKS, FAILURE MODES & WHAT WORTH KNOWING
-             ================================================================ */}
-          <section id="strategy-risks" aria-label="Risks and guardrails" className="scroll-mt-16 space-y-6">
-            <Card id="failure-modes" className="scroll-mt-16 p-6">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-[16px] font-semibold text-fg">5. Risks, Failure Modes &amp; What Worth Knowing</h3>
-                  <p className="text-[13px] text-muted">
-                    When 🎯 HAPCS-v1 loses money on a window and how the risk manager bounds drawdowns
-                  </p>
-                </div>
-                <Badge tone="warning">Max DD $957.99 on $127k Vol</Badge>
-              </div>
-
-              <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <div className="rounded-tile border border-warning/30 bg-warning-soft/20 p-4">
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="size-4 text-warning" />
-                    <h4 className="text-[14px] font-semibold text-fg">
-                      Failure Mode 1: The V-Reversal Share Imbalance
-                    </h4>
-                  </div>
-                  <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted">
-                    If BTC drops early in the window, the bot accumulates heavy <code className="font-mono">Down</code>{' '}
-                    shares on the dip ladder (e.g., 910 Down shares at 39¢). If BTC suddenly V-reverses upward in M3–M4
-                    and rockets past 97.5¢ before the bot can equalize <code className="font-mono">Up</code> shares,{' '}
-                    <code className="font-mono">Up</code> wins while the bot holds fewer <code className="font-mono">Up</code>{' '}
-                    shares than total dollars spent (worst single-window loss in the 24h ledger: <strong>−$207.88</strong>).
-                  </p>
-                </div>
-
-                <div className="rounded-tile border border-danger/30 bg-danger-soft/20 p-4">
-                  <div className="flex items-center gap-2">
-                    <ShieldAlert className="size-4 text-danger" />
-                    <h4 className="text-[14px] font-semibold text-fg">
-                      Failure Mode 2: One-Way Runaway Open (3.0% of Windows)
-                    </h4>
-                  </div>
-                  <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted">
-                    When BTC trends straight up or down from <code className="font-mono">T+0s</code> without a single
-                    pullback, the favorite immediately breaches the <code className="font-mono">97.5¢</code> ceiling while
-                    the underdog falls below the <code className="font-mono">7¢</code> floor, leaving the opening leg
-                    unhedged.
-                  </p>
-                </div>
-              </div>
-
-              <div id="guardrails" className="mt-6 grid scroll-mt-16 gap-4 sm:grid-cols-3">
-                <div className="rounded-tile border border-line bg-surface p-3.5">
-                  <span className="font-mono text-[11px] uppercase text-faint">Per-Window Risk Cap</span>
-                  <p className="mt-1 text-[15.5px] font-bold text-fg">$4,000 · 500 Fills</p>
-                  <p className="text-[12px] text-muted">Hard ceiling enforced by check_window() before every clip</p>
-                </div>
-
-                <div className="rounded-tile border border-line bg-surface p-3.5">
-                  <span className="font-mono text-[11px] uppercase text-faint">Daily Stop-Loss</span>
-                  <p className="mt-1 text-[15.5px] font-bold text-fg">$500.00 Realized</p>
-                  <p className="text-[12px] text-muted">Halts new entries if settled daily net PnL drops ≤ −$500</p>
-                </div>
-
-                <div className="rounded-tile border border-line bg-surface p-3.5">
-                  <span className="font-mono text-[11px] uppercase text-faint">Single-Window Lock</span>
-                  <p className="mt-1 text-[15.5px] font-bold text-fg">1 Active Window Max</p>
-                  <p className="text-[12px] text-muted">assert_single_window() prevents overlapping exposure</p>
-                </div>
               </div>
             </Card>
           </section>
@@ -982,6 +966,19 @@ export function Strategy() {
           </nav>
         </aside>
       </div>
+        </>
+      ) : (
+        <Card className="mt-6 p-6">
+          <p className="text-[14px] font-semibold text-fg">
+            {loading ? 'Reading the active setup…' : 'No active setup reported'}
+          </p>
+          <p className="mt-1 text-[12.5px] leading-relaxed text-muted">
+            {loading
+              ? 'This page documents whatever bot/config.json selects, so it waits for the bot API to answer.'
+              : 'The bot API is unreachable, so no setup can be named here. Nothing below is live configuration.'}
+          </p>
+        </Card>
+      )}
 
       <Card className="mt-6 flex flex-wrap items-center justify-between gap-3 p-5">
         <div className="flex items-start gap-3">
@@ -990,10 +987,17 @@ export function Strategy() {
           </span>
           <div>
             <p className="text-[13.5px] font-medium text-fg">
-              🎯 HAPCS-v1 — Hybrid Arbitrage Pairing &amp; Certainty Sniping v1
+              {picked ? `${picked.symbol} — ${picked.name}` : 'No active setup reported'}
             </p>
             <p className="text-[12.5px] text-muted">
-              Reconstructed from 27,091 on-chain fills (Nov 6–8, 2026). Running on port 5173 → {BOT_ORIGIN}.
+              {picked ? (
+                <>
+                  This page mirrors <code className="font-mono">bot/config.json</code>; the engine re-reads it every
+                  window. Running on port 5173 → {BOT_ORIGIN}.
+                </>
+              ) : (
+                <>Running on port 5173 → {BOT_ORIGIN}.</>
+              )}
             </p>
           </div>
         </div>
