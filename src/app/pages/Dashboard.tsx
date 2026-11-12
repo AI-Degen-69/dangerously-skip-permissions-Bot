@@ -18,6 +18,8 @@ import { BOT_ORIGIN, useBotControl, useBotPerf, useRedeemBot, useStrategySetups,
 import { STRATEGY_PRESETS } from '../botDefaults'
 import type { BotPerf, PerfGate, PerfWindow, StrategySetup } from '../lib/bot'
 import { computeKpiStats } from '../lib/kpiStats'
+import { ACCOUNT_TIERS, useAccountTier, windowRebate } from '../lib/rebates'
+import type { AccountTier } from '../lib/rebates'
 import { cx } from '../lib/cx'
 import { money2, relativeTime } from '../lib/format'
 
@@ -64,6 +66,7 @@ export function Dashboard() {
   const redeem = useRedeemBot()
   const toast = useToast()
   const [hoveredSlug, setHoveredSlug] = useState<string | null>(null)
+  const [tier, setTier] = useAccountTier()
 
   const isViewOnly = control.data?.isViewOnly ?? false
   const running = (control.data?.running ?? false) && !isViewOnly
@@ -73,8 +76,14 @@ export function Dashboard() {
   const health = data?.health
   const windows = data?.windows ?? []
   const settled = windows.filter((window) => !window.pending)
+  // Credit the rebate per window so the chart, the bars and the window log agree
+  // with the KPI cards above them.
+  const withRebates = (window: PerfWindow): PerfWindow =>
+    window.netUsd == null
+      ? window
+      : { ...window, netUsd: window.netUsd + windowRebate(window, tier.rate) }
   const startingCapital = data?.summary?.bankrollUsd ?? 1000
-  const stats = computeKpiStats(windows, startingCapital, summary)
+  const stats = computeKpiStats(windows, startingCapital, summary, tier.rate)
   const currentCapital = stats.currentCapital
   const gateJudged = settled.length >= (data?.targets.windows ?? 288)
   const setupsQuery = useStrategySetups()
@@ -158,6 +167,8 @@ export function Dashboard() {
           tone={health?.killSwitch ? 'danger' : 'neutral'}
         />
       </Card>
+
+      <TierBar tier={tier} onPick={setTier} rebatesUsd={stats.rebatesUsd} />
 
       <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {!summary ? (
@@ -295,6 +306,37 @@ export function Dashboard() {
         )}
       </div>
 
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Stat
+          label="Taker Fees"
+          value={stats.feesUsd > 0 ? `−${usd(stats.feesUsd)}` : usd(0)}
+          hint={`${stats.costUsd > 0 ? ((stats.feesUsd / stats.costUsd) * 100).toFixed(1) : '0.0'}% of cost`}
+          tone="danger"
+          tip="Polymarket's parabolic taker fee, 0.07 · p · (1 − p) per share, already charged inside each taker fill's cost. Maker fills pay none."
+        />
+        <Stat
+          label="Taker Rebate"
+          value={`+${usd(stats.takerRebateUsd)}`}
+          hint={`${Math.round(tier.rate * 100)}% of fees · ${tier.name}`}
+          tone="success"
+          tip="Taker fees returned at the selected tier. Polymarket credits this daily at 00:00 UTC on the previous day's fees."
+        />
+        <Stat
+          label="Maker Rebate"
+          value={`+${usd(stats.makerRebateUsd)}`}
+          hint="20% of the fee each maker fill was matched against"
+          tone="success"
+          tip="Makers claim a fixed 20% share (crypto markets) of the taker fees collected on the fills they took the other side of. It does not depend on tier."
+        />
+        <Stat
+          label="Net before rebates"
+          value={`${stats.netBeforeRebateUsd >= 0 ? '+' : ''}${usd(stats.netBeforeRebateUsd)}`}
+          hint={`Rebates add ${usd(stats.rebatesUsd)}`}
+          tone={stats.netBeforeRebateUsd >= 0 ? 'success' : 'danger'}
+          tip="What the strategy earned on price alone, fees charged and no rebate credited. Compare it with Net P&L above to see the subsidy."
+        />
+      </div>
+
       <div className="mt-3 grid gap-3 lg:grid-cols-3">
         <Card className="p-5 lg:col-span-2">
           <div className="flex flex-wrap items-start justify-between gap-2">
@@ -331,14 +373,14 @@ export function Dashboard() {
                       summary.netUsd >= 0 ? 'text-success' : 'text-danger',
                     )}
                   >
-                    {summary.netUsd >= 0 ? '+' : ''}{usd(summary.netUsd)}
+                    {stats.netUsd >= 0 ? '+' : ''}{usd(stats.netUsd)}
                     {startingCapital > 0
                       ? ` (${(((currentCapital - startingCapital) / startingCapital) * 100).toFixed(1)}%)`
                       : ''}
                   </span>
                 </div>
                 <p className="text-[11.5px] text-faint">
-                  {summary.settled} settled window{summary.settled === 1 ? '' : 's'} · {summary.profitable} profitable
+                  {stats.settled} settled window{stats.settled === 1 ? '' : 's'} · {stats.winsCount} profitable
                 </p>
               </div>
             )}
@@ -348,7 +390,7 @@ export function Dashboard() {
             <>
               <div className="mt-3">
                 <InteractivePnlChart
-                  windows={settled}
+                  windows={settled.map(withRebates)}
                   startingCapital={startingCapital}
                   hoveredSlug={hoveredSlug}
                   onHoverWindow={(w) => setHoveredSlug(w?.slug ?? null)}
@@ -358,11 +400,11 @@ export function Dashboard() {
                 <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-muted">
                   <span>Last {Math.min(settled.length, 24)} windows</span>
                   <span className="text-faint">
-                    best {usd(summary?.bestUsd ?? 0)} · worst {usd(summary?.worstUsd ?? 0)}
+                    best {usd(stats.bestUsd)} · worst {usd(stats.worstUsd)}
                   </span>
                 </div>
                 <WindowBars
-                  windows={settled.slice(-24)}
+                  windows={settled.slice(-24).map(withRebates)}
                   hoveredSlug={hoveredSlug}
                   onHoverSlug={setHoveredSlug}
                 />
@@ -660,7 +702,7 @@ export function Dashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
-                {[...windows].reverse().map((window) => (
+                {[...windows].reverse().map(withRebates).map((window) => (
                   <tr key={window.slug}>
                     <td className="py-2.5 tabular-nums text-muted">{windowTime(window.startMs)}</td>
                     <td className="py-2.5 text-right tabular-nums">
@@ -783,6 +825,45 @@ function Stat({
         )}
       </div>
     </Card>
+  )
+}
+
+function TierBar({
+  tier,
+  onPick,
+  rebatesUsd,
+}: {
+  tier: AccountTier
+  onPick: (id: string) => void
+  rebatesUsd: number
+}) {
+  return (
+    <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-card border border-line bg-surface-1 px-3.5 py-2.5">
+      <div className="flex flex-wrap items-center gap-2.5">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-faint">Account tier</span>
+        <div className="flex flex-wrap gap-0.5 rounded-lg border border-line bg-surface-2 p-0.5">
+          {ACCOUNT_TIERS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => onPick(option.id)}
+              aria-pressed={tier.id === option.id}
+              title={`${option.name} · ${Math.round(option.rate * 100)}% rebate · $${option.volumeUsd.toLocaleString('en-US')} 30-day weighted volume`}
+              className={cx(
+                'rounded-md px-2 py-1 text-[11.5px] font-medium transition-colors',
+                tier.id === option.id ? 'bg-surface-1 text-fg shadow-xs' : 'text-muted hover:text-fg',
+              )}
+            >
+              {option.name}
+              <span className="ml-1 font-mono text-[10.5px] text-faint">{Math.round(option.rate * 100)}%</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <p className="text-[11.5px] text-faint">
+        Rebates recompute net P&amp;L, expectancy and profit factor · {usd(rebatesUsd)} credited at {tier.name}
+      </p>
+    </div>
   )
 }
 
