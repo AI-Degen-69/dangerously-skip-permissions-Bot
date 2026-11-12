@@ -488,7 +488,12 @@ class LivePaperLoopTests(unittest.TestCase):
 
         slot = 1_700_000_000
         slug = f"btc-updown-5m-{slot}"
-        st_hist = [{"t": 1700000001000, "v": 0.48}, {"t": 1700000002500, "v": 0.51}]
+        # Use a fresh timestamp (within the 3 s freshness window) so the
+        # sampler trusts the state history and does not append an extra sample.
+        # The previous timestamps were 7.5 s stale which correctly triggers the
+        # freshness-append path; this test covers the "fresh state history is
+        # returned as-is" branch.
+        st_hist = [{"t": 1700000008000, "v": 0.48}, {"t": 1700000009500, "v": 0.51}]
         st = {
             "slug": slug,
             "fills": [],

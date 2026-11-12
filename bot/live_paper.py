@@ -349,12 +349,17 @@ def write_state(
     if odds_history is not None:
         payload["oddsHistory"] = odds_history
     else:
+        # Hold _STATE_LOCK across both the history read and the atomic write so
+        # a concurrent sync-thread sample cannot be lost between the two
+        # critical sections (the race reported in CodeRabbit review thread 2).
         try:
             with _STATE_LOCK:
                 if STATE_PATH.exists():
                     raw = json.loads(STATE_PATH.read_text())
                     if raw.get("slug") == slug and raw.get("oddsHistory"):
                         payload["oddsHistory"] = raw["oddsHistory"]
+                _atomic_write_json(STATE_PATH, payload)
+            return
         except Exception:
             pass
     with _STATE_LOCK:

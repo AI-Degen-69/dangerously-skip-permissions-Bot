@@ -482,13 +482,24 @@ def live_markets(cfg: dict) -> list[dict]:
 
         hist = _ODDS_HISTORY.setdefault(slug, [])
         state_hist = curr_state.get("oddsHistory") if (curr_state and curr_state.get("slug") == slug) else None
-        if state_hist:
+        # Trust state history only when its latest sample is fresh (within 2× the
+        # sampler interval). When it is stale — e.g. the sync loop fell behind —
+        # keep the history and append a fresh REST-derived sample so the chart
+        # continues recording even if WebSocket quotes are unavailable.
+        _STATE_HIST_MAX_AGE_MS = 3_000  # 2× the 1.5 s sampler interval
+        if state_hist and (now_ms - state_hist[-1]["t"]) < _STATE_HIST_MAX_AGE_MS:
             hist = list(state_hist)
             _ODDS_HISTORY[slug] = hist
-        elif imp_up is not None and (not hist or now_ms - hist[-1]["t"] >= 1500):
-            hist.append({"t": now_ms, "v": imp_up})
-            if len(hist) > 500:
-                hist.pop(0)
+        else:
+            if state_hist:
+                # Stale: seed in-memory history from state so we don't lose points,
+                # then fall through to append the fresh REST-derived sample below.
+                hist = list(state_hist)
+                _ODDS_HISTORY[slug] = hist
+            if imp_up is not None and (not hist or now_ms - hist[-1]["t"] >= 1500):
+                hist.append({"t": now_ms, "v": imp_up})
+                if len(hist) > 500:
+                    hist.pop(0)
 
         out.append({
             "slug": slug, "interval": "5m", "startMs": start_ms, "endMs": end_ms,
