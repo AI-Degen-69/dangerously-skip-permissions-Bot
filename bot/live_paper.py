@@ -326,6 +326,7 @@ def write_state(
     lean: LeanSignal | None = None,
     ws_status: dict | None = None,
     recent_ticks: list[dict] | None = None,
+    odds_history: list[dict] | None = None,
 ) -> None:
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     cfg = load_cfg()
@@ -345,6 +346,17 @@ def write_state(
         payload["ws"] = ws_status
     if recent_ticks is not None:
         payload["recentTicks"] = recent_ticks
+    if odds_history is not None:
+        payload["oddsHistory"] = odds_history
+    else:
+        try:
+            with _STATE_LOCK:
+                if STATE_PATH.exists():
+                    raw = json.loads(STATE_PATH.read_text())
+                    if raw.get("slug") == slug and raw.get("oddsHistory"):
+                        payload["oddsHistory"] = raw["oddsHistory"]
+        except Exception:
+            pass
     with _STATE_LOCK:
         _atomic_write_json(STATE_PATH, payload)
 
@@ -462,14 +474,42 @@ def trade_window(
                         raw = STATE_PATH.read_text()
                         if isinstance(raw, str):
                             st = json.loads(raw)
-                            st["updatedAtMs"] = int(time.time() * 1000)
-                            st["ws"] = streamer.get_status()
+                            now_ms = int(time.time() * 1000)
+                            st["updatedAtMs"] = now_ms
+                            ws_stat = streamer.get_status()
+                            st["ws"] = ws_stat
                             st["recentTicks"] = streamer.get_recent_ticks(30)
                             cfg = load_cfg()
                             strat = cfg.get("strategy", {})
                             st["strategy"] = strat.get("id", C.STRATEGY_ID)
                             st["strategySymbol"] = strat.get("symbol", C.STRATEGY_SYMBOL)
                             st["strategyName"] = strat.get("name", C.STRATEGY_NAME)
+
+                            # Record continuous implied Up odds
+                            up_book = ws_stat.get("up_book") or {}
+                            down_book = ws_stat.get("down_book") or {}
+                            up_val = up_book.get("best_ask") if up_book.get("best_ask") is not None else up_book.get("best_bid")
+                            down_val = down_book.get("best_ask") if down_book.get("best_ask") is not None else down_book.get("best_bid")
+                            if up_val is not None and down_val is not None and (up_val + down_val) > 0:
+                                imp_up = round(up_val / (up_val + down_val), 4)
+                            elif up_val is not None:
+                                imp_up = round(up_val, 4)
+                            elif down_val is not None:
+                                imp_up = round(1.0 - down_val, 4)
+                            else:
+                                imp_up = None
+
+                            if imp_up is not None:
+                                hist = st.get("oddsHistory") or []
+                                if not hist or (now_ms - hist[-1]["t"]) >= 1500:
+                                    slot_start_ms = slot * 1000
+                                    if not hist and abs(now_ms - slot_start_ms) < 15_000:
+                                        hist.append({"t": slot_start_ms, "v": 0.5})
+                                    hist.append({"t": now_ms, "v": imp_up})
+                                    if len(hist) > 500:
+                                        hist.pop(0)
+                                    st["oddsHistory"] = hist
+
                             _atomic_write_json(STATE_PATH, st)
             except (OSError, json.JSONDecodeError, TypeError):
                 pass

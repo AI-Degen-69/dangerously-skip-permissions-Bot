@@ -464,6 +464,54 @@ class LivePaperLoopTests(unittest.TestCase):
         self.assertEqual(enriched["kind"], "snipe")
         self.assertEqual(enriched["reason"], "m4-snipe")
 
+    def test_write_state_preserves_odds_history(self):
+        import json
+        import bot.live_paper as lp
+
+        state_file = self.tmp_path / "state.json"
+        with patch.object(lp, "STATE_PATH", state_file):
+            # Write initial state with odds history
+            initial_hist = [{"t": 1700000001000, "v": 0.5}, {"t": 1700000002500, "v": 0.52}]
+            lp.write_state("btc-updown-5m-1700000000", 1700000300000, 1700000000000, [], odds_history=initial_hist)
+            data = json.loads(state_file.read_text())
+            self.assertEqual(data.get("oddsHistory"), initial_hist)
+
+            # Subsequent write_state call (e.g. on new fill) preserves oddsHistory
+            fill = {"outcome": "Up", "price": 0.45, "shares": 10.0, "usd": 4.5}
+            lp.write_state("btc-updown-5m-1700000000", 1700000300000, 1700000000000, [fill])
+            data2 = json.loads(state_file.read_text())
+            self.assertEqual(data2.get("oddsHistory"), initial_hist)
+            self.assertEqual(len(data2.get("fills", [])), 1)
+
+    def test_live_markets_syncs_odds_history_from_state(self):
+        import bot.api as api
+
+        slot = 1_700_000_000
+        slug = f"btc-updown-5m-{slot}"
+        st_hist = [{"t": 1700000001000, "v": 0.48}, {"t": 1700000002500, "v": 0.51}]
+        st = {
+            "slug": slug,
+            "fills": [],
+            "oddsHistory": st_hist,
+        }
+
+        mock_spec = MagicMock()
+        mock_spec.up_token_id = "tok_up"
+        mock_spec.down_token_id = "tok_down"
+
+        mock_client = MagicMock()
+        mock_client.get_price.return_value = "0.50"
+
+        with patch.object(api, "visible_slots", return_value=[slot]), \
+             patch("bot.discovery.get_window", return_value=mock_spec), \
+             patch.object(api, "client", return_value=mock_client), \
+             patch.object(api, "state", return_value=st), \
+             patch("time.time", return_value=slot + 10):
+            markets = api.live_markets({})
+            self.assertEqual(len(markets), 1)
+            self.assertEqual(markets[0]["oddsHistory"], st_hist)
+            self.assertEqual(api._ODDS_HISTORY.get(slug), st_hist)
+
 
 if __name__ == "__main__":
     unittest.main()

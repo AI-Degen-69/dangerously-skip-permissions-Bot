@@ -101,9 +101,13 @@ export function ProbabilityChart({
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     window.addEventListener('resize', measure)
+    window.addEventListener('focus', measure)
+    document.addEventListener('visibilitychange', measure)
     return () => {
       ro.disconnect()
       window.removeEventListener('resize', measure)
+      window.removeEventListener('focus', measure)
+      document.removeEventListener('visibilitychange', measure)
     }
   }, [measure])
 
