@@ -3,12 +3,13 @@
 import json
 import shutil
 import tempfile
+import time
 import unittest
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
-from bot import api, live_paper, runs
+from bot import api, live_paper, runs, ws
 from bot.runs import RunWorkspace
 
 
@@ -96,6 +97,11 @@ class TestTapeStatsIncremental(unittest.TestCase):
         book.write_text('{"b": 1}\n', encoding="utf-8")
         self.assertEqual(self.ws.tape_stats()["books"], 1)
 
+    def test_stats_sum_across_segments(self):
+        (self.ws.tape_dir / "book.111.jsonl").write_text('{"a": 1}\n{"a": 2}\n', encoding="utf-8")
+        (self.ws.tape_dir / "book.jsonl").write_text('{"a": 3}\n', encoding="utf-8")
+        self.assertEqual(self.ws.tape_stats()["books"], 3)
+
     def test_counts_are_reused_after_cache_is_dropped(self):
         book = self.ws.tape_dir / "book.jsonl"
         book.write_text('{"a": 1}\n{"a": 2}\n', encoding="utf-8")
@@ -105,6 +111,60 @@ class TestTapeStatsIncremental(unittest.TestCase):
         runs._TAPE_LOADED.clear()
         self.assertEqual(self.ws.tape_stats()["books"], 2)
         self.assertTrue((self.ws.tape_dir / ".tape_stats.json").exists())
+
+
+class TestTapeRotation(unittest.TestCase):
+    """The recorder must not grow a single unbounded tape file."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.tape = self.tmp / "tape"
+        self.tape.mkdir(parents=True)
+        self.streamer = ws.LiveBookStreamer(
+            "up", "down", enable_trade_prints=True, tape_dir=self.tape
+        )
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_segment_rotates_when_it_reaches_the_cap(self):
+        with patch.dict(ws.TAPE_SEGMENT_BYTES, {"prints": 32, "book": 64}):
+            self.streamer._append_tape_line("book", {"a": 1})
+            (self.tape / "book.jsonl").write_text("x" * 100 + "\n", encoding="utf-8")
+            self.streamer._append_tape_line("book", {"a": 2})
+        archives = list(self.tape.glob("book.*.jsonl"))
+        self.assertEqual(len(archives), 1)
+        self.assertEqual(len(archives[0].read_text(encoding="utf-8")), 101)
+        self.assertEqual(
+            (self.tape / "book.jsonl").read_text(encoding="utf-8").strip(), '{"a": 2}'
+        )
+
+    def test_archives_older_than_retention_are_pruned(self):
+        old = int(time.time()) - ws.TAPE_RETENTION_S - 60
+        fresh = int(time.time()) - 60
+        (self.tape / f"book.{old}.jsonl").write_text("{}\n", encoding="utf-8")
+        (self.tape / f"book.{fresh}.jsonl").write_text("{}\n", encoding="utf-8")
+        self.streamer._prune_tape("book", "book", ".jsonl")
+        names = sorted(p.name for p in self.tape.glob("book.*.jsonl"))
+        self.assertEqual(names, [f"book.{fresh}.jsonl"])
+
+    def test_archive_count_is_capped_keeping_newest(self):
+        now = int(time.time())
+        for i in range(6):
+            (self.tape / f"book.{now + i}.jsonl").write_text("{}\n", encoding="utf-8")
+        with patch.object(ws, "TAPE_MAX_ARCHIVES", 2):
+            self.streamer._prune_tape("book", "book", ".jsonl")
+        names = sorted(p.name for p in self.tape.glob("book.*.jsonl"))
+        self.assertEqual(names, [f"book.{now + 4}.jsonl", f"book.{now + 5}.jsonl"])
+
+    def test_archives_over_the_size_budget_are_dropped_oldest_first(self):
+        now = int(time.time())
+        (self.tape / f"book.{now}.jsonl").write_text("x" * 100, encoding="utf-8")
+        (self.tape / f"book.{now + 1}.jsonl").write_text("x" * 100, encoding="utf-8")
+        with patch.object(ws, "TAPE_ARCHIVE_BYTES", {"book": 150}):
+            self.streamer._prune_tape("book", "book", ".jsonl")
+        names = sorted(p.name for p in self.tape.glob("book.*.jsonl"))
+        self.assertEqual(names, [f"book.{now + 1}.jsonl"])
 
 
 class TestTapeDirIfEnabled(unittest.TestCase):

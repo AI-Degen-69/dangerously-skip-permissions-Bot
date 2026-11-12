@@ -92,6 +92,25 @@ def _tape_cache_file(tape_dir: Path) -> Path:
     return tape_dir / ".tape_stats.json"
 
 
+def tape_segments(tape_dir: Path, stem: str, suffix: str = ".jsonl") -> list[Path]:
+    """Tape segments oldest-first: `prints.<epoch>.jsonl` … then `prints.jsonl`.
+
+    The recorder rotates by size (see `TAPE_SEGMENT_BYTES` in bot/ws.py), so
+    readers must walk the archives before the active file to stay chronological.
+    """
+    archived: list[tuple[int, Path]] = []
+    for seg in tape_dir.glob(f"{stem}.*{suffix}"):
+        part = seg.name[len(stem) + 1 : -len(suffix)]
+        if part.isdigit():
+            archived.append((int(part), seg))
+    archived.sort(key=lambda item: item[0])
+    out = [seg for _, seg in archived]
+    active = tape_dir / f"{stem}{suffix}"
+    if active.exists():
+        out.append(active)
+    return out
+
+
 def _count_appended_lines(path: Path, offset: int) -> tuple[int, int]:
     """Count complete lines appended after `offset`; return (lines, new_offset).
 
@@ -141,7 +160,7 @@ def _save_tape_counts(tape_dir: Path) -> None:
     payload = {
         Path(key).name: entry
         for key, entry in _TAPE_COUNTS.items()
-        if Path(key).parent == tape_dir
+        if Path(key).parent == tape_dir and Path(key).exists()
     }
     target = _tape_cache_file(tape_dir)
     try:
@@ -182,8 +201,6 @@ class RunWorkspace:
         recorder writes multi-GB files, so a full re-read per request stalled the
         desk API for ~30s on a 5 GB book.jsonl.
         """
-        prints_path = self.tape_dir / "prints.jsonl"
-        book_path = self.tape_dir / "book.jsonl"
         out: dict[str, Any] = {
             "tapeDir": str(self.tape_dir),
             "prints": 0,
@@ -191,15 +208,19 @@ class RunWorkspace:
             "printsBytes": 0,
             "bookBytes": 0,
         }
-        for key, path, size_key in (
-            ("prints", prints_path, "printsBytes"),
-            ("books", book_path, "bookBytes"),
+        for key, stem, size_key in (
+            ("prints", "prints", "printsBytes"),
+            ("books", "book", "bookBytes"),
         ):
             try:
-                if path.exists():
+                total_bytes = 0
+                total_lines = 0
+                for path in tape_segments(self.tape_dir, stem):
                     size = path.stat().st_size
-                    out[size_key] = size
-                    out[key] = self._count_lines(path, size)
+                    total_bytes += size
+                    total_lines += self._count_lines(path, size)
+                out[size_key] = total_bytes
+                out[key] = total_lines
             except Exception:
                 pass
         out["mb"] = round((out["printsBytes"] + out["bookBytes"]) / (1024 * 1024), 4)

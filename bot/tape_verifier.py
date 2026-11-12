@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from bot.runs import tape_segments
+
 
 GRACE_PERIOD_S = 5.0  # fills younger than this stay "pending"
 
@@ -36,33 +38,31 @@ def _fill_epoch_s(fill: dict) -> float:
 
 
 def load_prints_for_window(tape_dir: Path, window_start_s: float, window_end_s: float) -> list[dict]:
-    """Load prints from prints.jsonl that fall within [window_start_s, window_end_s].
+    """Load prints that fall within [window_start_s, window_end_s].
 
-    Reads from the end of the file when possible, since recent prints are what
-    we need most.  Falls back to a full scan with early-exit on ts > window_end.
+    Walks every tape segment oldest-first (the recorder rotates prints.jsonl by
+    size), skipping records before the window and stopping once the segments run
+    past it — records are append-ordered, so nothing later can qualify.
     """
-    prints_path = tape_dir / "prints.jsonl"
-    if not prints_path.exists():
-        return []
-
     result: list[dict] = []
-    try:
-        with open(prints_path, "r", encoding="utf-8") as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                try:
-                    rec = json.loads(line)
-                except (json.JSONDecodeError, ValueError):
-                    continue
-                ts = rec.get("ts", 0)
-                if ts < window_start_s:
-                    continue
-                if ts > window_end_s:
-                    break
-                result.append(rec)
-    except OSError:
-        pass
+    for prints_path in tape_segments(tape_dir, "prints"):
+        try:
+            with open(prints_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+                    ts = rec.get("ts", 0)
+                    if ts < window_start_s:
+                        continue
+                    if ts > window_end_s:
+                        return result
+                    result.append(rec)
+        except OSError:
+            continue
     return result
 
 

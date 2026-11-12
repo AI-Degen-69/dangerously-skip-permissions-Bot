@@ -223,6 +223,24 @@ class TestLoadPrints(unittest.TestCase):
         import shutil
         shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_reads_rotated_segments_oldest_first(self):
+        tmp = Path(tempfile.mkdtemp())
+        tape = tmp / "tape"
+        tape.mkdir()
+        (tape / "prints.111.jsonl").write_text(
+            json.dumps({"ts": 200, "slug_outcome": "Down", "price": 0.4, "size": 10}) + "\n",
+            encoding="utf-8",
+        )
+        (tape / "prints.jsonl").write_text(
+            json.dumps({"ts": 300, "slug_outcome": "Down", "price": 0.4, "size": 20}) + "\n",
+            encoding="utf-8",
+        )
+        result = load_prints_for_window(tape, 150, 400)
+        self.assertEqual([r["ts"] for r in result], [200, 300])
+
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()

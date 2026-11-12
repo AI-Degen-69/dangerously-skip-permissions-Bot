@@ -203,6 +203,17 @@ class StreamTick:
         }
 
 
+# Tape rotation. The recorder appends continuously (book depth alone reached
+# 5.4 GB in a day), so the active file is capped by size and archived as
+# `<stem>.<epoch>.jsonl`; archives are pruned by age and count to keep the run
+# directory bounded. Verification only needs prints from the current window, and
+# readers walk segments oldest-first, so archived prints stay usable.
+TAPE_SEGMENT_BYTES = {"prints": 32 * 1024 * 1024, "book": 128 * 1024 * 1024}
+TAPE_ARCHIVE_BYTES = {"prints": 64 * 1024 * 1024, "book": 256 * 1024 * 1024}
+TAPE_RETENTION_S = 6 * 3600
+TAPE_MAX_ARCHIVES = 4
+
+
 class LiveBookStreamer:
     """Thread-safe WebSocket orderbook streamer for a 5-minute market window."""
 
@@ -571,10 +582,50 @@ class LiveBookStreamer:
         try:
             self.tape_dir.mkdir(parents=True, exist_ok=True)
             fname = 'prints.jsonl' if kind == 'prints' else 'book.jsonl'
-            with (self.tape_dir / fname).open('a', encoding='utf-8') as f:
+            path = self.tape_dir / fname
+            self._rotate_tape(kind, path)
+            with path.open('a', encoding='utf-8') as f:
                 f.write(json.dumps(record) + chr(10))
         except Exception:
             pass
+
+    def _rotate_tape(self, kind: str, path: Path) -> None:
+        """Archive the active segment once it reaches its cap, then prune old ones."""
+        limit = TAPE_SEGMENT_BYTES.get(kind)
+        if not limit or not path.exists() or path.stat().st_size < limit:
+            return
+        path.replace(self.tape_dir / f"{path.stem}.{int(time.time())}{path.suffix}")
+        self._prune_tape(kind, path.stem, path.suffix)
+
+    def _prune_tape(self, kind: str, stem: str, suffix: str = '.jsonl') -> None:
+        """Drop archives past retention, past the count cap, or past the size budget."""
+        archived: list[tuple[int, Path]] = []
+        for seg in self.tape_dir.glob(f"{stem}.*{suffix}"):
+            part = seg.name[len(stem) + 1 : -len(suffix)]
+            if part.isdigit():
+                archived.append((int(part), seg))
+        archived.sort(key=lambda item: item[0])
+        cutoff = time.time() - TAPE_RETENTION_S
+        for ts, seg in list(archived):
+            if ts < cutoff:
+                seg.unlink(missing_ok=True)
+                archived.remove((ts, seg))
+        budget = TAPE_ARCHIVE_BYTES.get(kind)
+        while archived and (
+            len(archived) > TAPE_MAX_ARCHIVES
+            or (budget is not None and self._archive_bytes(archived) > budget)
+        ):
+            archived.pop(0)[1].unlink(missing_ok=True)
+
+    @staticmethod
+    def _archive_bytes(archived: list[tuple[int, Path]]) -> int:
+        total = 0
+        for _, seg in archived:
+            try:
+                total += seg.stat().st_size
+            except OSError:
+                continue
+        return total
 
     def _handle_trade_print(self, item: dict) -> None:
         asset_id = str(item.get('asset_id', ''))
