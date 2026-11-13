@@ -74,7 +74,7 @@ class PrintModelTests(unittest.TestCase):
 
 class DepthCapTests(unittest.TestCase):
     def _quotes(self):
-        return {'Up': {'bid': 0.20, 'ask': 0.21}, 'Down': {'bid': 0.79, 'ask': 0.80}}
+        return {'Up': {'bid': 0.20, 'ask': 0.21}, 'Down': {'bid': 0.75, 'ask': 0.76}}
 
     def _inv(self):
         return {'Up': {'shares': 0.0, 'cost': 0.0}, 'Down': {'shares': 0.0, 'cost': 0.0}}
@@ -91,7 +91,8 @@ class DepthCapTests(unittest.TestCase):
             self.assertLessEqual(dec.shares, 12.0)
         else:
             dec2 = evaluate_microstructure_ladder(
-                quotes={'Up': {'bid': 0.20, 'ask': 0.21}}, inv=self._inv(), fill_idx=2, minute=1,
+                quotes={'Up': {'bid': 0.20, 'ask': 0.21}, 'Down': {'bid': 0.75, 'ask': 0.76}},
+                inv=self._inv(), fill_idx=2, minute=1,
                 strategy_id='dangerously-skip-permissions-v2.4',
                 min_fill=0.07, max_fill=0.45, default_clip=33.0, max_clip=45.0,
                 benchmark_pair_cost=0.965, max_pair_cost=0.985, max_share_lead=45.0,

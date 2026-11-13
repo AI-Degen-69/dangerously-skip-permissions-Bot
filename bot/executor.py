@@ -221,6 +221,20 @@ def evaluate_microstructure_ladder(
             return 0.0
         return min(float(shares), float(avail))
 
+    def _completable_now(px: float, opp_ref: float | None) -> bool:
+        """Can the hedge be bought now, at the ask, and still make a pair under the cap?
+
+        A resting bid is not a fill and a future cheap hedge is not a plan. The
+        only hedge that exists at decision time is a taker buy at the opposite
+        ask, so the pair this leg would form costs px + ask + the taker fee. If
+        that is over max_pair_cost, the entry leans on a cheaper second leg
+        arriving later — the assumption that made the paper book look profitable
+        while the tape said otherwise.
+        """
+        if opp_ref is None:
+            return False
+        return px + float(opp_ref) + taker_fee_per_share(float(opp_ref)) <= max_pair_cost
+
     def _side_prices(s: str) -> tuple[float | None, float | None]:
         q = quotes.get(s) or {}
         bid = q.get("bid")
@@ -250,7 +264,6 @@ def evaluate_microstructure_ladder(
     # gap land on lead_cap+5; it is gone. What the dashboard shows is what
     # the engine enforces.)
     lead_cap = max_share_lead
-    rescue_cap = rescue_max_pair_cost if (is_dsp or in_sweep_phase) else max_pair_cost
 
     # 1. Phase 3: Resolution Certainty Snipe in Minute 4 [0.90, 0.975]
     # Enabled exclusively for 'hapcs-v1'. Disabled for 'dangerously-skip-permissions'
@@ -420,16 +433,12 @@ def evaluate_microstructure_ladder(
             continue
         dip_max = 0.45 if is_dsp else C.DIP_LADDER_MAX
         if px <= dip_max:
-            # Pre-Flight Hedge Gate (v2.2 only):
-            # Before taking an unhedged speculative dip fill, verify that the opposite side
-            # allows a hedge under rescue_cap (0.995). If the opposite side is already too expensive,
-            # refuse immediately so we NEVER enter a position where a sub-$1.00 hedge is impossible!
-            # v2.3 drops this gate and relies on the strict sub-$1.00 pair-cost gates below,
-            # so dips keep filling (constant $4.50 risk) and equalize on the next swing.
-            if is_v22 and deficit <= 0 and opp_ref is not None:
-                if px + opp_ref > rescue_cap:
-                    saw_pair_cap = True
-                    continue
+            # Every speculative leg is checked against the hedge that exists
+            # right now. Closing an existing deficit (deficit > 0) is the
+            # hedge, so it needs no second leg; a fresh dip does.
+            if deficit <= 0 and not _completable_now(px, opp_ref):
+                saw_pair_cap = True
+                continue
 
             # High-Confidence Atomic Arb Detection:
             # If both sides can be filled immediately with sum <= 0.990, flag atomic_arb = True!
@@ -492,12 +501,12 @@ def evaluate_microstructure_ladder(
                 )
             saw_pair_cap = True
         elif px <= C.STRADDLE_BAND[1] and inv["Up"]["shares"] == 0 and inv["Down"]["shares"] == 0:
-            # Opening Straddle Leg 1 in (0.50, 0.55]
-            # v2.2 pre-flight gate only; v2.3 opens on pair-cost math alone.
-            if is_v22 and opp_ref is not None:
-                if px + opp_ref > rescue_cap:
-                    saw_pair_cap = True
-                    continue
+            # Opening Straddle Leg 1 in (0.50, 0.55]. Both sides are flat, so
+            # this leg is speculative: only open when the opposite ask closes
+            # the pair under the cap right now.
+            if not _completable_now(px, opp_ref):
+                saw_pair_cap = True
+                continue
 
             is_atomic = bool(is_confidence and opp_ref is not None and (px + opp_ref <= 0.990))
             role = "MAKER" if ((bid is not None and px == bid) or bid is None) else "TAKER"

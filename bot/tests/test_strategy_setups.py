@@ -117,12 +117,12 @@ class TestStrategySetups(unittest.TestCase):
 
     def test_v23_unhedged_gap_veto_is_strict(self):
         """The gap knob is a strict veto: lead + shares >= knob is skipped, so the knob value itself is never held."""
-        def decide(up_sh, down_sh):
+        def decide(up_sh, down_sh, knob=20.0):
             inv = {
                 "Up": {"shares": float(up_sh), "cost": round(up_sh * 0.44, 2)},
                 "Down": {"shares": float(down_sh), "cost": round(down_sh * 0.50, 2)},
             }
-            quotes = {"Up": {"bid": 0.44, "ask": 0.45}}  # Down unquotable: only Up is a candidate
+            quotes = {"Up": {"bid": 0.44, "ask": 0.45}, "Down": {"bid": 0.44, "ask": 0.45}}
             return evaluate_microstructure_ladder(
                 quotes=quotes,
                 inv=inv,
@@ -135,30 +135,28 @@ class TestStrategySetups(unittest.TestCase):
                 max_clip=45.0,
                 benchmark_pair_cost=0.965,
                 max_pair_cost=0.985,
-                max_share_lead=20.0,
+                max_share_lead=knob,
             )
-        # 10/10 holding, order 10 -> resulting 10 unhedged < 20 -> GOOD, fills.
-        dec_ok = decide(10, 10)
+        # A flat book: the 10-share clip is all the unhedged lead it would create.
+        dec_ok = decide(0, 0)
         self.assertEqual(dec_ok.action, "fill")
         self.assertEqual(dec_ok.outcome, "Up")
-        # 19/10 holding, order 10 -> resulting 19 < 20 -> fills (19 is the max hold).
-        dec_edge = decide(19, 10)
-        self.assertEqual(dec_edge.action, "fill")
-        self.assertEqual(dec_edge.outcome, "Up")
-        # 20/10 holding, order 10 -> resulting 20 >= 20 -> BAD, vetoed and labelled.
-        dec_no = decide(20, 10)
-        self.assertFalse(dec_no.action == "fill" and dec_no.outcome == "Up")
+        # The clip would reach the knob exactly, and the knob value is never held.
+        dec_no = decide(0, 0, knob=10.0)
         self.assertEqual(dec_no.action, "skip")
         self.assertEqual(dec_no.sub_reason, "unhedged-cap")
+        # A real gap is closed, never widened: 20/10 buys the lagging Down instead.
+        dec_gap = decide(20, 10)
+        self.assertEqual(dec_gap.outcome, "Down")
 
     def test_v24_knob_11_fits_10_share_clips(self):
-        """v2.4 knob 11: a fresh 10 sh dip fills (0+10<11) but adding 10 onto a 10 sh gap is vetoed."""
+        """v2.4 knob 11: a fresh 10 sh clip fills (0+10<11); a 10 sh gap is hedged, not widened."""
         def decide(up_sh, down_sh):
             inv = {
                 "Up": {"shares": float(up_sh), "cost": round(up_sh * 0.44, 2)},
                 "Down": {"shares": float(down_sh), "cost": round(down_sh * 0.50, 2)},
             }
-            quotes = {"Up": {"bid": 0.44, "ask": 0.45}}
+            quotes = {"Up": {"bid": 0.44, "ask": 0.45}, "Down": {"bid": 0.44, "ask": 0.45}}
             return evaluate_microstructure_ladder(
                 quotes=quotes,
                 inv=inv,
@@ -177,8 +175,7 @@ class TestStrategySetups(unittest.TestCase):
         self.assertEqual(dec_open.action, "fill")
         self.assertEqual(dec_open.outcome, "Up")
         dec_max = decide(10, 0)
-        self.assertFalse(dec_max.action == "fill" and dec_max.outcome == "Up")
-        self.assertEqual(dec_max.sub_reason, "unhedged-cap")
+        self.assertEqual(dec_max.outcome, "Down")
 
     def test_exact_deficit_clipping(self):
         """Verify that deficit hedging clips the exact deficit rather than coarse ladder snaps."""

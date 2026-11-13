@@ -3,9 +3,10 @@ from typing import ClassVar
 
 from bot.executor import dip_curve_shares, evaluate_microstructure_ladder, select_ladder_clip
 
-INV = {"Up": {"shares": 30.0, "cost": 3.0}, "Down": {"shares": 0.0, "cost": 0.0}}
-# Down is un-hedgeable (0.99 > rescue ceiling 0.985), so Up is the speculative dip.
-QUOTES = {"Up": {"bid": 0.10, "ask": 0.11}, "Down": {"bid": 0.99, "ask": 1.00}}
+INV = {"Up": {"shares": 30.0, "cost": 3.0}, "Down": {"shares": 30.0, "cost": 24.0}}
+# A balanced book with a hedgeable opposite ask, so a fresh Up dip passes the
+# completable-now gate and the dollar cap is the thing being measured.
+QUOTES = {"Up": {"bid": 0.20, "ask": 0.21}, "Down": {"bid": 0.75, "ask": 0.76}}
 
 
 def _decide(max_unhedged_usd=0.0):
@@ -38,12 +39,12 @@ class TestUnhedgedUsdCap(unittest.TestCase):
         self.assertEqual((dec.action, dec.outcome), ("fill", "Up"))
 
     def test_allows_fill_under_the_dollar_cap(self):
-        # 10 sh @ 10c on top of 30 sh @ 10c avg -> $4.00 exposed, cap $5.
+        # 10 sh @ 20c leaves a 10-share lead worth $2.00, under the $5 cap.
         dec = _decide(max_unhedged_usd=5.0)
         self.assertEqual((dec.action, dec.outcome), ("fill", "Up"))
 
     def test_vetoes_fill_above_the_dollar_cap(self):
-        dec = _decide(max_unhedged_usd=2.0)
+        dec = _decide(max_unhedged_usd=1.0)
         self.assertNotEqual((dec.action, dec.outcome), ("fill", "Up"))
 
 
@@ -74,9 +75,9 @@ class TestDipCurveSizing(unittest.TestCase):
         )
 
     def test_v25_dip_uses_the_curve(self):
-        # 7c bid: the fat end of the curve, 33 sh instead of the flat 10-share default.
+        # 7c bid with a 0.90 hedge ask: the fat end of the curve, 33 sh instead of 10.
         dec = evaluate_microstructure_ladder(
-            quotes={"Up": {"bid": 0.07, "ask": 0.08}, "Down": {"bid": 0.97, "ask": 0.98}},
+            quotes={"Up": {"bid": 0.07, "ask": 0.08}, "Down": {"bid": 0.89, "ask": 0.90}},
             inv={"Up": {"shares": 0.0, "cost": 0.0}, "Down": {"shares": 0.0, "cost": 0.0}},
             fill_idx=0,
             minute=1,
@@ -97,10 +98,10 @@ class TestDipCurveSizing(unittest.TestCase):
         self.assertEqual((dec.action, dec.outcome, dec.shares), ("fill", "Up", 33.0))
 
     def test_opening_straddle_ignores_the_curve(self):
-        # 0.52 is above the dip band, so this is straddle-open, sized by clipSharesDefault (10).
-        # A stale dipCurve must not thin it (max_fill 0.975 as in the hapcs config).
+        # 0.46 is above the dip band, so this is straddle-open, sized by clipSharesDefault (10).
+        # The opposite ask (0.49) keeps the pair under the cap, so it may open at all.
         dec = evaluate_microstructure_ladder(
-            quotes={"Up": {"bid": 0.52, "ask": 0.53}, "Down": {"bid": 0.46, "ask": 0.47}},
+            quotes={"Up": {"bid": 0.46, "ask": 0.47}, "Down": {"bid": 0.48, "ask": 0.49}},
             inv={"Up": {"shares": 0.0, "cost": 0.0}, "Down": {"shares": 0.0, "cost": 0.0}},
             fill_idx=0,
             minute=1,

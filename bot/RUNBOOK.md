@@ -55,6 +55,11 @@ to the back of the queue. Taker orders execute at once, because a market order
 really does. Trading starts `startAfterOpenSec` after the bell: Phase 0 warms the
 streamer before it, but nothing is booked against the pre-open book.
 
+A speculative leg also has to be hedgeable *now*: the executor only opens one when
+the opposite ask plus its taker fee still forms a pair under `maxPairCost`. It no
+longer enters on the hope that a cheap second leg shows up later. Closing an
+existing deficit is different — that fill is the hedge.
+
 The verifier stamps each fill with what the tape corroborates: a maker fill at
 limit L counts as `verified` when the tape printed at least the clip's size at or
 below L inside that window. Taker fills stay `unverified-taker` — paper mode has
