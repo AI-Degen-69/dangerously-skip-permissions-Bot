@@ -290,6 +290,10 @@ export interface PerfWindow {
   upFills: number
   downFills: number
   zeroPriceFills: number
+  /** Maker fills - the ones the tape can corroborate. */
+  makerFills?: number
+  /** Taker fills - paper mode has no real book, so these cannot be checked. */
+  takerFills?: number
   mShape: number[]
   /** Taker fees already charged inside costUsd. */
   feesUsd?: number

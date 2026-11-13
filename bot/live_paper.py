@@ -539,7 +539,14 @@ def trade_window(
             if not _tape_on or not fills:
                 continue
             try:
-                changed = verify_fills(fills, _tape_dir, window_start_s=float(slot))
+                # The window's own bounds: a later window's prints must not
+                # confirm this window's fills.
+                changed = verify_fills(
+                    fills,
+                    _tape_dir,
+                    window_start_s=float(slot),
+                    window_end_s=float(slot) + C.WINDOW_S,
+                )
                 if changed > 0:
                     # Persist the new statuses: the sync loop preserves whatever
                     # fills it last read, so without this write the API keeps
@@ -773,7 +780,13 @@ def trade_window(
     # --- Final tape verification pass (definitive, all prints available) ---
     if _tape_on and fills:
         try:
-            verify_fills(fills, _tape_dir, window_start_s=float(slot), force=True)
+            verify_fills(
+                fills,
+                _tape_dir,
+                window_start_s=float(slot),
+                window_end_s=float(slot) + C.WINDOW_S,
+                force=True,
+            )
             log(f"tape final: {sum(1 for f in fills if (f.get('detail') or {}).get('tapeStatus') == 'verified')}/{len(fills)} verified")
         except Exception:
             pass

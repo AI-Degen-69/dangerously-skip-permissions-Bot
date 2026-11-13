@@ -41,6 +41,27 @@ python bot/live_paper.py --slot <epoch>
 - `bot/loop.pid` / `bot/loop.log` — loop process.
 - `bot/kill` — kill-switch file (present = entries paused). See below.
 
+## Tape verification (paper fills vs the real book)
+
+The recorder writes every trade print the bot sees. The verifier stamps each
+paper fill with what the tape corroborates: a maker fill at limit L counts as
+`verified` when the tape printed at least the clip's size at or below L inside
+that window. Taker fills stay `unverified-taker` — paper mode has no real book
+to check them against.
+
+The live loop stamps the window it is trading. A run that started before the
+verifier existed keeps its older fills unstamped, so the desk's "Verified Only"
+view would cover a slice of the tape instead of the tape. Re-stamp the run
+against the recorded prints:
+
+```sh
+python bot/verify_run.py --dry-run   # report the coverage, change nothing
+python bot/verify_run.py             # re-stamp every settled window
+```
+
+It rewrites only the `detail.tapeStatus` fields of the fills; cost, payout and
+net are untouched.
+
 ## Kill-switch drill (verified 2026-11-07)
 
 Loop checks `bot/kill` between windows (`wait_while_killed`, 30s poll);

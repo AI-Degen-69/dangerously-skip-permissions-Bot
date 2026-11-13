@@ -67,7 +67,9 @@ The command center for analyzing execution performance across settled windows.
 - **Rebate Toggle (`Net before rebates` card):**
   - Switches taker and maker rebates in or out of the P&L. Off, the net, win rate, expectancy, profit factor, Sharpe, the window log and the chart all fall back to price alone, and the rebate cards show what is being left out.
 - **Verified Only Switch (chart card):**
-  - Counts only the fills the tape verifier confirmed against real trade prints. Every window is recomputed from its verified fills, and a window without a verified fill drops out of the view entirely. Taker fills are never verified in paper mode, so they fall away with the unconfirmed makers — the resulting P&L is a subset, not a correction.
+  - Counts only the fills the recorded trade prints corroborate — a maker fill at limit L is confirmed when the tape printed at least the clip's size at or below L inside that window. Every window is recomputed from its confirmed fills, and a window without one drops out of the view entirely. Taker fills cannot be checked in paper mode (there is no real book) and the fills the market never traded drop out too, so read the number as a **lower bound**, not an estimate.
+  - The line under the chart says how much of the tape is corroborated: confirmed maker fills vs all maker fills, the fills that never traded, the taker fills that cannot be checked, and how much payout rests on them.
+  - The verifier only stamps the window the loop is trading. After a run that started before the verifier existed, re-stamp the whole run against the recorded prints with `python bot/verify_run.py` (see `bot/RUNBOOK.md`), otherwise the view covers a slice of the tape instead of the tape.
 - **Timeframe Filter (below the chart):**
   - `1H · 12H · 1D · 1W · 1M · All` scopes the KPI cards, the chart, the window bars and the window log to that trailing window. The chart is re-based on the capital held when the window opened, so the curve starts where the account actually stood.
 - **Settled Windows Table:**
