@@ -43,11 +43,13 @@ python bot/live_paper.py --slot <epoch>
 
 ## Tape verification (paper fills vs the real book)
 
-The recorder writes every trade print the bot sees. The verifier stamps each
-paper fill with what the tape corroborates: a maker fill at limit L counts as
-`verified` when the tape printed at least the clip's size at or below L inside
-that window. Taker fills stay `unverified-taker` — paper mode has no real book
-to check them against.
+The recorder writes every trade print the bot sees. Recording is not optional:
+the loop creates the run's tape dir before its first window and refuses to start
+if it cannot, because the verification and the attainable-fill audit below both
+read back from it. The verifier stamps each paper fill with what the tape
+corroborates: a maker fill at limit L counts as `verified` when the tape printed
+at least the clip's size at or below L inside that window. Taker fills stay
+`unverified-taker` — paper mode has no real book to check them against.
 
 The live loop stamps the window it is trading. A run that started before the
 verifier existed keeps its older fills unstamped, so the desk's "Verified Only"

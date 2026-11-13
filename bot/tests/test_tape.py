@@ -167,24 +167,18 @@ class TestTapeRotation(unittest.TestCase):
         self.assertEqual(names, [f"book.{now + 1}.jsonl"])
 
 
-class TestTapeDirIfEnabled(unittest.TestCase):
-    def test_disabled_returns_none(self):
-        with patch.object(live_paper, "load_cfg", return_value={"entry": {"tapeEnabled": False}}):
-            self.assertIsNone(live_paper.tape_dir_if_enabled())
+class TestRunTapeDir(unittest.TestCase):
+    def test_without_workspace_returns_none(self):
+        with patch.object(live_paper, "get_current_workspace", return_value=None):
+            self.assertIsNone(live_paper.run_tape_dir())
 
-    def test_enabled_without_workspace_returns_none(self):
-        with patch.object(live_paper, "load_cfg", return_value={"entry": {"tapeEnabled": True}}), \
-             patch.object(live_paper, "get_current_workspace", return_value=None):
-            self.assertIsNone(live_paper.tape_dir_if_enabled())
-
-    def test_enabled_returns_run_tape_dir(self):
+    def test_returns_run_tape_dir(self):
         tmp = Path(tempfile.mkdtemp())
         try:
             ws = RunWorkspace("run_tape_live", runs_root=tmp)
             ws.init_workspace(config={}, mode="paper", label="unit")
-            with patch.object(live_paper, "load_cfg", return_value={"entry": {"tapeEnabled": True}}), \
-                 patch.object(live_paper, "get_current_workspace", return_value=ws):
-                td = live_paper.tape_dir_if_enabled()
+            with patch.object(live_paper, "get_current_workspace", return_value=ws):
+                td = live_paper.run_tape_dir()
             self.assertEqual(td, ws.tape_dir)
             self.assertTrue(ws.tape_dir.exists())
         finally:
@@ -210,23 +204,6 @@ class TestTapeEndpoints(unittest.TestCase):
             patch.object(api, "resolve_run_workspace", return_value=self.ws),
         )
 
-    def test_post_rejects_non_bool(self):
-        handler = DummyHandler("/api/bot/tape", {"enabled": "yes"})
-        p1, p2, p3, p4 = self._patch()
-        with p1, p2, p3, p4:
-            handler.do_POST()
-        self.assertEqual(handler.sent_status, 400)
-
-    def test_post_toggles_config(self):
-        handler = DummyHandler("/api/bot/tape", {"enabled": True})
-        p1, p2, p3, p4 = self._patch()
-        with p1, p2, p3, p4:
-            handler.do_POST()
-        self.assertEqual(handler.sent_status, 200)
-        self.assertTrue(handler.sent_data["enabled"])
-        cfg = json.loads(self.cfg_path.read_text(encoding="utf-8"))
-        self.assertTrue(cfg["entry"]["tapeEnabled"])
-
     def test_get_returns_status_shape(self):
         handler = DummyHandler("/api/bot/tape", {})
         p1, p2, p3, p4 = self._patch()
@@ -235,6 +212,17 @@ class TestTapeEndpoints(unittest.TestCase):
         self.assertEqual(handler.sent_status, 200)
         for key in ("enabled", "runId", "tapeDir", "prints", "books", "mb"):
             self.assertIn(key, handler.sent_data)
+        # Recording is not optional, so the desk always reports it on.
+        self.assertTrue(handler.sent_data["enabled"])
+
+    def test_post_can_no_longer_disable_recording(self):
+        handler = DummyHandler("/api/bot/tape", {"enabled": False})
+        p1, p2, p3, p4 = self._patch()
+        with p1, p2, p3, p4:
+            handler.do_POST()
+        self.assertEqual(handler.sent_status, 404)
+        cfg = json.loads(self.cfg_path.read_text(encoding="utf-8"))
+        self.assertNotIn("tapeEnabled", cfg.get("entry", {}))
 
 
 if __name__ == "__main__":

@@ -114,22 +114,15 @@ def cfg_entry(key: str, default):
     return load_cfg().get("entry", {}).get(key, default)
 
 
-def tape_dir_if_enabled():
-    try:
-        enabled = bool(load_cfg().get("entry", {}).get("tapeEnabled", False))
-    except Exception:
-        return None
-    if not enabled:
-        return None
+def run_tape_dir():
+    """The run's tape dir, always recorded: the desk audits every fill against it,
+    so a run without a tape produces numbers nobody can check. Raises OSError when
+    the dir cannot be made, and the loop refuses to start."""
     ws = get_current_workspace()
     if ws is None:
         return None
-    try:
-        td = ws.tape_dir
-        td.mkdir(parents=True, exist_ok=True)
-        return td
-    except Exception:
-        return None
+    ws.tape_dir.mkdir(parents=True, exist_ok=True)
+    return ws.tape_dir
 
 
 def log_event(kind: str, reason: str, slug: str | None = None, **kw) -> None:
@@ -474,8 +467,8 @@ def trade_window(
     started_ms = int(time.time() * 1000)
 
     # Use pre-pipelined WebSocket streamer if supplied, otherwise spawn a fresh one.
-    # Tape (#35 prints + top-5 book) records into the run workspace when on.
-    _tape_dir = tape_dir_if_enabled()
+    # Tape (#35 prints + top-5 book) records into the run workspace.
+    _tape_dir = run_tape_dir()
     _tape_on = _tape_dir is not None
     streamer = pre_streamer or LiveBookStreamer(
         up_token_id=spec.up_token_id,
@@ -1025,6 +1018,13 @@ def main() -> None:
     strat_name = strat.get("name", C.STRATEGY_NAME)
     print(f"session initialized: {ws.run_id} ({strat_sym} · {strat_name})", flush=True)
     try:
+        run_tape_dir()
+    except OSError as ex:
+        # The tape is what makes the fills auditable, so there is no trading without it.
+        print(f"tape recording is required - cannot use {ws.tape_dir}: {ex}", flush=True)
+        ws.finalize(status="failed")
+        raise SystemExit(1)
+    try:
         (Path(__file__).resolve().parent / "loop.pid").write_text(str(os.getpid()))
     except Exception:
         pass
@@ -1100,7 +1100,7 @@ def main() -> None:
             try:
                 next_spec = get_window(c, f"btc-updown-5m-{slot}")
                 print(f"[btc-updown-5m-{slot}] Phase 0: Pre-open pipeline active — initializing live streamer & order placements at T-310s…", flush=True)
-                _pre_tape = tape_dir_if_enabled()
+                _pre_tape = run_tape_dir()
                 active_streamer = LiveBookStreamer(
                     up_token_id=next_spec.up_token_id,
                     down_token_id=next_spec.down_token_id,

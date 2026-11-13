@@ -679,9 +679,6 @@ export const useBotTape = () =>
     retry: false,
   })
 
-export const useSetTapeEnabled = () =>
-  useBotMutation((enabled: boolean) => send<TapeStatus>('/tape', 'POST', { enabled }))
-
 export const useRedeemBot = () =>
   useBotMutation(() =>
     send<{

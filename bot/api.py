@@ -304,8 +304,9 @@ def start_loop_process(run_id: str | None = None) -> int:
 
 
 def tape_status() -> dict:
-    cfg = load_config()
-    enabled = bool(cfg.get("entry", {}).get("tapeEnabled", False))
+    # Recording is not optional: the loop refuses to run without a tape dir, and
+    # every fill's verification and fidelity are read back from it.
+    enabled = True
     run_id = get_active_run_id()
     stats: dict = {"prints": 0, "books": 0, "printsBytes": 0, "bookBytes": 0, "mb": 0.0, "tapeDir": None}
     if run_id:
@@ -1826,21 +1827,6 @@ class Handler(BaseHTTPRequestHandler):
                 KILL_PATH.unlink(missing_ok=True)
                 log_event("info", "entries-resumed")
                 self._send(200, {"ok": True, "killSwitch": False})
-            elif self.path == "/api/bot/tape":
-                if is_view_only():
-                    self._send(400, {"error": "Cannot toggle tape while in view-only mode", "isViewOnly": True})
-                    return
-                enabled = body.get("enabled")
-                if not isinstance(enabled, bool):
-                    self._send(400, {"error": "Body must be {enabled: boolean}"})
-                    return
-                cfg = load_config()
-                cfg.setdefault("entry", {})["tapeEnabled"] = enabled
-                tmp_cfg = CONFIG_PATH.with_suffix(".tmp")
-                tmp_cfg.write_text(json.dumps(cfg, indent=2))
-                tmp_cfg.replace(CONFIG_PATH)
-                log_event("info", "tape-toggled", detail={"enabled": enabled})
-                self._send(200, tape_status())
             elif self.path == "/api/bot/redeem":
                 if is_view_only():
                     self._send(400, {
@@ -1870,7 +1856,7 @@ class Handler(BaseHTTPRequestHandler):
                 }
                 entry_cfg = cfg.setdefault("entry", {})
                 # A leftover curve or dollar cap from the previous setup would keep
-                # sizing the new one; unrelated keys (tapeEnabled) are preserved.
+                # sizing the new one; unrelated entry keys are preserved.
                 entry_cfg.pop("dipCurve", None)
                 entry_cfg.pop("maxUnhedgedUsd", None)
                 entry_cfg.update(setup["entry"])

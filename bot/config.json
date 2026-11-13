@@ -27,7 +27,6 @@
     "includeTakerFee": true,
     "wholeLadderClips": true,
     "maxDepthShares": 0.0,
-    "tapeEnabled": true,
     "minSpacingMoveSec": 0.5,
     "minSpacingStaticSec": 2.5,
     "dipCurve": {
