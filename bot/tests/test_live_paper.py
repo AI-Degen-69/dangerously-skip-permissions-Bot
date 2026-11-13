@@ -534,6 +534,21 @@ class LivePaperLoopTests(unittest.TestCase):
             self.assertEqual(data2.get("oddsHistory"), initial_hist)
             self.assertEqual(len(data2.get("fills", [])), 1)
 
+    def test_write_state_publishes_resting_orders(self):
+        import json
+        import bot.live_paper as lp
+
+        state_file = self.tmp_path / "state.json"
+        order = {"side": "Up", "price": 0.42, "shares": 7.0, "queueAhead": 3.0,
+                 "placedAtMs": 1700000000000, "ageMs": 2000, "minute": 1, "subReason": "maker-dip-ladder"}
+        with patch.object(lp, "STATE_PATH", state_file):
+            lp.write_state("btc-updown-5m-1700000000", 1700000300000, 1700000000000, [],
+                           open_orders=[order])
+            self.assertEqual(json.loads(state_file.read_text()).get("openOrders"), [order])
+            # The closed/held write clears them, so the desk never shows a stale bid.
+            lp.write_state("btc-updown-5m-1700000000", 1700000300000, 1700000000000, [], closed=True)
+            self.assertEqual(json.loads(state_file.read_text()).get("openOrders"), [])
+
     def test_live_markets_syncs_odds_history_from_state(self):
         import bot.api as api
 

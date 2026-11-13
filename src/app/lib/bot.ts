@@ -59,6 +59,17 @@ export interface PositionView {
   resolving?: boolean
 }
 
+export interface OpenOrderView {
+  side: Side
+  price: number
+  shares: number
+  queueAhead: number
+  placedAtMs: number
+  ageMs: number
+  minute: number
+  subReason: string
+}
+
 export interface WsBookSummary {
   asset_id: string
   outcome: string
@@ -180,6 +191,7 @@ export interface BotSnapshot {
   leanSource?: string | null
   markets: MarketView[]
   positions: PositionView[]
+  openOrders?: OpenOrderView[]
   ws?: WsStatus
   recentTicks?: WsTick[]
 }

@@ -364,6 +364,7 @@ def write_state(
     recent_ticks: list[dict] | None = None,
     odds_history: list[dict] | None = None,
     closed: bool = False,
+    open_orders: list[dict] | None = None,
 ) -> None:
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     cfg = load_cfg()
@@ -375,6 +376,9 @@ def write_state(
         "startedAtMs": started_ms,
         "updatedAtMs": int(time.time() * 1000),
         "fills": fills,
+        # Resting bids, not fills: the desk has to show the order the strategy
+        # placed and is still waiting on.
+        "openOrders": open_orders or [],
         "strategy": strat.get("id", C.STRATEGY_ID),
         "strategySymbol": strat.get("symbol", C.STRATEGY_SYMBOL),
         "strategyName": strat.get("name", C.STRATEGY_NAME),
@@ -638,6 +642,26 @@ def trade_window(
     def _minute_of(ts: float) -> int:
         return int(min(max((ts - slot) // 60, 0), 4))
 
+    def _open_order_rows() -> list[dict]:
+        now_ms = int(time.time() * 1000)
+        return [
+            {
+                "side": o["side"],
+                "price": round(float(o["price"]), 4),
+                "shares": round(float(o["shares_left"]), 2),
+                "queueAhead": round(float(o["queue_ahead"]), 1),
+                "placedAtMs": int(float(o["placed_ts"]) * 1000),
+                "ageMs": max(0, now_ms - int(float(o["placed_ts"]) * 1000)),
+                "minute": o["minute"],
+                "subReason": o["sub_reason"],
+            }
+            for o in open_orders.values()
+        ]
+
+    def _persist() -> None:
+        write_state(slug, end_ms, started_ms, fills, open_orders=_open_order_rows(),
+                    ws_status=streamer.get_status(), recent_ticks=streamer.get_recent_ticks(30))
+
     def _book_fill(outcome: str, px: float, shares: float, role: str, minute: int,
                    reason: str, sub_reason: str, queue_ahead, deficit: float,
                    ts_ms: int | None = None) -> None:
@@ -719,8 +743,7 @@ def trade_window(
                           "fills": len(fills), "cost": round(cost, 2),
                           "strategy": strat_sym})
         log(f"M{minute} {outcome} {shares:.1f} @ {px:.3f} [{role} · {trade_reason}] (pair={pair_cost})")
-        write_state(slug, end_ms, started_ms, fills,
-                    ws_status=streamer.get_status(), recent_ticks=streamer.get_recent_ticks(30))
+        _persist()
 
     def _drain_prints() -> None:
         """Turn the prints that arrived since the last tick into fills."""
@@ -771,6 +794,7 @@ def trade_window(
         }
         shown = ahead if ahead is not None else "unknown"
         log(f"M{minute} {outcome} rest {shares:.1f} @ {px:.3f} behind {shown} [MAKER · {sub_reason}]")
+        _persist()
 
     def _cancel_orders(why: str) -> None:
         for side, order in list(open_orders.items()):
@@ -780,6 +804,7 @@ def trade_window(
                               "shares": round(order["shares_left"], 2), "why": why,
                               "strategy": strat_sym})
             open_orders.pop(side, None)
+        _persist()
 
     try:
         closed_cleanly = False

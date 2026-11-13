@@ -748,6 +748,8 @@ def snapshot() -> dict:
         "lean": (st or {}).get("lean"),
         "leanSource": (st or {}).get("leanSource"),
         "markets": markets, "positions": positions,
+        # Resting bids from the live window: shown as orders, not as fills.
+        "openOrders": (st or {}).get("openOrders") or [],
         "ws": (st or {}).get("ws") or {
             "state": "disconnected" if not loop_running() else "connecting",
             "is_connected": False,

@@ -20,6 +20,7 @@ import {
   type WsTick,
   type BotEvent,
   type BotSnapshot,
+  type OpenOrderView,
 } from '../lib/bot'
 import { STRATEGY_PRESETS } from '../botDefaults'
 import { cx } from '../lib/cx'
@@ -209,6 +210,8 @@ export function Live() {
 
             <PolymarketLiveChart markets={data.markets} positions={data.positions} ws={ws} trades={trades.data?.items ?? []} />
 
+            <RestingOrdersStrip orders={data.openOrders ?? []} />
+
             <OrdersAndFillsTable items={trades.data?.items ?? []} windowSlugs={data.markets.map((market) => market.slug)} />
 
             <div className="mt-3 grid gap-3 lg:grid-cols-3">
@@ -363,6 +366,35 @@ function EventRow({ event }: { event: BotEvent }) {
         </div>
       )}
     </li>
+  )
+}
+
+function RestingOrdersStrip({ orders }: { orders: OpenOrderView[] }) {
+  if (orders.length === 0) return null
+  return (
+    <Card className="mt-3 p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h2 className="text-[14px] font-semibold">Resting orders</h2>
+        <p className="text-[12px] text-muted">Not fills yet — each one needs a seller to hit it.</p>
+      </div>
+      <ul className="mt-1 divide-y divide-line">
+        {orders.map((order) => (
+          <li key={order.side} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 text-[12.5px]">
+            <Badge tone={order.side === 'Up' ? 'success' : 'danger'}>{order.side}</Badge>
+            <span className="font-mono tabular-nums">
+              {order.shares.toFixed(1)} sh @ {cents(order.price)}
+            </span>
+            <span className="text-muted">
+              {order.queueAhead > 0 ? `${order.queueAhead.toFixed(0)} sh ahead` : 'front of queue'}
+            </span>
+            <span className="text-muted">resting {Math.round(order.ageMs / 1000)}s</span>
+            <span className="ml-auto text-faint">
+              M{order.minute} · {order.subReason}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </Card>
   )
 }
 
