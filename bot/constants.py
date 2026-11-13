@@ -249,6 +249,34 @@ STRATEGY_SETUPS = {
             "wholeLadderClips": True,
         },
     },
+    "dangerously-skip-permissions-v2.6": {
+        "id": "dangerously-skip-permissions-v2.6",
+        "symbol": "⚡ DSP-v2.6",
+        "name": "Dangerously Skip Permissions v2.6 (Hedge-Now Entry)",
+        "entry": {
+            # Same numbers as v2.5 on purpose: the only variable is the engine,
+            # which now refuses a speculative leg unless the hedge exists at
+            # entry, and books a maker fill only when a print sells into it.
+            "startAfterOpenSec": 4,
+            "stopBeforeCloseSec": 75,
+            "clipSharesDefault": 10.0,
+            "maxShares": 45.0,
+            "minFillPrice": 0.07,
+            "maxFillPrice": 0.45,
+            "benchmarkPairCost": 0.965,
+            "targetPairCost": 0.965,
+            "maxPairCost": 0.985,
+            "maxShareLead": 46.0,
+            "maxUnhedgedUsd": 5.0,
+            "dipCurve": {"lo": 0.07, "hi": 0.45, "sharesLo": 33.0, "sharesHi": 8.0},
+            "rescuePairCostMax": 0.995,
+            "rescueCeilingPrice": 0.985,
+            "minSpacingMoveSec": 0.5,
+            "minSpacingStaticSec": 2.5,
+            "includeTakerFee": True,
+            "wholeLadderClips": True,
+        },
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -291,6 +319,11 @@ _SETUP_FEATURES = {
         "sweep": True, "pairedVolumeCapped": False,
         "blurb": "inverse-dip clip curve (fatter clips at deep dips) with the gap limit denominated in dollars",
     },
+    "dangerously-skip-permissions-v2.6": {
+        "sizing": "inverse-curve", "preflightGate": False, "hedgeNowGate": True,
+        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
+        "blurb": "v2.5's curve, but a leg opens only when the opposite ask plus its taker fee already completes the pair",
+    },
 }
 
 
@@ -321,6 +354,7 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
     risk = float(f.get("dollarRisk", 4.50))
     sizing = f.get("sizing", "ladder")
     preflight = bool(f.get("preflightGate", False))
+    hedge_now = bool(f.get("hedgeNowGate", False))
     heavy = bool(f.get("heavyAtomic", False))
     sweep = bool(f.get("sweep", False))
     uncapped = bool(f.get("pairedVolumeCapped", True)) is False
@@ -366,6 +400,12 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
     if preflight:
         gate_txt = f"pre-flight hedge gate plus pair gates (under ${rescue:.3f})"
         sig_gate = f"Pre-Flight Gate (under ${rescue:.3f})"
+    elif hedge_now:
+        gate_txt = (
+            f"a hedge that exists at entry: the leg plus the opposite ask plus its taker fee "
+            f"must stay under ${cap:.3f}, so no leg is opened on a second leg that has not arrived"
+        )
+        sig_gate = f"Hedge-Now Gate (under ${cap:.3f})"
     else:
         gate_txt = f"pair-cost gates (fresh under ${tgt:.3f}, closing a gap under ${cap:.3f}, rescue under ${rescue:.3f})"
         sig_gate = f"Pair Gates (fresh under ${tgt:.3f})"
@@ -398,7 +438,9 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
     highlights = {
         "dipClips": dip_txt,
         "pairGates": f"fresh under ${tgt:.3f} / close under ${cap:.3f} / rescue under ${rescue:.3f}",
-        "preflightGate": ("On (entry + opposite ask under $%.3f)" % rescue) if preflight else "Off (pair-cost gates only)",
+        "preflightGate": ("On (entry + opposite ask under $%.3f)" % rescue) if preflight
+                         else (f"On (leg + opposite ask + taker fee under ${cap:.3f})" if hedge_now
+                               else "Off (pair-cost gates only)"),
         "heavyFills": ("%g sh atomic pairs" % mx) if heavy else "None",
         "netGapCap": (f"never ${dollar_cap:.2f} of unhedged cost" if dollar_cap > 0
                       else f"never {lead:g} sh+ (~${exposure:.2f} at ceiling)") + ("; paired volume uncapped" if uncapped else ""),

@@ -6,9 +6,9 @@
   "mode": "paper",
   "bankrollUsd": 1000,
   "strategy": {
-    "id": "dangerously-skip-permissions-v2.5",
-    "symbol": "\u26a1 DSP-v2.5",
-    "name": "Dangerously Skip Permissions v2.5 (Inverse-Dip Curve + Dollar Gap Cap)"
+    "id": "dangerously-skip-permissions-v2.6",
+    "symbol": "\u26a1 DSP-v2.6",
+    "name": "Dangerously Skip Permissions v2.6 (Hedge-Now Entry)"
   },
   "entry": {
     "startAfterOpenSec": 4,

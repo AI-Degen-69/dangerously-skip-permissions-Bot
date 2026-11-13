@@ -123,6 +123,7 @@ export interface StrategyFeatures {
   sizing?: string
   dollarRisk?: number
   preflightGate?: boolean
+  hedgeNowGate?: boolean
   heavyAtomic?: boolean
   sweep?: boolean
   pairedVolumeCapped?: boolean
