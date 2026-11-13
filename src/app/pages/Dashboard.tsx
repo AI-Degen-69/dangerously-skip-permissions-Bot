@@ -21,6 +21,8 @@ import { computeKpiStats } from '../lib/kpiStats'
 import { ACCOUNT_TIERS, useAccountTier, useIncludeRebates, windowRebate } from '../lib/rebates'
 import type { AccountTier } from '../lib/rebates'
 import { TIMEFRAMES, scopeWindows, timeframeStart } from '../lib/timeframes'
+import { verifiedWindow } from '../lib/verified'
+import { useStoredFlag } from '../lib/flags'
 import { cx } from '../lib/cx'
 import { money2, relativeTime } from '../lib/format'
 
@@ -69,6 +71,7 @@ export function Dashboard() {
   const [hoveredSlug, setHoveredSlug] = useState<string | null>(null)
   const [tier, setTier] = useAccountTier()
   const [includeRebates, setIncludeRebates] = useIncludeRebates()
+  const [verifiedOnly, setVerifiedOnly] = useStoredFlag('verifiedOnly', false)
   const [timeframeId, setTimeframeId] = useState<string>('all')
 
   const isViewOnly = control.data?.isViewOnly ?? false
@@ -78,7 +81,13 @@ export function Dashboard() {
   const summary = data?.summary
   const health = data?.health
   const windows = data?.windows ?? []
-  const settled = windows.filter((window) => !window.pending)
+  // Verified Only: every window carries the numbers its verified fills make,
+  // and a window without a verified fill drops out of the view entirely.
+  const effective = verifiedOnly
+    ? windows.map(verifiedWindow).filter((window): window is PerfWindow => window !== null)
+    : windows
+  const allSettled = windows.filter((window) => !window.pending)
+  const settled = effective.filter((window) => !window.pending)
   const startingCapital = data?.summary?.bankrollUsd ?? 1000
 
   // The timeframe scopes the whole page: the KPI cards, the chart, the bars and
@@ -89,7 +98,7 @@ export function Dashboard() {
   // Capital at the start of the slice, so the curve starts where the account was.
   const baseCapital = scoped.baseCapital
   // The window log shows the same slice, pending windows included.
-  const scopedLog = windows.filter((window) => window.startMs >= cutoff)
+  const scopedLog = effective.filter((window) => window.startMs >= cutoff)
 
   // Credit the rebate per window so the chart, the bars and the window log agree
   // with the KPI cards above them.
@@ -100,16 +109,18 @@ export function Dashboard() {
           ...window,
           netUsd: window.netUsd + (includeRebates ? windowRebate(window, tier.rate) : 0),
         }
-  // The API summary covers the whole run, so it can only back an all-time view.
+  // The API summary covers the whole run, so it can only back an all-time view
+  // of every fill.
   const stats = computeKpiStats(
     scoped.windows,
     baseCapital,
-    timeframe.ms == null ? summary : undefined,
+    timeframe.ms == null && !verifiedOnly ? summary : undefined,
     tier.rate,
     includeRebates,
   )
   const currentCapital = stats.currentCapital
-  const gateJudged = settled.length >= (data?.targets.windows ?? 288)
+  // The gate judges the run as it was traded, not the verified subset.
+  const gateJudged = allSettled.length >= (data?.targets.windows ?? 288)
   const setupsQuery = useStrategySetups()
   const allSetups = mergeStrategySetups(setupsQuery.data?.setups, STRATEGY_PRESETS as unknown as Record<string, StrategySetup>)
   const activeId = data?.strategy?.id ?? control.data?.strategy?.id ?? setupsQuery.data?.activeSetupId
@@ -221,7 +232,11 @@ export function Dashboard() {
               }
               tip={`Total realized paper profit/loss across settled windows${
                 timeframe.ms == null ? '' : ` in the last ${timeframe.label}`
-              } vs starting capital.`}
+              } vs starting capital.${
+                verifiedOnly
+                  ? ' Verified fills only — the fills the tape verifier confirmed against real prints. Taker fills are never verified, so they drop out.'
+                  : ''
+              }`}
               icon={<TrendingUp className="size-3.5" />}
             />
             <Stat
@@ -365,7 +380,18 @@ export function Dashboard() {
               : `Rebates excluded · ${usd(stats.rebatesUsd)} not counted`
           }
           tone={stats.netBeforeRebateUsd >= 0 ? 'success' : 'danger'}
-          badge={<RebateToggle on={includeRebates} onToggle={() => setIncludeRebates(!includeRebates)} />}
+          badge={
+            <Toggle
+              label="Rebates"
+              on={includeRebates}
+              onToggle={() => setIncludeRebates(!includeRebates)}
+              title={
+                includeRebates
+                  ? 'Rebates are included in the P&L. Click to exclude them.'
+                  : 'Rebates are excluded from the P&L. Click to include them.'
+              }
+            />
+          }
           tip="What the strategy earned on price alone, fees charged and no rebate credited. The switch decides whether the rebate is credited on top of it."
         />
       </div>
@@ -400,6 +426,18 @@ export function Dashboard() {
               )}
               <span className="text-[11.5px] text-faint">
                 {stats.settled} settled window{stats.settled === 1 ? '' : 's'} · {stats.winsCount} profitable
+              </span>
+              <span className="ml-auto">
+                <Toggle
+                  label="Verified Only"
+                  on={verifiedOnly}
+                  onToggle={() => setVerifiedOnly(!verifiedOnly)}
+                  title={
+                    verifiedOnly
+                      ? 'Counting only the fills the tape verifier confirmed. Click to count every fill.'
+                      : 'Counting every fill. Click to count only the fills the tape verifier confirmed.'
+                  }
+                />
               </span>
             </div>
           )}
@@ -666,10 +704,13 @@ export function Dashboard() {
             <p className="text-[12.5px] text-muted">
               How close the live paper tape is to the frozen 24h sample — 45 median fills, both sides, $316/$447 cost,
               M0–M4 shape.
+              {verifiedOnly && (
+                <span className="text-faint"> Judged on the whole run, not the verified subset.</span>
+              )}
             </p>
           </div>
           <Badge tone={gateJudged ? 'success' : 'neutral'}>
-            {gateJudged ? 'judged' : `sample · ${settled.length}/288`}
+            {gateJudged ? 'judged' : `sample · ${allSettled.length}/288`}
           </Badge>
         </div>
 
@@ -690,7 +731,9 @@ export function Dashboard() {
           {!data && <Skeleton className="my-4 h-[180px]" />}
         </div>
 
-        {data && <ShapeChart mShape={data.mShape} />}
+        {data && (
+          <ShapeChart mShape={shapeOf(data.mShape, verifiedOnly)} liveLabel={verifiedOnly ? 'verified' : 'live'} />
+        )}
       </Card>
 
       <Card className="mt-3 p-5">
@@ -901,19 +944,25 @@ function TierBar({
   )
 }
 
-function RebateToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+function Toggle({
+  label,
+  on,
+  onToggle,
+  title,
+}: {
+  label: string
+  on: boolean
+  onToggle: () => void
+  title: string
+}) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={on}
       onClick={onToggle}
-      title={
-        on
-          ? 'Rebates are included in the P&L. Click to exclude them.'
-          : 'Rebates are excluded from the P&L. Click to include them.'
-      }
-      className="flex items-center gap-1 text-[10.5px] font-medium text-muted transition-colors hover:text-fg"
+      title={title}
+      className="flex items-center gap-1.5 text-[11px] font-medium text-muted transition-colors hover:text-fg"
     >
       <span
         className={cx(
@@ -928,9 +977,21 @@ function RebateToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
           )}
         />
       </span>
-      Rebates
+      {label}
     </button>
   )
+}
+
+/** The fill cadence over every fill, or over the verified ones only. */
+function shapeOf(mShape: BotPerf['mShape'], verifiedOnly: boolean): BotPerf['mShape'] {
+  if (!verifiedOnly || !mShape.verifiedShare) return mShape
+  return {
+    live: mShape.verifiedLive ?? mShape.live,
+    target: mShape.target,
+    liveShare: mShape.verifiedShare,
+    targetShare: mShape.targetShare,
+    distance: mShape.verifiedDistance ?? mShape.distance,
+  }
 }
 
 function TimeframePicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
@@ -989,15 +1050,20 @@ function Row({ label, value, tone }: { label: string; value: string; tone?: 'suc
   )
 }
 
-function ShapeChart({ mShape }: { mShape: BotPerf['mShape'] }) {
+function ShapeChart({ mShape, liveLabel = 'live' }: { mShape: BotPerf['mShape']; liveLabel?: string }) {
   const max = Math.max(0.05, ...mShape.liveShare, ...mShape.targetShare)
+  // Name the minute that drifts furthest from the tape instead of assuming it
+  // is always M4 — the verified subset is M0-heavy, the full tape is not.
+  const worst = mShape.liveShare
+    .map((live, index) => ({ index, gap: live - mShape.targetShare[index] }))
+    .reduce((a, b) => (Math.abs(b.gap) > Math.abs(a.gap) ? b : a))
   return (
     <div className="mt-4 rounded-tile border border-line bg-surface-2/30 p-3.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[12.5px] font-medium">Fill cadence · minutes 0–4</p>
         <div className="flex items-center gap-3 text-[11px] text-faint">
           <span className="flex items-center gap-1">
-            <span className="size-2 rounded-[2px] bg-accent" /> live
+            <span className="size-2 rounded-[2px] bg-accent" /> {liveLabel}
           </span>
           <span className="flex items-center gap-1">
             <span className="size-2 rounded-[2px] bg-line-strong" /> tape
@@ -1011,7 +1077,7 @@ function ShapeChart({ mShape }: { mShape: BotPerf['mShape'] }) {
               <div
                 className="w-1/3 rounded-t-[3px] bg-accent"
                 style={{ height: `${Math.max(2, (live / max) * 100)}%` }}
-                title={`live ${share(live)} · ${mShape.live[index]} fills`}
+                title={`${liveLabel} ${share(live)} · ${mShape.live[index]} fills`}
               />
               <div
                 className="w-1/3 rounded-t-[3px] bg-line-strong"
@@ -1027,7 +1093,11 @@ function ShapeChart({ mShape }: { mShape: BotPerf['mShape'] }) {
       </div>
       <p className="mt-2 text-[11.5px] text-faint">
         {(mShape.distance * 100).toFixed(1)}% total-variation distance from the tape.{' '}
-        {mShape.distance > 0.2 ? 'Live is late-heavy: M4 carries far more fills than the tape.' : 'Shape is inside the band.'}
+        {mShape.distance > 0.2
+          ? `M${worst.index} carries ${
+              worst.gap > 0 ? 'more' : 'fewer'
+            } fills than the tape (${share(mShape.liveShare[worst.index])} vs ${share(mShape.targetShare[worst.index])}).`
+          : 'Shape is inside the band.'}
       </p>
     </div>
   )

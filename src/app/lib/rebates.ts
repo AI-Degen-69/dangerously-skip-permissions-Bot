@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useStoredFlag } from './flags'
 
 /** Polymarket's parabolic taker fee per share: 0.07 · p · (1 − p). */
 export const TAKER_FEE_COEFF = 0.07
@@ -34,8 +35,6 @@ export const DEFAULT_TIER_ID = 'obsidian'
 
 const STORAGE_KEY = 'dsp.accountTier'
 const TIER_EVENT = 'dsp:account-tier'
-const INCLUDE_STORAGE_KEY = 'dsp.includeRebates'
-const INCLUDE_EVENT = 'dsp:include-rebates'
 
 export function tierById(id: string | null | undefined): AccountTier {
   return ACCOUNT_TIERS.find((tier) => tier.id === id) ?? ACCOUNT_TIERS[ACCOUNT_TIERS.length - 1]
@@ -83,47 +82,13 @@ export function useAccountTier(): [AccountTier, (id: string) => void] {
   return [tierById(id), pick]
 }
 
-function readStoredIncludeRebates(): boolean {
-  try {
-    const raw = window.localStorage.getItem(INCLUDE_STORAGE_KEY)
-    return raw === null ? true : raw === 'true'
-  } catch {
-    return true
-  }
-}
-
 /**
  * Whether taker and maker rebates count towards the P&L. Shared by every page
  * through localStorage, so the dashboard totals, the chart and the orders table
  * always answer the same question.
  */
 export function useIncludeRebates(): [boolean, (value: boolean) => void] {
-  const [include, setInclude] = useState<boolean>(() =>
-    typeof window === 'undefined' ? true : readStoredIncludeRebates(),
-  )
-
-  useEffect(() => {
-    const sync = () => setInclude(readStoredIncludeRebates())
-    const onPick = (event: Event) => setInclude((event as CustomEvent<boolean>).detail)
-    window.addEventListener('storage', sync)
-    window.addEventListener(INCLUDE_EVENT, onPick)
-    return () => {
-      window.removeEventListener('storage', sync)
-      window.removeEventListener(INCLUDE_EVENT, onPick)
-    }
-  }, [])
-
-  const pick = useCallback((value: boolean) => {
-    setInclude(value)
-    try {
-      window.localStorage.setItem(INCLUDE_STORAGE_KEY, String(value))
-    } catch {
-      // Private-mode storage failures must not block the toggle.
-    }
-    window.dispatchEvent(new CustomEvent(INCLUDE_EVENT, { detail: value }))
-  }, [])
-
-  return [include, pick]
+  return useStoredFlag('includeRebates', true)
 }
 
 /**

@@ -295,6 +295,18 @@ export interface PerfWindow {
   feesUsd?: number
   /** Taker fees on the maker fills, the pool a maker rebate is drawn from. */
   makerFeeBaseUsd?: number
+  /** The same window recomputed from the fills the tape verifier confirmed. */
+  verified?: {
+    trades: number
+    costUsd: number
+    payoutUsd: number
+    netUsd: number | null
+    feesUsd: number
+    makerFeeBaseUsd: number
+    upFills: number
+    downFills: number
+    zeroPriceFills: number
+  }
 }
 
 export interface PerfNote {
@@ -376,6 +388,10 @@ export interface BotPerf {
     liveShare: number[]
     targetShare: number[]
     distance: number
+    /** The same minute mix over the verified fills only. */
+    verifiedLive?: number[]
+    verifiedShare?: number[]
+    verifiedDistance?: number
   }
   redeem: { count: number; payoutUsd: number }
   health: {

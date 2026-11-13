@@ -880,6 +880,44 @@ def _window_row(r: dict) -> dict:
     recorded_fees = r.get("fees_usd")
     taker_fees = _num(recorded_fees) if recorded_fees is not None else round(computed_taker, 4)
 
+    # Verified-only view: the same window recomputed from the fills the tape
+    # verifier confirmed. A maker fill is verified when real prints at its limit
+    # price covered the whole clip; taker fills never are, and fills from before
+    # the verifier existed carry no status at all, so both drop out here.
+    verified_fills = [
+        f for f in fills
+        if str((f.get("detail") or {}).get("tapeStatus") or "") == "verified"
+    ]
+    v_cost = 0.0
+    v_up = 0
+    v_down = 0
+    v_zero = 0
+    v_maker_base = 0.0
+    v_fees = 0.0
+    for f in verified_fills:
+        price = _num(f.get("price"))
+        shares = _num(f.get("shares"))
+        v_cost += _num(f.get("usd"))
+        outcome = f.get("outcome")
+        if outcome == "Up":
+            v_up += 1
+        elif outcome == "Down":
+            v_down += 1
+        if price <= 0:
+            v_zero += 1
+        # A verified fill is always a maker fill, so its fee base is the taker
+        # fee the counterparty paid on the same price and size.
+        if price > 0 and shares > 0:
+            v_maker_base += shares * C.TAKER_FEE_COEFF * price * (1 - price)
+        v_fees += _num((f.get("detail") or {}).get("feeUsd"))
+    winner = r.get("winner")
+    # Same settlement rule as settle_pending_windows: the winning side's shares
+    # pay $1 each, everything else is what the window cost.
+    v_win_shares = sum(
+        _num(f.get("shares")) for f in verified_fills if winner and f.get("outcome") == winner
+    )
+    v_payout = round(v_win_shares * 1.0, 2) if winner else 0.0
+
     return {
         "slug": r.get("event_slug"),
         "market": r.get("market"),
@@ -898,6 +936,18 @@ def _window_row(r: dict) -> dict:
         "mShape": _minute_shape(fills),
         "feesUsd": round(taker_fees, 4),
         "makerFeeBaseUsd": round(maker_fee_base, 4),
+        "verified": {
+            "trades": len(verified_fills),
+            "costUsd": round(v_cost, 2),
+            "payoutUsd": v_payout,
+            "netUsd": None if pending else round(v_payout - v_cost, 2),
+            "feesUsd": round(v_fees, 4),
+            "makerFeeBaseUsd": round(v_maker_base, 4),
+            "upFills": v_up,
+            "downFills": v_down,
+            "zeroPriceFills": v_zero,
+        },
+        "verifiedMShape": _minute_shape(verified_fills),
     }
 
 
@@ -958,6 +1008,15 @@ def perf() -> dict:
     target_total = sum(target_shape)
     target_share = [round(n / target_total, 4) for n in target_shape]
     shape_tv = round(0.5 * sum(abs(a - b) for a, b in zip(live_share, target_share)), 4)
+
+    # The same minute mix over the verified fills only.
+    verified_shape = [0, 0, 0, 0, 0]
+    for w in settled:
+        for i, n in enumerate(w.get("verifiedMShape") or []):
+            verified_shape[i] += n
+    verified_total = sum(verified_shape) or 1
+    verified_share = [round(n / verified_total, 4) for n in verified_shape]
+    verified_tv = round(0.5 * sum(abs(a - b) for a, b in zip(verified_share, target_share)), 4)
 
     both_rate = round(both / len(settled), 4) if settled else 0.0
     judged = len(settled) >= 48  # below this the metrics are noise, not a verdict
@@ -1237,7 +1296,9 @@ def perf() -> dict:
         },
         "gate": gate,
         "mShape": {"live": live_shape, "target": target_shape,
-                   "liveShare": live_share, "targetShare": target_share, "distance": shape_tv},
+                   "liveShare": live_share, "targetShare": target_share, "distance": shape_tv,
+                   "verifiedLive": verified_shape, "verifiedShare": verified_share,
+                   "verifiedDistance": verified_tv},
         "redeem": {"count": len(redeem_due), "payoutUsd": redeem_payout},
         "health": health,
         "notes": notes,
