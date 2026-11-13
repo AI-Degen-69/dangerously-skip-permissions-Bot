@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PR #51 — הרווח בדשבורד היה גבוה מדי</title>
+<style>
+  :root{
+    --ink:#eaf1f6; --muted:#9aabb8; --bg:#0b1117; --panel:#121c25; --panel-2:#172530;
+    --line:#29404d; --accent:#f4b860; --accent-ink:#2b1a03; --good:#55d6c2; --bad:#f17c78;
+    --shadow:0 20px 55px rgba(0,0,0,.32);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{color:var(--ink);background:
+      radial-gradient(1100px 520px at 82% -8%, rgba(244,184,96,.10), transparent 62%),
+      var(--bg);
+    font:16px/1.65 system-ui,-apple-system,"Segoe UI",Roboto,"Heebo",Arial,sans-serif}
+  main{max-width:1080px;margin:auto;padding:26px 20px 64px}
+  a{color:var(--accent)}
+  .topbar{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;justify-content:space-between;
+    font-size:.82rem;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:14px}
+  .chip{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;
+    padding:4px 11px;background:rgba(255,255,255,.03)}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--good);box-shadow:0 0 0 4px rgba(85,214,194,.15)}
+  h1{font-size:clamp(1.7rem,4.4vw,2.7rem);line-height:1.18;letter-spacing:-.02em;margin:30px 0 12px;max-width:20ch}
+  .lede{color:var(--muted);font-size:1.02rem;max-width:64ch;margin:0}
+  .nums{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:26px}
+  .num{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;box-shadow:var(--shadow)}
+  .num .big{font-size:clamp(1.5rem,3.4vw,2.05rem);font-weight:700;letter-spacing:-.02em;line-height:1.15;display:block}
+  .num .lbl{color:var(--muted);font-size:.8rem;margin-top:6px;display:block}
+  .num.down .big{color:var(--bad)}
+  .num.up .big{color:var(--good)}
+  .figure{margin-top:26px;background:var(--panel);border:1px solid var(--line);border-radius:18px;
+    box-shadow:var(--shadow);overflow:hidden}
+  .figure-head{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:baseline;justify-content:space-between;
+    padding:20px 22px 0}
+  .figure-head h2{margin:0;font-size:1.05rem}
+  .figure-head p{margin:0;color:var(--muted);font-size:.84rem}
+  .stage{padding:18px 22px 6px}
+  .track{position:relative;height:86px;margin:34px 6px 8px}
+  .rail{position:absolute;inset-inline:0;top:44px;height:26px;border-radius:8px;
+    background:repeating-linear-gradient(90deg,rgba(255,255,255,.06) 0 9px,transparent 9px 10px);
+    border:1px solid var(--line)}
+  .flow{position:absolute;top:44px;height:26px;border-radius:8px;width:0;
+    background:linear-gradient(90deg,#c98f2e,var(--accent));transition:width .22s ease}
+  .marker{position:absolute;top:20px;height:74px;width:0;border-right:1px dashed rgba(255,255,255,.45)}
+  .marker span{position:absolute;top:-24px;right:-6px;font-size:.72rem;color:var(--muted);white-space:nowrap}
+  .marker.own span{color:var(--accent)}
+  .verdict{display:flex;flex-wrap:wrap;gap:14px;align-items:center;padding:6px 22px 22px}
+  .pill{font-weight:700;font-size:.9rem;border-radius:999px;padding:6px 14px;border:1px solid}
+  .pill.ok{color:#06281f;background:var(--good);border-color:var(--good)}
+  .pill.no{color:#3a0f0d;background:var(--bad);border-color:var(--bad)}
+  .math{color:var(--muted);font-size:.86rem}
+  .math b{color:var(--ink);font-weight:600}
+  .pair{color:var(--accent)}
+  .panel-2{background:var(--panel-2);border-top:1px solid var(--line);padding:16px 22px}
+  .sliders{display:grid;grid-template-columns:1fr 1fr;gap:18px 26px}
+  .slider label{display:flex;justify-content:space-between;gap:12px;font-size:.85rem;color:var(--muted);margin-bottom:6px}
+  .slider output{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+  input[type=range]{width:100%;accent-color:var(--accent);cursor:pointer}
+  .caption{border-top:1px solid var(--line);padding:12px 22px 16px;color:var(--muted);font-size:.8rem}
+  .walk{margin-top:26px;background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:22px;box-shadow:var(--shadow)}
+  .walk h2{margin:0 0 4px;font-size:1.02rem}
+  .walk > p{margin:0 0 14px;color:var(--muted);font-size:.84rem}
+  ol.steps{margin:0;padding-inline-start:20px;display:grid;gap:11px;font-size:.9rem}
+  ol.steps li::marker{color:var(--accent);font-weight:700}
+  code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.84em;background:rgba(255,255,255,.06);
+    border:1px solid var(--line);border-radius:6px;padding:1px 6px;direction:ltr;display:inline-block}
+  footer{margin-top:24px;color:var(--muted);font-size:.8rem;display:flex;flex-wrap:wrap;gap:8px 18px;
+    justify-content:space-between;border-top:1px solid var(--line);padding-top:14px}
+  @media (max-width:760px){
+    .nums{grid-template-columns:1fr}
+    .sliders{grid-template-columns:1fr}
+    h1{max-width:none}
+  }
+  @media (prefers-reduced-motion: reduce){
+    .flow{transition:none}
+  }
+</style>
+</head>
+<body>
+<main>
+
+  <div class="topbar">
+    <span class="chip"><span class="dot"></span>מוזג ל־<span dir="ltr">main</span></span>
+    <span><span dir="ltr">dangerously-skip-permissions-Bot</span> · <a href="https://github.com/AI-Degen-69/dangerously-skip-permissions-Bot/pull/51">PR #51</a></span>
+  </div>
+
+  <h1>הרווח בדשבורד היה גבוה מדי. עכשיו רואים מה באמת התמלא.</h1>
+  <p class="lede">
+    הדשבורד ספר כל הזמנת קנייה שנחה על הספר כאילו מילאה. במציאות היא מתמלאת רק אם מישהו מכר
+    במחיר שלה או מתחתיו, <b>אחרי</b> שהיא נכנסה, וביותר מניות ממה שכבר חיכה בתור לפניה.
+    עכשיו שני המספרים מוצגים זה לצד זה — ולא צריך להאמין לאף אחד מהם.
+  </p>
+
+  <section class="nums" aria-label="המספרים של הריצה">
+    <div class="num up">
+      <span class="big"><span dir="ltr">1,151</span> מתוך <span dir="ltr">1,486</span></span>
+      <span class="lbl">מילויים של הצעה קונה שיכלו באמת לקרות</span>
+    </div>
+    <div class="num">
+      <span class="big"><span dir="ltr">77.5%</span></span>
+      <span class="lbl">שיעור המילויים ששרדו · <span dir="ltr">335</span> לא היו יכולים לקרות בכלל</span>
+    </div>
+    <div class="num down">
+      <span class="big"><span dir="ltr">−$1,108.44</span></span>
+      <span class="lbl">מה שהיה נשאר במציאות, מול <span dir="ltr">+$40.13</span> על הנייר (לפני ריבייט)</span>
+    </div>
+  </section>
+
+  <section class="figure" aria-labelledby="sim-title">
+    <div class="figure-head">
+      <h2 id="sim-title">מה ממלא הזמנה? גרור את שני הסליידרים.</h2>
+      <p>הדגמה של הזמנה אחת: <span dir="ltr">10</span> מניות במחיר <span dir="ltr">$0.42</span></p>
+    </div>
+
+    <div class="stage">
+      <div class="track" dir="ltr">
+        <div class="rail"></div>
+        <div class="flow" id="flow"></div>
+        <div class="marker" id="m1"><span>סוף התור</span></div>
+        <div class="marker own" id="m2"><span>סוף ההזמנה שלך</span></div>
+      </div>
+      <div class="verdict">
+        <span class="pill no" id="verdict" aria-live="polite">לא יתמלא</span>
+        <span class="math" id="math"></span>
+        <span class="math pair" id="pair"></span>
+      </div>
+    </div>
+
+    <div class="panel-2">
+      <div class="sliders">
+        <div class="slider">
+          <label for="q">כמה מניות חיכו בתור לפניך <output id="qv">20</output></label>
+          <input id="q" type="range" min="0" max="60" step="1" value="20">
+        </div>
+        <div class="slider">
+          <label for="s">כמה מניות נמכרו אחרי ההזמנה <output id="sv">20</output></label>
+          <input id="s" type="range" min="0" max="60" step="1" value="20">
+        </div>
+      </div>
+    </div>
+
+    <p class="caption">
+      המכירות נכנסות משמאל לימין. הראשונות נבלעות בתור שלפניך, והשאר שלך — אם נשאר להן מספיק כדי לכסות את
+      כל ההזמנה. אותו היגיון חל על כל מכירה בנפרד: <b>מכירה אחת לא ממלאת שתי הזמנות</b>, והזמנה יקרה יותר
+      נפגשת ראשונה. הזמנה שלא עוברת את הקו השני נחשבת לא קיימת, ולכן גם לא נכנסת לרווח.
+    </p>
+  </section>
+
+  <section class="walk">
+    <h2>בדיקה בעין, בתוך האפליקציה עצמה</h2>
+    <p>המספרים בדשבורד מחושבים מהקלטות של הריצה, ולכן צריך לרענן אותם פעם אחת אחרי העדכון.</p>
+    <ol class="steps">
+      <li>בטרמינל, מתיקיית הפרויקט: <code>python bot/verify_run.py --audit</code> — בסיום מופיע סיכום של החלונות והמילויים שנבדקו.</li>
+      <li>מריצים <code>bun run dev</code> ופותחים <code>http://localhost:5173</code>.</li>
+      <li>בתפריט בוחרים <b>Dashboard</b>. בכרטיס עם הגרף, בשורה העליונה, מופיע הסכום הגדול ואחריו הרווח.</li>
+      <li>לצידם מופיעה התווית <b>attainable</b> עם סכום, ואחריה הקבועה <code>vs … paper on the same windows</code> — אותו טווח חלונות, לפני ריבייט.</li>
+      <li>מרחפים מעל המספר: הכלי־רמז אומר כמה מילויים שרדו מתוך כמה, וכמה חלונות נבדקו מתוך כל החלונות שנסגרו.</li>
+      <li>לוחצים על <b>1H</b> (או <b>12H</b>, <b>1D</b>, <b>1W</b>, <b>1M</b>, <b>All</b>) — שני המספרים מצטמצמים לאותו טווח זמן.</li>
+      <li>מדליקים <b>Verified Only</b> — שורת ה־<b>attainable</b> נעלמת, כי התצוגה הזו כבר מציגה רק את המילויים שההקלטה אימתה.</li>
+    </ol>
+  </section>
+
+  <footer>
+    <span>המספרים נמדדו על ריצת הנייר הזו: <span dir="ltr">251</span> חלונות שנבדקו, לפני ריבייט.</span>
+    <span><a href="https://github.com/AI-Degen-69/dangerously-skip-permissions-Bot/pull/51">PR #51 — Show what the paper fills could actually have got</a></span>
+  </footer>
+
+</main>
+
+<script>
+(function () {
+  var SHARES = 10, SCALE = 120;
+  var q = document.getElementById('q'), s = document.getElementById('s');
+  var flow = document.getElementById('flow');
+  var m1 = document.getElementById('m1'), m2 = document.getElementById('m2');
+  var pill = document.getElementById('verdict'), math = document.getElementById('math');
+  var qv = document.getElementById('qv'), sv = document.getElementById('sv');
+
+  function money(v) { return '$' + v.toFixed(2); }
+
+  function render() {
+    var queue = Number(q.value), sells = Number(s.value);
+    qv.textContent = String(queue);
+    sv.textContent = String(sells);
+
+    var bar = Math.min(sells, SCALE);
+    flow.style.width = (bar / SCALE * 100) + '%';
+    m1.style.left = Math.min(queue, SCALE) / SCALE * 100 + '%';
+    m2.style.left = Math.min(queue + SHARES, SCALE) / SCALE * 100 + '%';
+
+    var left = sells - queue;
+    var filled = left >= SHARES;
+    pill.className = 'pill ' + (filled ? 'ok' : 'no');
+    pill.textContent = filled ? 'יתמלא' : 'לא יתמלא';
+    math.innerHTML = 'נמכרו <b dir="ltr">' + sells + '</b> · תור <b dir="ltr">' + queue +
+      '</b> · נשאר להזמנה <b dir="ltr">' + Math.max(0, left) + '</b> מתוך <b dir="ltr">' + SHARES + '</b>';
+
+    var price = 0.42, cost = SHARES * price, payout = SHARES * 1.0, net = payout - cost;
+    document.getElementById('pair').innerHTML = filled
+      ? 'על הנייר <b dir="ltr">' + money(net) + '</b> · במציאות <b dir="ltr">' + money(net) + '</b>'
+      : 'על הנייר <b dir="ltr">' + money(net) + '</b> · במציאות <b dir="ltr">' + money(0) + '</b>';
+  }
+
+  q.addEventListener('input', render);
+  s.addEventListener('input', render);
+  render();
+})();
+</script>
+</body>
+</html>
