@@ -99,7 +99,7 @@ numbers drift.** As of the last session:
 | queue ahead at placement | p50 50, 50% under 50, 14% under 10 |
 | fragments (<1 share) | 13 of 53 |
 
-**Two traps in that table, both fatal if missed:**
+**Two pitfalls in that data — both make a "passing" gate meaningless if missed:**
 
 1. **The window-level `strategy` field is unreliable.** 28 of 29 windows in this folder say
    `hapcs-v1` while every one of the 53 fills is stamped
@@ -142,7 +142,8 @@ Shipped v2.6 parameters (confirm against `constants.py`, do not trust this list 
 | unhedged caps | 46 sh lead, $6.00 |
 | pair caps | target 0.965, max 0.985, rescue 0.995 |
 | second leg | rests at the lagging side's bid, crossed only in the sweep |
-| re-quote cadence | 0.5 s on price move |
+| re-quote cadence | 0.5 s on price move, 2.5 s static |
+| clip sizing | `wholeLadderClips: true` — the dip curve size is the clip, not a per-level share |
 
 **Acceptance:** your numbered list, pasted in the final report, matches the code line-for-line with
 file:line references for each step.
@@ -201,7 +202,7 @@ recomputed.
 **Pass conditions** (expressed against the recomputed numbers, so they hold as the run grows):
 
 - total maker fills within **±20%** of the live count (37 at last check → 29–44)
-- fill rate within **±0.5 pp** of 1.7%
+- fill rate within **±0.5 pp** of the recomputed rate (1.7% at last check)
 - median pair cost within **±0.02** of the live windows' median
 - per-window fill counts correlate with live (`spearman > 0.5` or eyeball the table and say so)
 
