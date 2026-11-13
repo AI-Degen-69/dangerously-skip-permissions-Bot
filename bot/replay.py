@@ -12,6 +12,13 @@ Usage:
     python -m bot.replay --run bot/runs/run_20261113_080232_paper_dsp_v2_6 --rule v2.6
     python -m bot.replay --runs all --rule hump --ceiling 0.75 --levels 2 --spacing 0.02
     python -m bot.replay --runs all --rule v2.6 --against-live       # gate mode
+
+v2.7 ablations (one knob at a time against the hump baseline):
+    python -m bot.replay --runs all --rule hump --ceiling 0.55 --levels 2 --spacing 0.01
+    python -m bot.replay --runs all --rule hump --levels 2 --spacing 0.01 --leg1-max 0.48 --leg2-ceiling 0.75 --unhedged-usd 45
+    python -m bot.replay --runs all --rule hump --levels 2 --spacing 0.01 --leg1-max 0.48 --leg2-ceiling 0.75 --unhedged-usd 45 --taker-dip-max 0.45
+    python -m bot.replay --runs all --rule hump --levels 2 --spacing 0.01 --leg1-max 0.48 --leg2-ceiling 0.75 --unhedged-usd 45 --taker-dip-max 0.45 --rescue-max-pair 1.02
+    (--rule v2.7 replays the canned v2.7 entry: same knobs, hump sized natively.)
 """
 
 from __future__ import annotations
@@ -36,6 +43,7 @@ from bot.runs import tape_segments
 
 WINDOW_S = int(C.WINDOW_S)
 STRATEGY_V26 = "dangerously-skip-permissions-v2.6"
+STRATEGY_V27 = "dangerously-skip-permissions-v2.7"
 BASELINE_RUN = "run_20261113_080232_paper_dsp_v2_6"
 LOOP_LOG = Path("bot/loop.log")
 
@@ -322,7 +330,11 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
     """Replay one window. Deterministic: same inputs -> same output."""
     start_after_open = float(entry.get("startAfterOpenSec", 4))
     stop_before = float(entry.get("stopBeforeCloseSec", 75))
-    cutoff_sbc = min(stop_before, float(C.HARD_CUTOFF_SBC))
+    try:
+        sweep_before = float(entry.get("sweepBeforeCloseSec", C.HARD_CUTOFF_SBC))
+    except (TypeError, ValueError):
+        sweep_before = float(C.HARD_CUTOFF_SBC)
+    cutoff_sbc = min(stop_before, sweep_before, float(C.HARD_CUTOFF_SBC))
     end = slot + WINDOW_S - stop_before
     sweep_end = slot + WINDOW_S - cutoff_sbc
     min_fill = max(0.01, float(entry.get("minFillPrice", C.PRICE_FLOOR)))
@@ -339,6 +351,31 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
     dip_curve = entry.get("dipCurve") or None
     rescue_ceiling = float(entry.get("rescueCeilingPrice", C.RESCUE_CEILING_PRICE))
     rescue_max = float(entry.get("rescuePairCostMax", C.RESCUE_PAIR_COST_MAX))
+    leg1_max = entry.get("leg1MaxPrice", entry.get("maxLeg1Price", None))
+    try:
+        leg1_max = float(leg1_max) if leg1_max is not None else None
+    except (TypeError, ValueError):
+        leg1_max = None
+    leg2_max = entry.get("leg2MaxPrice", None)
+    try:
+        leg2_max = float(leg2_max) if leg2_max is not None else None
+    except (TypeError, ValueError):
+        leg2_max = None
+    taker_dip_max = entry.get("takerDipEntryMax", entry.get("takerDipMax", None))
+    try:
+        taker_dip_max = float(taker_dip_max) if taker_dip_max is not None else None
+    except (TypeError, ValueError):
+        taker_dip_max = None
+    late_start = entry.get("lateRescueStartSec", None)
+    try:
+        late_start = float(late_start) if late_start is not None else None
+    except (TypeError, ValueError):
+        late_start = None
+    late_max = entry.get("lateRescueMaxPairCost", None)
+    try:
+        late_max = float(late_max) if late_max is not None else None
+    except (TypeError, ValueError):
+        late_max = None
     spacing_move = float(entry.get("minSpacingMoveSec", 0.5))
     spacing_static = float(entry.get("minSpacingStaticSec", 2.5))
     include_fee = bool(entry.get("includeTakerFee", True))
@@ -536,6 +573,11 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
             max_unhedged_usd=max_unhedged_usd, dip_curve=dip_curve,
             in_sweep_phase=in_sweep, rescue_ceiling=rescue_ceiling,
             rescue_max_pair_cost=rescue_max,
+            leg1_max_price=leg1_max, leg2_max_price=leg2_max,
+            taker_dip_max=taker_dip_max,
+            late_rescue_start_sec=late_start,
+            late_rescue_max_pair_cost=late_max,
+            elapsed_sec=float(ts - slot),
         )
         if decision.action == "skip" or decision.outcome is None or decision.price is None:
             continue
@@ -729,15 +771,24 @@ def resolve_runs(sel: list[str], use_all: bool, runs_root: Path) -> list[str]:
 def run_rule(run_ids: list[str], rule: str, ceiling: float | None, levels: int,
              spacing: float, limit: int | None, runs_root: Path,
              frozen_config: bool = False, queue_mode: str = "exact",
-             eval_floor_s: float = 0.0) -> list[dict]:
+             eval_floor_s: float = 0.0, leg1_max: float | None = None,
+             leg2_ceiling: float | None = None, unhedged_usd: float | None = None,
+             taker_dip_max: float | None = None, rescue_max_pair: float | None = None,
+             late_rescue_start: float | None = None) -> list[dict]:
     """Replay windows under a rule.
 
     frozen_config=True (gate mode): each run replays under its own frozen
     configSnapshot, so the replay is checked against what that run did.
     Otherwise every window replays under the canonical entry for the rule,
     so candidates are counterfactuals on equal footing across eras.
+
+    The v2.7 ablation knobs each change one thing at a time against the
+    baseline: leg1_max (Leg-1 ceiling), leg2_ceiling (hedge ceiling),
+    unhedged_usd (dollar gap cap), taker_dip_max (fresh-leg taker entry),
+    rescue_max_pair + late_rescue_start (late-window rescue cap).
     """
-    canon_sid, canon_entry = STRATEGY_V26, dict(C.STRATEGY_SETUPS[STRATEGY_V26]["entry"])
+    canon_sid = STRATEGY_V27 if rule == "v2.7" else STRATEGY_V26
+    canon_entry = dict(C.STRATEGY_SETUPS[canon_sid]["entry"])
     results = []
     for run_id in run_ids:
         if frozen_config:
@@ -749,8 +800,26 @@ def run_rule(run_ids: list[str], rule: str, ceiling: float | None, levels: int,
             entry.pop("dipCurve", None)
         if ceiling is not None:
             entry["maxFillPrice"] = float(ceiling)
+            if rule == "v2.7" and leg1_max is None:
+                entry["leg1MaxPrice"] = float(ceiling)
+                entry["maxLeg1Price"] = float(ceiling)
         elif rule == "hump":
             entry["maxFillPrice"] = 0.55
+        if leg1_max is not None:
+            entry["leg1MaxPrice"] = float(leg1_max)
+            entry["maxLeg1Price"] = float(leg1_max)
+            entry["maxFillPrice"] = min(float(entry.get("maxFillPrice", 99.0)), float(leg1_max))
+        if leg2_ceiling is not None:
+            entry["leg2MaxPrice"] = float(leg2_ceiling)
+        if unhedged_usd is not None:
+            entry["maxUnhedgedUsd"] = float(unhedged_usd)
+        if taker_dip_max is not None:
+            entry["takerDipEntryMax"] = float(taker_dip_max)
+        if rescue_max_pair is not None:
+            entry["rescuePairCostMax"] = float(rescue_max_pair)
+            entry["lateRescueMaxPairCost"] = float(rescue_max_pair)
+        if late_rescue_start is not None:
+            entry["lateRescueStartSec"] = float(late_rescue_start)
         slices = load_slices(run_id, runs_root)
         asset_outcome = slices.get("asset_outcome", {})
         book = slices.get("book", {})
@@ -758,6 +827,9 @@ def run_rule(run_ids: list[str], rule: str, ceiling: float | None, levels: int,
         wins = slices.get("windows", [])
         if limit is not None:
             wins = wins[:limit]
+        # "hump" keeps the historical monkeypatch (v2.6 entry + popped curve).
+        # "v2.7" exercises the shipped path: dipCurve="hump" is sized natively
+        # by executor.select_ladder_clip, so no patch is applied.
         sizing = make_hump_sizing(float(entry.get("maxShares", 45.0))) if rule == "hump" else None
         orig = E.select_ladder_clip
         if sizing is not None:
@@ -779,6 +851,11 @@ def run_rule(run_ids: list[str], rule: str, ceiling: float | None, levels: int,
                 res["slug"] = w["slug"]
                 res["rule"] = rule
                 res["ceiling"] = entry.get("maxFillPrice")
+                res["leg1Max"] = entry.get("leg1MaxPrice", entry.get("maxLeg1Price"))
+                res["leg2Ceiling"] = entry.get("leg2MaxPrice")
+                res["unhedgedUsd"] = entry.get("maxUnhedgedUsd")
+                res["takerDipMax"] = entry.get("takerDipEntryMax")
+                res["rescueMaxPair"] = entry.get("lateRescueMaxPairCost", entry.get("rescuePairCostMax"))
                 res["levels"] = levels
                 results.append(res)
         finally:
@@ -795,6 +872,11 @@ def summarize(results: list[dict]) -> dict:
     payout = sum(r["payout"] for r in settled)
     placements = sum(r["placements"] for r in results)
     traded = sum(1 for r in results if r["n_fills"])
+    fees = sum(r.get("fees", 0.0) for r in results)
+    # Scorecard: paired-window median pair cost + locked bps, both computed
+    # from fee-inclusive cost with NO rebates in the loop (replay never books
+    # rebates), so taker slippage via 0.07*p*(1-p) is fully in the numbers.
+    edge_bps = round((payout - cost) / cost * 1e4, 1) if cost else None
     return {"windows": len(results), "traded": traded,
             "fills": fills, "fills_per_window": round(fills / len(results), 2) if results else 0,
             "maker": maker, "taker": fills - maker,
@@ -804,7 +886,9 @@ def summarize(results: list[dict]) -> dict:
             "frag": sum(r["frag"] for r in results),
             "cost": round(cost, 2), "payout": round(payout, 2),
             "net": round(payout - cost, 2),
-            "gross_bps": round((payout - cost) / cost * 1e4, 1) if cost else None,
+            "fees": round(fees, 4),
+            "gross_bps": edge_bps,
+            "locked_bps": edge_bps,
             "median_pair_cost": round(float(pcs[len(pcs) // 2]), 4) if pcs else None,
             "n_paired": len(pcs)}
 
@@ -854,10 +938,22 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Replay recorded tape to test placement rules.")
     ap.add_argument("--run", action="append", default=[], help="run id (repeatable)")
     ap.add_argument("--runs", default=None, help="'all' for the full corpus")
-    ap.add_argument("--rule", default="v2.6", choices=["v2.6", "hump"])
+    ap.add_argument("--rule", default="v2.6", choices=["v2.6", "hump", "v2.7"])
     ap.add_argument("--ceiling", type=float, default=None)
-    ap.add_argument("--levels", type=int, default=1)
-    ap.add_argument("--spacing", type=float, default=0.02)
+    ap.add_argument("--levels", type=int, default=None)
+    ap.add_argument("--spacing", type=float, default=None)
+    ap.add_argument("--leg1-max", type=float, default=None,
+                    help="v2.7 ablation: Leg-1 ceiling (fresh dips + straddle-open)")
+    ap.add_argument("--leg2-ceiling", type=float, default=None,
+                    help="v2.7 ablation: deficit-hedge ceiling (late/sweep rescue keeps the full ceiling)")
+    ap.add_argument("--unhedged-usd", type=float, default=None,
+                    help="v2.7 ablation: dollar-denominated unhedged gap cap")
+    ap.add_argument("--taker-dip-max", type=float, default=None,
+                    help="v2.7 ablation: cross the ask on a fresh leg if ask <= this (maker-only when absent)")
+    ap.add_argument("--rescue-max-pair", type=float, default=None,
+                    help="v2.7 ablation: late-window rescue pair-cost cap")
+    ap.add_argument("--late-rescue-start", type=float, default=None,
+                    help="v2.7 ablation: elapsed seconds when the late rescue cap takes over")
     ap.add_argument("--out", default=None)
     ap.add_argument("--against-live", action="store_true")
     ap.add_argument("--limit", type=int, default=None)
@@ -885,11 +981,23 @@ def main(argv=None) -> int:
         print("gate mode only supports --rule v2.6", file=sys.stderr)
         return 2
 
-    results = run_rule(run_ids, args.rule, args.ceiling, args.levels,
-                       args.spacing, args.limit, runs_root,
+    # Ladder shape defaults come from the rule's entry (v2.7 stores
+    # levelsPerSide/levelSpacing); explicit flags always win. Pre-v2.7
+    # entries carry no ladder keys, so the historical 1 x 0.02 stands.
+    canon_for_defaults = C.STRATEGY_SETUPS[STRATEGY_V27 if args.rule == "v2.7" else STRATEGY_V26]["entry"]
+    levels = args.levels if args.levels is not None else int(canon_for_defaults.get("levelsPerSide", 1))
+    spacing = args.spacing if args.spacing is not None else float(canon_for_defaults.get("levelSpacing", 0.02))
+    results = run_rule(run_ids, args.rule, args.ceiling, levels,
+                       spacing, args.limit, runs_root,
                        frozen_config=args.against_live,
                        queue_mode=args.queue_mode,
-                       eval_floor_s=(args.eval_floor_ms or 0.0) / 1000.0)
+                       eval_floor_s=(args.eval_floor_ms or 0.0) / 1000.0,
+                       leg1_max=args.leg1_max,
+                       leg2_ceiling=args.leg2_ceiling,
+                       unhedged_usd=args.unhedged_usd,
+                       taker_dip_max=args.taker_dip_max,
+                       rescue_max_pair=args.rescue_max_pair,
+                       late_rescue_start=args.late_rescue_start)
     summary = summarize(results)
 
     if args.against_live:
@@ -942,10 +1050,11 @@ def main(argv=None) -> int:
         return 0 if ok else 1
 
     print(json.dumps({"summary": summary,
-                      "windows": [{k: r[k] for k in
-                                   ("slug", "run", "rule", "ceiling", "levels", "n_fills",
-                                    "n_maker", "n_taker", "cost", "payout", "net",
-                                    "pair_cost", "placements", "queue_unknown", "frag")
+                      "windows": [{k: r.get(k) for k in
+                                   ("slug", "run", "rule", "ceiling", "leg1Max", "leg2Ceiling",
+                                    "unhedgedUsd", "takerDipMax", "rescueMaxPair", "levels",
+                                    "n_fills", "n_maker", "n_taker", "cost", "fees", "payout",
+                                    "net", "pair_cost", "placements", "queue_unknown", "frag")
                                    } for r in results]}, indent=2))
     if args.out:
         Path(args.out).write_text(json.dumps({"summary": summary, "results": results}, indent=2))

@@ -43,7 +43,10 @@ export function tweakCards(candidate: AbTestDistributionStats | null | undefined
   const cap = money(e.maxPairCost, 0.985)
   const rescue = money(e.rescuePairCostMax, 0.995)
   const cutoff = num(e.stopBeforeCloseSec, 75)
-  const empty = !candidate?.entry
+  const sweep = num(e.sweepBeforeCloseSec, 15)
+  const lateMax = money(e.lateRescueMaxPairCost ?? e.rescuePairCostMax, 0.995)
+  const lateStart = num(e.lateRescueStartSec, 210)
+  const empty = !candidate?.entry || Object.keys(candidate?.entry ?? {}).length === 0
 
   const preflight = f.preflightGate === true
   const sizing = f.sizing ?? ''
@@ -80,10 +83,12 @@ export function tweakCards(candidate: AbTestDistributionStats | null | undefined
       body: t2body,
     },
     {
-      kicker: 'Tweak 3 · Sweep',
-      badge: `T-${cutoff}s..15s Maker`,
-      title: 'Passive Maker Sweep',
-      body: `Fills remaining deficits with resting maker orders at 0% fee between T-${cutoff}s and T-15s, avoiding taker fee drag.`,
+      kicker: 'Tweak 3 / Sweep',
+      badge: empty ? '---' : `T-${cutoff}s / T-${sweep}s`,
+      title: 'Stop + Sweep + Late Rescue',
+      body: empty
+        ? 'Waiting for a candidate run.'
+        : `Stop opening at T-${cutoff}s, sweep deficits with resting maker orders down to T-${sweep}s, late rescue to ${lateMax} from T+${lateStart}s.`,
     },
   ]
 }

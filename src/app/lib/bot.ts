@@ -754,6 +754,19 @@ export interface AbTestDistributionStats {
   samples: number
   targetSamples?: number
   progressPct?: number
+  /** Total 5m windows observed with the loop on (informational only, never N). */
+  observedWindows: number
+  /** Active traded windows (fills > 0): the Welch t-test sample N. */
+  activeWindows: number
+  /** Paired windows (upShares > 0 && downShares > 0). Target 60. */
+  pairedWindows: number
+  /** Sub-$1.00 pairs (pairCost < 1.00). Target 35+. */
+  subDollarPairs: number
+  pairCostUnder096: number
+  pairCost096to100: number
+  pairCostOver100: number
+  totalLockedShares: number
+  pairsMerged: number
   wins: number
   losses: number
   scratches: number
@@ -783,11 +796,17 @@ export interface AbTestHistogramBin {
 
 export interface AbTestStatistics {
   targetSampleSize: number
+  targetPaired: number
+  targetSubDollar: number
   alpha: number
   confidenceLevel: string
   power: string
   tStatistic: number
-  tCritical: number
+  /** Dynamic one-tailed critical value from the Welch-Satterthwaite df (null when N too small). */
+  tCritical: number | null
+  /** Exact active-window mean the candidate must cross to reject H0 (null when N too small). */
+  muCritical: number | null
+  standardError: number
   pValue: number
   degreesOfFreedom: number
   cohenD: number

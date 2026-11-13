@@ -1464,7 +1464,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _cors(self) -> bool:
         origin = self.headers.get("Origin")
-        if origin and (origin.startswith("http://localhost:") or origin.startswith("http://127.0.0.1:")):
+        if origin and origin.startswith(("http://localhost:", "http://127.0.0.1:", "http://[::1]:")):
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
         elif not origin:

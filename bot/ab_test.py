@@ -1,11 +1,14 @@
 """A/B Testing & Statistical Hypothesis Validation Module.
 
-Compares the frozen baseline run (DEFAULT_BASELINE_ID, DSP v2.4 as recorded)
-against the candidate run started by the registry setup named in
-start_candidate_test() (DSP v2.5 by default).
+Compares the frozen, measured DSP v2.6 baseline run
+(DEFAULT_BASELINE_ID, `run_20261113_080232_paper_dsp_v2_6`) against the
+Hydrogen v1.0 candidate (`hydrogen-v1.0`).
 
-Calculates real-time sample progress, Welch's two-sample t-statistic, p-value,
-Cohen's d effect size, 95% confidence intervals, and histogram distributions.
+The statistical sample is ACTIVE traded windows only (`fills > 0`): zero-fill
+windows never inflate N or dilute variance. Welch's one-tailed two-sample
+t-test (alpha = 0.05, 80% power) with Welch-Satterthwaite df, a dynamic
+`t_crit(df)`, and the exact rejection boundary
+`mu_crit = mean_A + t_crit * SE`.
 """
 
 from __future__ import annotations
@@ -18,12 +21,16 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNS_DIR = ROOT / "bot" / "runs"
-DEFAULT_BASELINE_ID = "run_20261110_061832_paper_dsp_v2_4"
-DEFAULT_CANDIDATE_ID = "dangerously-skip-permissions-v2.5"
+DEFAULT_BASELINE_ID = "run_20261113_080232_paper_dsp_v2_6"
+DEFAULT_CANDIDATE_ID = "hydrogen-v1.0"
+CANDIDATE_DISPLAY_NAME = "Hydrogen v1.0"
+BASELINE_DISPLAY_NAME = "DSP v2.6"
 AB_STATE_PATH = ROOT / "bot" / "ab_test_state.json"
 
-TARGET_SAMPLE_SIZE = 113  # Power 0.80, alpha 0.05, Cohen's d 0.332
-T_CRITICAL_95 = 1.658     # df ~ 100-200, one-tailed alpha = 0.05
+TARGET_SAMPLE_SIZE = 120  # Active traded windows (fills > 0) for Welch's t-test (80% power, alpha 0.05)
+TARGET_PAIRED_WINDOWS = 60  # Windows with upShares > 0 and downShares > 0
+TARGET_SUB_DOLLAR_PAIRS = 35  # Sub-$1.00 pairs (pairCost < 1.00); >54% of paired windows
+ALPHA = 0.05  # One-tailed significance level
 
 
 def _t_cdf(t: float, df: float) -> float:
@@ -32,6 +39,41 @@ def _t_cdf(t: float, df: float) -> float:
         return 0.5
     z = t * (1.0 - 1.0 / (4.0 * df)) / math.sqrt(1.0 + (t * t) / (2.0 * df))
     return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+
+
+def _t_critical(df: float, alpha: float = ALPHA) -> float:
+    """One-tailed critical value t_crit with P(T <= t_crit) = 1 - alpha.
+
+    Inverted from _t_cdf by bisection so the rejection threshold tracks the
+    actual Welch-Satterthwaite degrees of freedom instead of a hardcoded
+    placeholder (df ~ 100-200 -> ~1.658).
+    """
+    if df <= 0:
+        return float("nan")
+    target = 1.0 - alpha
+    # The normal 95th percentile (1.6449) bounds t_crit from below; Student-t
+    # with small df needs a larger cutoff, capped generously at 10.
+    lo, hi = 0.0, 10.0
+    for _ in range(80):
+        mid = (lo + hi) / 2.0
+        if _t_cdf(mid, df) < target:
+            lo = mid
+        else:
+            hi = mid
+    return round((lo + hi) / 2.0, 4)
+
+
+def _pair_cost(up_shares: float, down_shares: float, up_cost: float, down_cost: float) -> float | None:
+    """Mean pair cost as the sum of per-side average fill prices.
+
+    Defined on paired windows only (`up_shares > 0 and down_shares > 0`);
+    returns None for unpaired windows. Unlike `total_cost / min(shares)`,
+    an imbalanced fill split cannot blow the quote up (e.g. a 1-share
+    stub on one side no longer prices the whole window at ~$4.76).
+    """
+    if up_shares > 0 and down_shares > 0:
+        return round((up_cost / up_shares) + (down_cost / down_shares), 4)
+    return None
 
 
 def _load_run_windows(run_id: str) -> list[dict[str, Any]]:
@@ -70,8 +112,7 @@ def _load_run_windows(run_id: str) -> list[dict[str, Any]]:
                 up_cost = sum(f.get("usd", 0.0) for f in fills if f.get("outcome") == "Up")
                 down_cost = sum(f.get("usd", 0.0) for f in fills if f.get("outcome") == "Down")
                 total_cost = up_cost + down_cost
-                min_sh = min(up_sh, down_sh)
-                pair_cost = round(total_cost / min_sh, 4) if min_sh > 0 else None
+                pair_cost = _pair_cost(up_sh, down_sh, up_cost, down_cost)
                 imbalance = round(abs(up_sh - down_sh), 1)
 
                 payout = 0.0
@@ -104,30 +145,70 @@ def _load_run_windows(run_id: str) -> list[dict[str, Any]]:
     return records
 
 
-def _compute_distribution_stats(records: list[dict[str, Any]]) -> dict[str, Any]:
-    n = len(records)
-    if n == 0:
-        return {
-            "samples": 0,
-            "wins": 0,
-            "losses": 0,
-            "scratches": 0,
-            "winRate": 0.0,
-            "lossRate": 0.0,
-            "netPnl": 0.0,
-            "meanPnl": 0.0,
-            "stdPnl": 0.0,
-            "variance": 0.0,
-            "medianPnl": 0.0,
-            "minPnl": 0.0,
-            "maxPnl": 0.0,
-            "meanPairCost": 0.0,
-            "zeroImbalancePct": 0.0,
-            "pnlList": [],
-            "windows": [],
-        }
+def _count_observed_windows(run_id: str | None) -> int:
+    """Total 5m windows observed with the loop on (informational only).
 
-    pnls = [r["net"] for r in records]
+    Counts every recorded window file, including unsettled/pending and
+    zero-fill windows. Never used as N in Welch's test.
+    """
+    if not run_id:
+        return 0
+    windows_dir = RUNS_DIR / run_id / "windows"
+    if not windows_dir.exists():
+        return 0
+    try:
+        return sum(1 for _ in windows_dir.glob("btc-updown-5m-*.json"))
+    except Exception:
+        return 0
+
+
+def _empty_stats(observed: int = 0) -> dict[str, Any]:
+    return {
+        "samples": 0,
+        "observedWindows": observed,
+        "activeWindows": 0,
+        "pairedWindows": 0,
+        "subDollarPairs": 0,
+        "pairCostUnder096": 0,
+        "pairCost096to100": 0,
+        "pairCostOver100": 0,
+        "totalLockedShares": 0.0,
+        "pairsMerged": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "scratches": 0,
+        "winRate": 0.0,
+        "lossRate": 0.0,
+        "netPnl": 0.0,
+        "meanPnl": 0.0,
+        "stdPnl": 0.0,
+        "variance": 0.0,
+        "medianPnl": 0.0,
+        "minPnl": 0.0,
+        "maxPnl": 0.0,
+        "meanPairCost": 0.0,
+        "zeroImbalancePct": 0.0,
+        "pnlList": [],
+        "windows": [],
+    }
+
+
+def _compute_distribution_stats(records: list[dict[str, Any]],
+                                observed_windows: int | None = None) -> dict[str, Any]:
+    """Distribution stats over ACTIVE traded windows only (`fills > 0`).
+
+    Zero-fill windows never inflate N or dilute variance: N, mean, variance,
+    win rate, pair-cost buckets, and locked-share totals are all computed on
+    the active subset. `observedWindows` is the informational loop-on total.
+    """
+    if observed_windows is None:
+        observed_windows = len(records)
+    active = [r for r in records if (r.get("fills", 0) or 0) > 0]
+    n = len(active)
+    if n == 0:
+        return _empty_stats(observed_windows)
+
+    pnls = [r["net"] for r in active]
     wins = sum(1 for x in pnls if x > 0.001)
     losses = sum(1 for x in pnls if x < -0.001)
     scratches = sum(1 for x in pnls if abs(x) <= 0.001)
@@ -141,14 +222,37 @@ def _compute_distribution_stats(records: list[dict[str, Any]]) -> dict[str, Any]
     mid = n // 2
     median_val = sorted_pnls[mid] if n % 2 != 0 else (sorted_pnls[mid - 1] + sorted_pnls[mid]) / 2.0
 
-    valid_pcs = [r["pairCost"] for r in records if r.get("pairCost") is not None]
+    valid_pcs = [r["pairCost"] for r in active if r.get("pairCost") is not None]
     mean_pc = (sum(valid_pcs) / len(valid_pcs)) if valid_pcs else 0.0
 
-    zero_imbs = sum(1 for r in records if r.get("imbalance", 0.0) == 0.0)
+    zero_imbs = sum(1 for r in active if r.get("imbalance", 0.0) == 0.0)
     zero_imb_pct = round((zero_imbs / n) * 100.0, 1)
+
+    paired = [r for r in active
+              if (r.get("upShares", 0.0) or 0.0) > 0 and (r.get("downShares", 0.0) or 0.0) > 0]
+    paired_windows = len(paired)
+    under096 = sum(1 for r in paired
+                   if r.get("pairCost") is not None and r["pairCost"] < 0.96)
+    range096_100 = sum(1 for r in paired
+                       if r.get("pairCost") is not None and 0.96 <= r["pairCost"] < 1.00)
+    over100 = sum(1 for r in paired
+                  if r.get("pairCost") is not None and r["pairCost"] >= 1.00)
+    sub_dollar = under096 + range096_100
+    pairs_merged = round(sum(min(r.get("upShares", 0.0) or 0.0,
+                                r.get("downShares", 0.0) or 0.0) for r in paired), 1)
+    locked_shares = round(pairs_merged * 2.0, 1)
 
     return {
         "samples": n,
+        "observedWindows": observed_windows,
+        "activeWindows": n,
+        "pairedWindows": paired_windows,
+        "subDollarPairs": sub_dollar,
+        "pairCostUnder096": under096,
+        "pairCost096to100": range096_100,
+        "pairCostOver100": over100,
+        "totalLockedShares": locked_shares,
+        "pairsMerged": pairs_merged,
         "wins": wins,
         "losses": losses,
         "scratches": scratches,
@@ -164,7 +268,7 @@ def _compute_distribution_stats(records: list[dict[str, Any]]) -> dict[str, Any]
         "meanPairCost": round(mean_pc, 4),
         "zeroImbalancePct": zero_imb_pct,
         "pnlList": pnls,
-        "windows": records[-30:],  # last 30 for the live table
+        "windows": active[-30:],  # last 30 active windows for the live table
     }
 
 
@@ -216,8 +320,13 @@ def _run_strategy_id(run_id: str | None) -> str:
                     return str(strat_id)
         except Exception:
             pass
-    # No run (or no meta): describe the setup the next start would run.
-    return DEFAULT_CANDIDATE_ID if run_id is None else "dangerously-skip-permissions-v2.4"
+    # The Hydrogen candidate has no run dir yet: its state id is the strategy
+    # id itself, so map it straight through to the Hydrogen identity.
+    if run_id is None or "hydrogen" in str(run_id).lower():
+        return DEFAULT_CANDIDATE_ID
+    # No run (or no meta): the next start would run the Hydrogen v1.0 candidate;
+    # a dangling historical run id falls back to the DSP v2.6 baseline strategy.
+    return "dangerously-skip-permissions-v2.6"
 
 
 def _run_entry(run_id: str | None) -> dict[str, Any]:
@@ -250,19 +359,40 @@ def _version_tag(strategy_id: str) -> str:
 
 def _hypothesis_text(candidate_id: str | None, *, null: bool,
                      baseline_id: str | None = None) -> str:
-    """Hypothesis copy derived from whichever candidate and baseline actually ran."""
+    """Formal Hydrogen v1.0 vs DSP v2.6 hypothesis over active-window PnL."""
     strat_id = _run_strategy_id(candidate_id)
-    tag = _version_tag(strat_id)
-    base_tag = _version_tag(_run_strategy_id(baseline_id or DEFAULT_BASELINE_ID))
+    base_strat_id = _run_strategy_id(baseline_id or DEFAULT_BASELINE_ID)
+    cand_label = "Hydrogen_v1.0" if "hydrogen" in str(strat_id).lower() else f"μ_{_version_tag(strat_id)}"
+    if "hydrogen" not in str(strat_id).lower():
+        cand_label = f"μ_{_version_tag(strat_id)}"
+    else:
+        cand_label = "Hydrogen_v1.0"
+    if "v2.6" in str(base_strat_id) or "v2_6" in str(base_strat_id):
+        base_label = "DSP_v2.6"
+    else:
+        base_label = f"μ_{_version_tag(base_strat_id)}"
+        if not base_label.startswith("μ_"):
+            base_label = f"μ_{base_label}"
+        else:
+            base_label = base_label.replace("μ_μ_", "μ_")
+        # Normalize to the DSP_vX_Y shape when we only have a bare tag.
+        if base_label in ("μ_v2.6",):
+            base_label = "DSP_v2.6"
     try:
         from bot import constants as C
         reg = C.STRATEGY_SETUPS.get(strat_id, {})
-        blurb = reg.get("features", {}).get("blurb", "candidate sizing")
+        blurb = reg.get("features", {}).get("blurb", "")
     except Exception:
-        blurb = "candidate sizing"
+        blurb = ""
+    if not blurb:
+        blurb = "dip-first pair-locking parameters"
     if null:
-        return f"H₀: μ_{tag} ≤ μ_{base_tag} (or μ_{tag} ≤ 0) — {blurb} does not produce a statistically significant positive expected return."
-    return f"H₁: μ_{tag} > 0 and μ_{tag} > μ_{base_tag} — {blurb} generates a statistically significant positive mean window return at α = 0.05."
+        return (f"H₀: μ_{cand_label} ≤ μ_{base_label} (and μ_{cand_label} ≤ 0) — "
+                f"Hydrogen v1.0's {blurb} produce no statistically significant "
+                f"improvement in mean active-window PnL over DSP v2.6.")
+    return (f"H₁: μ_{cand_label} > μ_{base_label} and μ_{cand_label} > 0 — "
+            f"Hydrogen v1.0 achieves a statistically significant positive expected "
+            f"return per active window and outperforms DSP v2.6 at α = 0.05 (one-tailed).")
 
 
 def _run_info(run_id: str | None) -> dict[str, Any]:
@@ -271,8 +401,11 @@ def _run_info(run_id: str | None) -> dict[str, Any]:
     strat_id = _run_strategy_id(run_id)
     entry = _run_entry(run_id)
     reg = C.STRATEGY_SETUPS.get(strat_id, {})
-    name = reg.get("name", strat_id)
-    _sig, desc, hl = C.describe_setup({"id": strat_id, "entry": entry or reg.get("entry", {})})
+    name = reg.get("name", strat_id) if reg else strat_id
+    try:
+        _sig, desc, hl = C.describe_setup({"id": strat_id, "entry": entry or reg.get("entry", {})})
+    except Exception:
+        _sig, desc, hl = (reg.get("signature", strat_id), reg.get("description", ""), {})
     return {
         "name": name,
         "description": desc,
@@ -307,18 +440,21 @@ def get_ab_test_data() -> dict[str, Any]:
                 if meta_p.exists():
                     m = json.loads(meta_p.read_text(encoding="utf-8"))
                     strat_id = m.get("configSnapshot", {}).get("strategy", {}).get("id", "")
-                    if "dangerously-skip-permissions" in strat_id:
+                    if "dangerously-skip-permissions" in strat_id or "hydrogen" in str(strat_id).lower():
                         candidate_id = act_id
         except Exception:
             pass
 
     baseline_recs = _load_run_windows(baseline_id)
-    baseline_stats = _compute_distribution_stats(baseline_recs)
+    baseline_stats = _compute_distribution_stats(
+        baseline_recs, observed_windows=_count_observed_windows(baseline_id))
 
     candidate_recs = _load_run_windows(candidate_id) if candidate_id else []
-    candidate_stats = _compute_distribution_stats(candidate_recs)
+    candidate_stats = _compute_distribution_stats(
+        candidate_recs,
+        observed_windows=_count_observed_windows(candidate_id) if candidate_id else 0)
 
-    # Statistical Comparison (Welch's Two-Sample t-test)
+    # Statistical Comparison (Welch's one-tailed two-sample t-test on ACTIVE windows)
     n_a = baseline_stats["samples"]
     n_b = candidate_stats["samples"]
     mu_a = baseline_stats["meanPnl"]
@@ -333,44 +469,62 @@ def get_ab_test_data() -> dict[str, Any]:
     cohen_d = 0.0
     ci_lower = 0.0
     ci_upper = 0.0
+    t_crit: float | None = None
+    mu_crit: float | None = None
+    se_diff_val = 0.0
     significant = False
 
     if n_a > 1 and n_b > 1:
         mean_diff = round(mu_b - mu_a, 4)
-        se_diff = math.sqrt((var_a / n_a) + (var_b / n_b))
-        
+        se_diff_val = math.sqrt((var_a / n_a) + (var_b / n_b))
+
         # Welch-Satterthwaite degrees of freedom
         num = ((var_a / n_a) + (var_b / n_b)) ** 2
         denom = (((var_a / n_a) ** 2) / (n_a - 1)) + (((var_b / n_b) ** 2) / (n_b - 1))
         df = round(num / max(denom, 1e-9), 1)
 
-        t_stat = round(mean_diff / max(se_diff, 1e-9), 4) if se_diff > 0 else 0.0
+        t_stat = round(mean_diff / max(se_diff_val, 1e-9), 4) if se_diff_val > 0 else 0.0
         # One-tailed p-value (testing mu_b > mu_a)
         p_value = round(max(0.0, 1.0 - _t_cdf(t_stat, df)), 4)
+
+        # Dynamic critical threshold from the actual df (alpha = 0.05, one-tailed)
+        t_crit = _t_critical(df, ALPHA)
+        # Exact active-window mean the candidate must cross to reject H0.
+        mu_crit = round(mu_a + t_crit * se_diff_val, 4) if se_diff_val > 0 else round(mu_a, 4)
 
         # Pooled SD for Cohen's d
         s_pooled = math.sqrt(((n_a - 1) * var_a + (n_b - 1) * var_b) / max(1, n_a + n_b - 2))
         cohen_d = round(mean_diff / max(s_pooled, 1e-9), 3) if s_pooled > 0 else 0.0
 
         # 95% Confidence Interval for (mu_b - mu_a)
-        margin = 1.96 * se_diff
+        margin = 1.96 * se_diff_val
         ci_lower = round(mean_diff - margin, 4)
         ci_upper = round(mean_diff + margin, 4)
 
-        significant = bool(t_stat >= T_CRITICAL_95 and p_value <= 0.05)
+        gates_met = bool(
+            n_b >= TARGET_SAMPLE_SIZE
+            and candidate_stats["pairedWindows"] >= TARGET_PAIRED_WINDOWS
+            and candidate_stats["subDollarPairs"] >= TARGET_SUB_DOLLAR_PAIRS
+        )
+        significant = bool(t_stat >= t_crit and p_value <= ALPHA and gates_met)
 
     # Status verdict string
     if n_b < 5:
         verdict = "Awaiting Sample Data"
         verdict_tone = "neutral"
-    elif n_b < 30:
-        verdict = f"Data Gathering ({n_b}/{TARGET_SAMPLE_SIZE})"
+    elif n_b < TARGET_SAMPLE_SIZE:
+        verdict = f"Data Gathering ({n_b}/{TARGET_SAMPLE_SIZE} active)"
         verdict_tone = "info"
-    elif significant and n_b >= TARGET_SAMPLE_SIZE:
+    elif significant:
         verdict = f"Statistically Significant Alpha (Reject H0, p={p_value:.3f})"
         verdict_tone = "success"
+    elif n_a > 1 and n_b > 1 and t_stat >= t_crit and p_value <= ALPHA:
+        verdict = (f"Significant but Gates Not Met "
+                   f"(need {TARGET_SAMPLE_SIZE} active / {TARGET_PAIRED_WINDOWS} paired / "
+                   f"{TARGET_SUB_DOLLAR_PAIRS} sub-$1.00)")
+        verdict_tone = "accent"
     elif mu_b > mu_a:
-        verdict = f"Trending Favorable (p={p_value:.3f}, need N={TARGET_SAMPLE_SIZE})"
+        verdict = f"Trending Favorable (p={p_value:.3f}, need N={TARGET_SAMPLE_SIZE} active)"
         verdict_tone = "accent"
     else:
         verdict = f"No Edge Detected (Fail to Reject H0, p={p_value:.3f})"
@@ -395,11 +549,15 @@ def get_ab_test_data() -> dict[str, Any]:
         },
         "statistics": {
             "targetSampleSize": TARGET_SAMPLE_SIZE,
-            "alpha": 0.05,
+            "targetPaired": TARGET_PAIRED_WINDOWS,
+            "targetSubDollar": TARGET_SUB_DOLLAR_PAIRS,
+            "alpha": ALPHA,
             "confidenceLevel": "95%",
             "power": "80%",
             "tStatistic": t_stat,
-            "tCritical": T_CRITICAL_95,
+            "tCritical": t_crit,
+            "muCritical": mu_crit,
+            "standardError": round(se_diff_val, 4),
             "pValue": p_value,
             "degreesOfFreedom": df,
             "cohenD": cohen_d,
@@ -412,7 +570,15 @@ def get_ab_test_data() -> dict[str, Any]:
         "hypotheses": {
             "nullHypothesis": _hypothesis_text(candidate_id, null=True, baseline_id=baseline_id),
             "altHypothesis": _hypothesis_text(candidate_id, null=False, baseline_id=baseline_id),
-            "decisionRule": f"Reject H₀ if t > {T_CRITICAL_95} (p < 0.05) once candidate sample size reaches N = {TARGET_SAMPLE_SIZE} windows.",
+            "decisionRule": (
+                f"Reject H₀ only when t ≥ t_crit(df) (p ≤ 0.05) AND candidate reaches "
+                f"N = {TARGET_SAMPLE_SIZE} active windows, "
+                f"{TARGET_PAIRED_WINDOWS} paired windows, and "
+                f"{TARGET_SUB_DOLLAR_PAIRS}+ sub-$1.00 pairs; "
+                f"μ_B must cross μ_crit" +
+                (f" (${mu_crit:.4f})" if mu_crit is not None else "") +
+                "."
+            ),
         },
         "histogram": histogram,
     }
@@ -458,7 +624,10 @@ def start_candidate_test(candidate_id: str | None = None,
     time.sleep(0.5)
 
     # 3. Generate run ID and register candidate
-    run_id = f"run_{time.strftime('%Y%m%d_%H%M%S')}_paper_dsp_{_version_tag(candidate_id).replace('.', '_')}"
+    if "hydrogen" in str(candidate_id).lower():
+        run_id = f"run_{time.strftime('%Y%m%d_%H%M%S')}_paper_hydrogen_v1_0"
+    else:
+        run_id = f"run_{time.strftime('%Y%m%d_%H%M%S')}_paper_dsp_{_version_tag(candidate_id).replace('.', '_')}"
     ab_state = {
         "baselineRunId": baseline_run_id,
         "candidateRunId": run_id,

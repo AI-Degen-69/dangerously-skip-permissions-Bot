@@ -31,11 +31,11 @@ const TEX: Record<string, string> = {
   '\\geq': '≥', '\\leq': '≤', '\\ne': '≠', '\\to': '→', '\\cdot': '·', '\\times': '×',
 }
 
-/** Render a math-like token: Greek/TeX → Unicode, `x_{sub}`/`x_sub` → subscript, italic. */
+/** Render a math-like token: Greek/TeX → Unicode, `x_{sub}`/`x_sub` → subscript. Neutral ink chip (no accent color) for max legibility. */
 function Var({ children }: { children: string }) {
   const src = children.replace(/\\[a-zA-Z]+/g, (m) => TEX[m] ?? m)
   const parts: React.ReactNode[] = []
-  const re = /_(\{[^}]+\}|[A-Za-z0-9.]*[A-Za-z0-9])/g
+  const re = /_(\{[^}]+\}|[A-Za-z0-9._]*[A-Za-z0-9])/g
   let last = 0
   let m: RegExpExecArray | null
   while ((m = re.exec(src))) {
@@ -45,13 +45,13 @@ function Var({ children }: { children: string }) {
   }
   if (last < src.length) parts.push(src.slice(last))
   return (
-    <span className="mx-px whitespace-nowrap rounded-[4px] bg-accent/15 px-1 font-serif italic text-accent">
+    <span className="mx-px whitespace-nowrap rounded-[4px] bg-surface-2 px-1 font-mono font-semibold not-italic text-fg ring-1 ring-line">
       {parts}
     </span>
   )
 }
 
-const TOKEN_RE = /(\$[^$]+\$|H[₀₁]|[μσαβ](?:_(?:\{[^}]+\}|[A-Za-z0-9.]*[A-Za-z0-9]))?|\b(?:N|t|p|d|df)\b(?=[\s,.:;)=<>≥≤-]|$))/g
+const TOKEN_RE = /(\$[^$]+\$|H[₀₁]|[μσαβ](?:_(?:\{[^}]+\}|[A-Za-z0-9._]*[A-Za-z0-9]))?|\b(?:N|t|p|d|df)\b(?=[\s,.:;)=<>≥≤-]|$))/g
 
 /** Inline text with math: `$...$` is TeX-lite; known variables (H₀, μ, α, t, p, N…) are auto-highlighted. */
 function Rich({ text }: { text: string }) {
@@ -75,7 +75,6 @@ export function AbTest() {
   const startCandidate = useStartAbCandidate()
   const stopCandidate = useStopAbCandidate()
   const toast = useToast()
-  const [selectedBin, setSelectedBin] = useState<string | null>(null)
 
   const isCandidateRunning = Boolean(
     control.data?.running &&
@@ -106,15 +105,24 @@ export function AbTest() {
   const baseline = data?.baseline
   const candidate = data?.candidate
   const candidateLabel = candidate?.name ?? control.data?.strategy?.name ?? 'Candidate'
+  // Hydrogen v1.0 has no wired strategy config yet: with no real run recorded
+  // (zero observed windows) the launch button stays disabled instead of
+  // firing a start request the backend will refuse.
+  const hydrogenNotWired =
+    /hydrogen/i.test(candidate?.name ?? '') &&
+    (candidate?.observedWindows ?? 0) === 0 &&
+    !isCandidateRunning
   const tw = tweakCards(candidate ?? null)
   const baselineLabel = baseline?.name ?? 'Baseline'
   const stats = data?.statistics
   const hypotheses = data?.hypotheses
   const histogram = data?.histogram ?? []
 
-  // Maximum histogram count for scaling bar heights
+  // Histogram view: normalized % of active windows (default) vs raw counts,
+  // so unequal N_A vs N_B stay directly comparable.
   const [showA, setShowA] = useState(true)
   const [showB, setShowB] = useState(true)
+  const [normalized, setNormalized] = useState(true)
   const maxBinCount = useMemo(() => {
     let m = 1
     for (const b of histogram) {
@@ -123,6 +131,48 @@ export function AbTest() {
     }
     return m
   }, [histogram, showA, showB])
+  const maxBinPct = useMemo(() => {
+    let m = 1
+    for (const b of histogram) {
+      if (showA && b.baselinePct > m) m = b.baselinePct
+      if (showB && b.candidatePct > m) m = b.candidatePct
+    }
+    return m
+  }, [histogram, showA, showB])
+
+  // Map a PnL value to an x% position along the equal-width bin scale.
+  const valueToXPct = (v: number): number => {
+    if (histogram.length === 0) return 0
+    if (v <= -5) return 0
+    if (v >= 5) return 100
+    for (let i = 0; i < histogram.length; i++) {
+      const [low, high] = histogram[i].range
+      if (v >= low && v < high) {
+        const span = high - low
+        const frac = span > 0 && span < 900 ? (v - low) / span : 0.5
+        return ((i + Math.min(1, Math.max(0, frac))) / histogram.length) * 100
+      }
+    }
+    return 50
+  }
+  // Reference-line rows: $0 stays pinned to the bottom axis so it can never
+  // collide with mu_A near zero; mu_A / mu_B / mu_crit stagger across
+  // distinct top rows (top-0 / top-5 / top-10) with solid pills.
+  const refLines = useMemo(() => {
+    const lines: { key: string; value: number; label: string; className: string; dashed: boolean; row: 'bottom' | 'top-0' | 'top-5' | 'top-10' }[] = [
+      { key: 'zero', value: 0, label: 'Zero $0.00', className: 'bg-fg/60', dashed: false, row: 'bottom' },
+    ]
+    if (baseline != null) {
+      lines.push({ key: 'muA', value: baseline.meanPnl, label: `μ_A $${baseline.meanPnl.toFixed(2)}`, className: 'bg-slate-400', dashed: true, row: 'top-0' })
+    }
+    if (candidate != null && (candidate.samples ?? 0) > 0) {
+      lines.push({ key: 'muB', value: candidate.meanPnl, label: `μ_B $${candidate.meanPnl.toFixed(2)}`, className: 'bg-emerald-500', dashed: false, row: 'top-5' })
+    }
+    if (stats?.muCritical != null) {
+      lines.push({ key: 'mucrit', value: stats.muCritical, label: `μ_crit $${stats.muCritical.toFixed(2)}`, className: 'bg-amber-500', dashed: true, row: 'top-10' })
+    }
+    return lines
+  }, [baseline, candidate, stats])
 
   return (
     <div className="space-y-6 pb-12">
@@ -157,11 +207,20 @@ export function AbTest() {
                 size="sm"
                 onClick={handleStart}
                 loading={startCandidate.isPending}
-                className="gap-1.5 bg-accent text-white hover:bg-accent/90"
+                disabled={hydrogenNotWired}
+                title={hydrogenNotWired
+                  ? 'Hydrogen v1.0 strategy config is not wired yet — starting a run is disabled.'
+                  : 'Start the candidate run under the wired strategy config'}
+                className="disabled:border disabled:border-accent/40 disabled:bg-accent/15 disabled:text-accent"
               >
                 <Play className="size-3.5 fill-current" />
                 Launch Candidate Run (B)
               </Button>
+            )}
+            {hydrogenNotWired && !isCandidateRunning && (
+              <span className="max-w-[220px] text-right text-[11px] leading-snug text-muted">
+                Hydrogen v1.0 config not wired yet — launch disabled
+              </span>
             )}
           </div>
         }
@@ -195,17 +254,24 @@ export function AbTest() {
                 </Badge>
               </div>
               <p className="text-[14.5px] font-semibold text-fg">
-                Welch's Two-Sample <Var>t</Var>-Test: <Var>{`t = ${stats.tStatistic.toFixed(3)}`}</Var> vs <Var>{`t_{crit} = ${stats.tCritical.toFixed(3)}`}</Var> (one-tailed, <Var>{`\\alpha = ${stats.alpha}`}</Var>)
+                Welch's Two-Sample <Var>t</Var>-Test: <Var>{`t = ${stats.tStatistic.toFixed(3)}`}</Var> vs <Var>{`t_{crit} = ${stats.tCritical != null ? stats.tCritical.toFixed(3) : '—'}`}</Var> (one-tailed, <Var>{`\\alpha = ${stats.alpha}`}</Var>)
               </p>
               <p className="text-[12.5px] text-muted">
                 Observed <Var>p</Var>-value: <strong className="font-mono text-fg">{stats.pValue.toFixed(4)}</strong> · Degrees of freedom: <strong className="font-mono text-fg">{stats.degreesOfFreedom.toFixed(1)}</strong> · Cohen's <Var>d</Var>: <strong className="font-mono text-fg">{stats.cohenD.toFixed(3)}</strong>
               </p>
+              <p className="text-[12.5px] text-muted">
+                {stats.muCritical != null ? (
+                  <>Rejection boundary <Var>{`\\mu_{crit} = $${stats.muCritical.toFixed(4)}`}</Var><span className="text-faint"> — Hydrogen v1.0's mean active-window PnL must cross this to reject H0</span></>
+                ) : (
+                  <>Rejection boundary <Var>{'\\mu_{crit} pending'}</Var><span className="text-faint"> — computed once both arms have active samples</span></>
+                )}
+              </p>
             </div>
 
-            {/* Target Sample Size Progress Gauge */}
-            <div className="min-w-[260px] rounded-tile border border-line-strong bg-surface/80 p-3.5">
+            {/* Target Sample Size Progress Gauge + multi-dimensional target breakdown */}
+            <div className="min-w-[280px] rounded-tile border border-line-strong bg-surface/80 p-3.5">
               <div className="flex items-center justify-between text-[12px]">
-                <span className="font-medium text-muted">Sample Size Progress</span>
+                <span className="font-medium text-muted">Sample Size Progress (active N)</span>
                 <span className="font-mono font-bold text-fg">
                   {candidate?.samples ?? 0} / {stats.targetSampleSize} windows
                 </span>
@@ -219,6 +285,36 @@ export function AbTest() {
               <div className="mt-1.5 flex items-center justify-between text-[11px] text-faint">
                 <span>Power: 80% (1 − <Var>β</Var>)</span>
                 <span>{candidate?.progressPct ?? 0}% collected</span>
+              </div>
+              <div className="mt-2.5 space-y-1 border-t border-line/60 pt-2 font-mono text-[11px] leading-relaxed">
+                <div className="flex justify-between">
+                  <span className="font-sans text-muted">Observed (loop on, info)</span>
+                  <span className="text-fg">A {baseline?.observedWindows ?? 0} · B {candidate?.observedWindows ?? 0}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-sans text-muted">Active traded N (fills&gt;0)</span>
+                  <span className="text-fg">A {baseline?.activeWindows ?? baseline?.samples ?? 0} · B {candidate?.activeWindows ?? candidate?.samples ?? 0}/{stats.targetSampleSize}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-sans text-muted">Paired (up&amp;down &gt;0)</span>
+                  <span className="text-fg">A {baseline?.pairedWindows ?? 0} · B {candidate?.pairedWindows ?? 0}/{stats.targetPaired ?? 60}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-sans text-muted">Sub-$1.00 pairs</span>
+                  <span className="text-fg">A {baseline?.subDollarPairs ?? 0} · B {candidate?.subDollarPairs ?? 0}/{stats.targetSubDollar ?? 35}+</span>
+                </div>
+                <div className="flex justify-between text-faint">
+                  <span className="font-sans">Pair-cost buckets B</span>
+                  <span>&lt;$0.96 {candidate?.pairCostUnder096 ?? 0} · $0.96–$1.00 {candidate?.pairCost096to100 ?? 0} · &gt;$1.00 {candidate?.pairCostOver100 ?? 0}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-sans text-muted">Profitable / Losing (active)</span>
+                  <span className="text-fg">A {baseline?.wins ?? 0}W/{baseline?.losses ?? 0}L · B {candidate?.wins ?? 0}W/{candidate?.losses ?? 0}L</span>
+                </div>
+                <div className="flex justify-between text-faint">
+                  <span className="font-sans">Locked shares / pairs merged</span>
+                  <span>B {(candidate?.totalLockedShares ?? 0).toFixed(1)} / {(candidate?.pairsMerged ?? 0).toFixed(1)}</span>
+                </div>
               </div>
             </div>
           </div>
@@ -238,7 +334,7 @@ export function AbTest() {
               <AlertCircle className="size-3.5" /> Null Hypothesis (<Var>H_0</Var>)
             </span>
             <p className="mt-1.5 text-[13px] font-medium leading-relaxed text-fg">
-              <Rich text={hypotheses?.nullHypothesis ?? 'H₀: μ_v2.2 ≤ μ_v2.0 — Confidence-based sizing produces no positive statistical advantage.'} />
+              <Rich text={hypotheses?.nullHypothesis ?? 'H₀: μ_Hydrogen_v1.0 ≤ μ_DSP_v2.6 (and μ_Hydrogen_v1.0 ≤ 0) — dip-first pair-locking produces no statistically significant improvement in mean active-window PnL over DSP v2.6.'} />
             </p>
             <p className="mt-1 text-[11.5px] leading-relaxed text-muted">
               Any observed difference in window PnL is attributed to random microstructure variance or market drift.
@@ -250,10 +346,10 @@ export function AbTest() {
               <Sparkles className="size-3.5" /> Alternative Hypothesis (<Var>H_1</Var>)
             </span>
             <p className="mt-1.5 text-[13px] font-medium leading-relaxed text-fg">
-              <Rich text={hypotheses?.altHypothesis ?? 'H₁: μ_v2.2 > 0 and μ_v2.2 > μ_v2.0 — Confidence-based sizing generates a statistically significant positive expected return.'} />
+              <Rich text={hypotheses?.altHypothesis ?? 'H₁: μ_Hydrogen_v1.0 > μ_DSP_v2.6 and μ_Hydrogen_v1.0 > 0 — Hydrogen v1.0 achieves a statistically significant positive expected return per active window and outperforms DSP v2.6 at α = 0.05.'} />
             </p>
             <p className="mt-1 text-[11.5px] leading-relaxed text-muted">
-              <Rich text="Reject $H_0$ if test statistic $t \ge 1.658$ ($p \le 0.05$) upon reaching target sample size $N = 113$ windows." />
+              <Rich text={hypotheses?.decisionRule ?? 'Reject H0 only when t >= t_crit(df) (p <= 0.05) AND the candidate reaches N = 120 active windows, 60 paired windows, and 35+ sub-$1.00 pairs.'} />
             </p>
           </div>
         </div>
@@ -266,7 +362,7 @@ export function AbTest() {
           <div className="mt-2.5 grid gap-3 sm:grid-cols-3">
             <div className="rounded-[9px] border border-line bg-surface p-3">
               <div className="flex items-center justify-between">
-                <span className="font-mono text-[10.5px] font-bold text-accent">Tweak 1 · Hard Gate</span>
+                <span className="font-mono text-[10.5px] font-bold text-muted">Tweak 1 · Hard Gate</span>
                 <Badge tone="success" className="text-[10px]">{tw[0].badge}</Badge>
               </div>
               <p className="mt-1 text-[12.5px] font-semibold text-fg">{tw[0].title}</p>
@@ -277,7 +373,7 @@ export function AbTest() {
 
             <div className="rounded-[9px] border border-line bg-surface p-3">
               <div className="flex items-center justify-between">
-                <span className="font-mono text-[10.5px] font-bold text-accent">Tweak 2 · Intake</span>
+                <span className="font-mono text-[10.5px] font-bold text-muted">Tweak 2 · Intake</span>
                 <Badge tone="accent" className="text-[10px]">{tw[1].badge}</Badge>
               </div>
               <p className="mt-1 text-[12.5px] font-semibold text-fg">{tw[1].title}</p>
@@ -288,7 +384,7 @@ export function AbTest() {
 
             <div className="rounded-[9px] border border-line bg-surface p-3">
               <div className="flex items-center justify-between">
-                <span className="font-mono text-[10.5px] font-bold text-accent">Tweak 3 · Sweep</span>
+                <span className="font-mono text-[10.5px] font-bold text-muted">Tweak 3 · Sweep</span>
                 <Badge tone="info" className="text-[10px]">{tw[2].badge}</Badge>
               </div>
               <p className="mt-1 text-[12.5px] font-semibold text-fg">{tw[2].title}</p>
@@ -310,7 +406,7 @@ export function AbTest() {
                 <span className="inline-flex items-center gap-1 rounded-[6px] bg-surface-2 px-2 py-0.5 font-mono text-[11px] font-bold text-muted">
                   STRATEGY A · BASELINE
                 </span>
-                <h3 className="mt-1 text-[16px] font-semibold text-fg">{baseline?.name ?? 'DSP v2.0 (Baseline)'}</h3>
+                <h3 className="mt-1 text-[16px] font-semibold text-fg">{baseline?.name ?? 'DSP v2.6 (Baseline)'}</h3>
                 <p className="text-[12px] text-muted">{baseline?.description}</p>
               </div>
               <Badge tone="neutral">Reference Run</Badge>
@@ -370,7 +466,7 @@ export function AbTest() {
                 <span className="inline-flex items-center gap-1 rounded-[6px] bg-accent/15 px-2 py-0.5 font-mono text-[11px] font-bold text-accent">
                   STRATEGY B · CANDIDATE
                 </span>
-                <h3 className="mt-1 text-[16px] font-semibold text-fg">{candidate?.name ?? 'DSP v2.2 (Confidence Sizing)'}</h3>
+                <h3 className="mt-1 text-[16px] font-semibold text-fg">{candidate?.name ?? 'Hydrogen v1.0'}</h3>
                 <p className="text-[12px] text-muted">{candidate?.description}</p>
               </div>
               <Badge tone={isCandidateRunning ? 'success' : 'accent'}>
@@ -445,7 +541,7 @@ export function AbTest() {
               <h3 className="text-[15px] font-semibold text-fg">Comparative PnL Frequency Histogram</h3>
             </div>
             <p className="text-[12px] text-muted">
-              Auto-updating distribution: Baseline Strategy A (Slate) vs Candidate Strategy B (Emerald) across 5-minute window returns.
+              Auto-updating distribution of active-window PnL (fills &gt; 0): Baseline Strategy A (Slate) vs Candidate Strategy B (Emerald).
             </p>
           </div>
 
@@ -470,26 +566,57 @@ export function AbTest() {
               <span className={cx('size-3 rounded-[3px] bg-accent', !showB && 'bg-transparent ring-1 ring-accent')} />
               <span className={cx('font-medium text-fg', !showB && 'line-through')}>Candidate B (N={candidate?.samples ?? 0})</span>
             </button>
+            <div className="flex items-center overflow-hidden rounded-pill border border-line text-[11px]" role="group" aria-label="Histogram scale">
+              <button
+                type="button"
+                aria-pressed={normalized}
+                onClick={() => setNormalized(true)}
+                className={cx('px-2.5 py-1 transition-all', normalized ? 'bg-accent/15 font-semibold text-fg' : 'text-muted hover:bg-surface-2')}
+              >
+                Normalized %
+              </button>
+              <button
+                type="button"
+                aria-pressed={!normalized}
+                onClick={() => setNormalized(false)}
+                className={cx('px-2.5 py-1 transition-all', !normalized ? 'bg-accent/15 font-semibold text-fg' : 'text-muted hover:bg-surface-2')}
+              >
+                Raw Count
+              </button>
+            </div>
           </div>
         </div>
 
         {/* Histogram Visualization */}
         <div className="mt-6 space-y-2">
-          <div className="flex h-52 items-end gap-2 border-b border-line pb-2 pt-4">
+          <div className="relative flex h-52 items-end gap-2 border-b border-line pb-2 pt-4">
+            {/* Vertical reference lines: $0 cutoff, mu_A, mu_B, mu_crit */}
+            {refLines.map((line) => (
+              <div
+                key={line.key}
+                className="pointer-events-none absolute inset-y-0 z-10"
+                style={{ left: `${valueToXPct(line.value)}%` }}
+                title={`${line.label} at $${line.value.toFixed(2)}`}
+              >
+                <div className={line.row === 'bottom'
+                  ? 'absolute inset-x-0 bottom-0 whitespace-nowrap text-center text-[10px] font-mono font-semibold'
+                  : `absolute inset-x-0 whitespace-nowrap text-[10px] font-mono font-semibold ${line.row === 'top-0' ? 'top-0' : line.row === 'top-5' ? 'top-5' : 'top-10'}`}>
+                  <span className={line.row === 'bottom'
+                    ? '-translate-x-1/2 translate-y-1/2 rounded-pill bg-surface px-1.5 py-px text-fg shadow-xs ring-1 ring-line'
+                    : '-translate-x-1/2 rounded-pill bg-surface px-1.5 py-px text-fg shadow-xs ring-1 ring-line'}>{line.label}</span>
+                </div>
+                <div className={`absolute inset-y-6 w-px ${line.className}${line.dashed ? ' [background-image:linear-gradient(to_bottom,currentColor_55%,transparent_45%)] [background-size:1px_6px] bg-transparent' : ''}`} />
+              </div>
+            ))}
             {histogram.map((bin) => {
-              const hA = (bin.baselineCount / maxBinCount) * 100
-              const hB = (bin.candidateCount / maxBinCount) * 100
-              const isSelected = selectedBin === bin.label
+              const hA = normalized ? (bin.baselinePct / maxBinPct) * 100 : (bin.baselineCount / maxBinCount) * 100
+              const hB = normalized ? (bin.candidatePct / maxBinPct) * 100 : (bin.candidateCount / maxBinCount) * 100
               const isPositive = bin.range[0] >= 0
 
               return (
                 <div
                   key={bin.label}
-                  className={cx(
-                    'group relative flex h-full flex-1 cursor-pointer flex-col justify-end rounded-t-sm transition-colors hover:bg-surface-2/40',
-                    isSelected && 'bg-surface-2/60',
-                  )}
-                  onClick={() => setSelectedBin(bin.label)}
+                  className="group relative flex h-full flex-1 flex-col justify-end rounded-t-sm transition-colors hover:bg-surface-2/40"
                 >
                   {/* Tooltip on hover */}
                   <div className="pointer-events-none absolute -top-12 left-1/2 z-20 hidden -translate-x-1/2 whitespace-nowrap rounded-tile border border-line bg-surface px-2.5 py-1 text-[11px] shadow-sm group-hover:block">
@@ -592,7 +719,7 @@ export function AbTest() {
             <FlaskConical className="size-8 text-faint" />
             <p className="mt-2 text-[14px] font-medium text-fg">No candidate samples gathered yet</p>
             <p className="mt-1 text-[12px] text-muted">
-              Click "Launch Candidate Run (B)" above to start the live paper trading loop under the DSP v2.2 (Confidence Sizing) configuration.
+              Click "Launch Candidate Run (B)" above to start the live paper trading loop under the Hydrogen v1.0 configuration (not wired yet -- backend/UI refactor only).
             </p>
           </div>
         )}

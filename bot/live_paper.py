@@ -474,6 +474,12 @@ def trade_window(
     dip_curve = entry.get("dipCurve") or None
     rescue_ceiling = float(entry.get("rescueCeilingPrice", C.RESCUE_CEILING_PRICE))
     rescue_max_pair_cost = float(entry.get("rescuePairCostMax", C.RESCUE_PAIR_COST_MAX))
+    sweep_before = float(entry.get("sweepBeforeCloseSec", C.HARD_CUTOFF_SBC))
+    leg1_max = entry.get("leg1MaxPrice", entry.get("maxLeg1Price", entry.get("maxFillPrice", C.PRICE_CEILING)))
+    leg2_max = entry.get("leg2MaxPrice", None)
+    taker_dip_max = entry.get("takerDipEntryMax", None)
+    late_start = entry.get("lateRescueStartSec", None)
+    late_max = entry.get("lateRescueMaxPairCost", None)
 
     # Pacing parameters
     min_spacing_move = float(entry.get("minSpacingMoveSec", 0.5))
@@ -808,7 +814,7 @@ def trade_window(
 
     try:
         closed_cleanly = False
-        cutoff_sbc = min(stop_before, C.HARD_CUTOFF_SBC)
+        cutoff_sbc = min(stop_before, sweep_before, C.HARD_CUTOFF_SBC)
         end = int(slot + WINDOW_S - stop_before)  # Strategy early exit countdown (e.g. T-75s)
         sweep_end = int(slot + WINDOW_S - cutoff_sbc)  # Phase 4 hard settlement cutoff (e.g. T-12s)
         last_fill_ts = 0.0
@@ -890,6 +896,12 @@ def trade_window(
                 in_sweep_phase=in_sweep_phase,
                 rescue_ceiling=rescue_ceiling,
                 rescue_max_pair_cost=rescue_max_pair_cost,
+                leg1_max_price=(float(leg1_max) if leg1_max is not None else None),
+                leg2_max_price=(float(leg2_max) if leg2_max is not None else None),
+                taker_dip_max=(float(taker_dip_max) if taker_dip_max is not None else None),
+                late_rescue_start_sec=(float(late_start) if late_start is not None else None),
+                late_rescue_max_pair_cost=(float(late_max) if late_max is not None else None),
+                elapsed_sec=float(now - slot),
                 max_depth_shares=_depth_cap,
                 resting_size=_resting,
             )

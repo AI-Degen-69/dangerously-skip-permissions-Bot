@@ -44,6 +44,39 @@ def compute_fill_usd(
     return round(shares * price, 2), 0.0
 
 
+# Hump sizing anchors shared with bot/replay.py: fat in the middle
+# (~48.7 sh at 40-50c), thin at the extremes (~30 sh). Clamped outside.
+HUMP_ANCHORS = [(0.07, 30.0), (0.10, 30.0), (0.40, 48.7), (0.50, 48.7), (0.70, 30.0)]
+
+
+def hump_shares(price: float, max_clip: float) -> float:
+    """Piecewise-linear hump clip, clamped outside the anchors."""
+    try:
+        px = float(price)
+    except (TypeError, ValueError):
+        return 10.0
+    pts = HUMP_ANCHORS
+    if px <= pts[0][0]:
+        sh = pts[0][1]
+    elif px >= pts[-1][0]:
+        sh = pts[-1][1]
+    else:
+        sh = pts[-1][1]
+        for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+            if x0 <= px <= x1:
+                a = (px - x0) / (x1 - x0) if x1 > x0 else 0.0
+                sh = y0 + (y1 - y0) * a
+                break
+    return min(clip_shares(round(sh, 1), max_clip), max_clip)
+
+
+def is_hump_curve(dip_curve) -> bool:
+    """v2.7 hump flag: stored as the string "hump" (or {"type": "hump"})."""
+    if dip_curve == "hump":
+        return True
+    return isinstance(dip_curve, dict) and dip_curve.get("type") == "hump"
+
+
 def dip_curve_shares(curve: dict, price: float, max_clip: float) -> float | None:
     """Shares for a fresh dip from a linear inverse-dip curve, or None if the curve is unusable.
 
@@ -92,6 +125,8 @@ def select_ladder_clip(
         # Snap directly to the deficit capped at max_clip so we don't overshoot
         # or leave residual unhedged dust!
         return min(clip_shares(deficit, max_clip), max_clip)
+    if is_hump_curve(dip_curve):
+        return hump_shares(price, max_clip)
     if dip_curve:
         curve_clip = dip_curve_shares(dip_curve, price, max_clip)
         if curve_clip is not None:
@@ -181,6 +216,12 @@ def evaluate_microstructure_ladder(
     rescue_ceiling: float = C.RESCUE_CEILING_PRICE,
     max_depth_shares: float = 0.0,
     resting_size: float | dict | None = None,
+    leg1_max_price: float | None = None,
+    leg2_max_price: float | None = None,
+    taker_dip_max: float | None = None,
+    late_rescue_start_sec: float | None = None,
+    late_rescue_max_pair_cost: float | None = None,
+    elapsed_sec: float | None = None,
     **kwargs,
 ) -> MicrostructureDecision:
     """Decision Engine for Hybrid Arbitrage Pairing & Certainty Sniping.
@@ -251,6 +292,35 @@ def evaluate_microstructure_ladder(
     # the engine enforces.)
     lead_cap = max_share_lead
 
+    # --- v2.7 knob resolution (all optional; absent = pre-v2.7 behavior) ---
+    def _fnum(v):
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+    _leg1 = _fnum(leg1_max_price)
+    if _leg1 is None:
+        _leg1 = _fnum(kwargs.get("maxLeg1Price", kwargs.get("leg1MaxPrice")))
+    leg1_cap = _leg1 if _leg1 is not None else max_fill
+    _leg2 = _fnum(leg2_max_price)
+    if _leg2 is None:
+        _leg2 = _fnum(kwargs.get("leg2MaxPrice"))
+    _taker_dip = _fnum(taker_dip_max)
+    if _taker_dip is None:
+        _taker_dip = _fnum(kwargs.get("takerDipEntryMax", kwargs.get("takerDipMax")))
+    _late_start = _fnum(late_rescue_start_sec)
+    if _late_start is None:
+        _late_start = _fnum(kwargs.get("lateRescueStartSec"))
+    _late_max = _fnum(late_rescue_max_pair_cost)
+    if _late_max is None:
+        _late_max = _fnum(kwargs.get("lateRescueMaxPairCost"))
+    _elapsed = _fnum(elapsed_sec)
+    if _elapsed is None:
+        _elapsed = _fnum(kwargs.get("elapsedSec"))
+    has_late = _late_start is not None
+    in_late = bool(has_late and _elapsed is not None and _elapsed >= _late_start)
+    late_cap = _late_max if (has_late and _late_max is not None) else rescue_max_pair_cost
+
     # 1. Phase 3: Resolution Certainty Snipe in Minute 4 [0.90, 0.975]
     # Enabled exclusively for 'hapcs-v1'. Disabled for 'dangerously-skip-permissions'
     # to avoid 95¢–99¢ reversal wipeouts, and disabled in sweep phase.
@@ -308,7 +378,13 @@ def evaluate_microstructure_ladder(
             continue
         # In rescue/hedging mode (deficit > 0), allow up to rescue_ceiling (0.985)
         # to ensure open deficit-closing hedges are executed rather than facing 100% loss at resolution.
-        effective_ceiling = rescue_ceiling if (is_dsp or in_sweep_phase) else max_fill
+        # v2.7: leg2MaxPrice decouples the normal hedge ceiling from the dip band
+        # (e.g. 0.75 so $0.30+$0.62 can pair) while the late/sweep rescue keeps
+        # the full rescue ceiling.
+        if _leg2 is not None and not (in_late or in_sweep_phase):
+            effective_ceiling = _leg2
+        else:
+            effective_ceiling = rescue_ceiling if (is_dsp or in_sweep_phase or in_late) else max_fill
         if px > effective_ceiling:
             saw_ceiling = True
             continue
@@ -342,9 +418,16 @@ def evaluate_microstructure_ladder(
         # Standard: proj_pc <= max_pair_cost -> sub-$1.00 profitable pairing arbitrage.
         # Rescue: when holding a deficit in DSP or sweep phase, accepting proj_pc up to rescue_max_pair_cost (1.080)
         # locks in capital redemption, preventing a 100% loss ($0.00 redemption) on the naked leg.
-        rescue_cap = rescue_max_pair_cost if (is_dsp or in_sweep_phase) else max_pair_cost
+        # v2.7: with lateRescueStartSec set, rescue pricing only kicks in in the
+        # late window (elapsed >= start) or the sweep; before that the hard cap rules.
+        if has_late:
+            rescue_allowed = bool(in_late or in_sweep_phase)
+            rescue_cap = late_cap
+        else:
+            rescue_allowed = bool(is_dsp or in_sweep_phase)
+            rescue_cap = rescue_max_pair_cost
         is_rescue = (proj_pc is not None and proj_pc > max_pair_cost)
-        if proj_pc is None or proj_pc <= max_pair_cost or (proj_pc <= rescue_cap and exec_px <= effective_ceiling):
+        if proj_pc is None or proj_pc <= max_pair_cost or (rescue_allowed and proj_pc <= rescue_cap and exec_px <= effective_ceiling):
             shares = _cap_for_maker(shares, role, side)
             if shares <= 0:
                 saw_depth_cap = True
@@ -415,6 +498,59 @@ def evaluate_microstructure_ladder(
         px = bid if (bid is not None and bid >= min_fill) else ask
         if px is None:
             continue
+        # v2.7 taker-dip entry (fresh legs only): when the knob is set and the
+        # ask sits at/below the threshold, cross it as TAKER ahead of the maker
+        # path -- a live 5m book almost always has a restable bid, so gating on
+        # "no bid" would silently act like maker-only. Priced with the taker
+        # fee via compute_fill_usd, so slippage is never understated. Falls
+        # through to the maker path when the taker candidate fails its gates.
+        # No atomic bypass here: a fresh taker dip is never the v2.2 risk-free
+        # atomic pair, so the share-lead veto always binds.
+        if (deficit <= 0 and _taker_dip is not None and ask is not None
+                and ask >= min_fill and ask <= min(max_fill, leg1_cap)
+                and ask <= _taker_dip):
+            t_shares = select_ladder_clip(
+                deficit=0.0,
+                price=ask,
+                pair_cost=None,
+                fill_idx=fill_idx,
+                default_clip=default_clip,
+                max_clip=max_clip,
+                whole_ladder=whole_ladder,
+                current_lead=lead,
+                is_v22=is_v22,
+                atomic_arb=False,
+                is_v23=is_v23,
+                dip_curve=dip_curve,
+            )
+            t_est, _ = compute_fill_usd(t_shares, ask, role="TAKER", include_fee=True)
+            t_proj = _projected_pair_cost(inv, side, t_shares, t_est)
+            t_ok = True
+            if lead + t_shares >= lead_cap:
+                saw_unhedged_cap = True
+                t_ok = False
+            elif max_unhedged_usd > 0:
+                t_new_sh = inv[side]["shares"] + t_shares
+                t_new_cost = inv[side]["cost"] + t_est
+                t_lead_after = t_new_sh - inv[opp]["shares"]
+                if t_lead_after > 0 and (t_new_cost / t_new_sh) * t_lead_after > max_unhedged_usd:
+                    saw_unhedged_cap = True
+                    t_ok = False
+            elif not (t_proj is None or t_proj <= bench_pc):
+                saw_pair_cap = True
+                t_ok = False
+            if t_ok:
+                    return MicrostructureDecision(
+                        action="fill",
+                        outcome=side,
+                        price=round(ask, 4),
+                        shares=t_shares,
+                        role="TAKER",
+                        reason="clip-fill",
+                        sub_reason="taker-dip-entry",
+                        projected_pair_cost=t_proj,
+                        share_deficit=deficit,
+                    )
         if is_dsp and (bid is None or bid < min_fill):
             # DSP only rests bids. With no bid at or above the floor there is
             # no price to rest at, and the ask fallback would book a taker fill
@@ -425,7 +561,7 @@ def evaluate_microstructure_ladder(
         if px < min_fill:
             saw_dust = True
             continue
-        if px > max_fill:
+        if px > min(max_fill, leg1_cap):
             saw_ceiling = True
             continue
         dip_max = 0.45 if is_dsp else C.DIP_LADDER_MAX
@@ -490,7 +626,7 @@ def evaluate_microstructure_ladder(
                     share_deficit=deficit,
                 )
             saw_pair_cap = True
-        elif px <= C.STRADDLE_BAND[1] and inv["Up"]["shares"] == 0 and inv["Down"]["shares"] == 0:
+        elif px <= min(C.STRADDLE_BAND[1], leg1_cap) and inv["Up"]["shares"] == 0 and inv["Down"]["shares"] == 0:
             # Opening Straddle Leg 1 in (0.45, 0.55]. Both sides are flat, so
             # this is the at-the-money entry the ledger shows: the first leg
             # lands near 50c within ~13s of the open. The hedge is not assumed

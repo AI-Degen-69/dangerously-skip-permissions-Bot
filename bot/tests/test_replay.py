@@ -152,5 +152,41 @@ class DeterminismTests(unittest.TestCase):
         self.assertIsNone(spearman([1, 1], [2, 1]))
 
 
+def _v27base(**over):
+    e = dict(min_fill=0.07, max_fill=0.48, max_share_lead=100.0,
+             max_unhedged_usd=45.0, target_pair_cost=0.960,
+             max_pair_cost=0.985, leg1_max_price=0.48,
+             leg2_max_price=0.75, elapsed_sec=10.0,
+             dip_curve="hump", max_clip=25.0, taker_dip_max=0.45)
+    e.update(over)
+    return e
+
+
+def _quotes(up_bid, up_ask, dn_bid, dn_ask):
+    return {"Up": {"bid": up_bid, "ask": up_ask},
+            "Down": {"bid": dn_bid, "ask": dn_ask}}
+
+
+class TakerDipTests(unittest.TestCase):
+    def test_taker_dip_fires_without_hedge_guard(self):
+        # No H1/H2 guards: opposite ask 0.81 does not stop a fresh taker dip.
+        inv = {"Up": {"shares": 0.0, "cost": 0.0}, "Down": {"shares": 0.0, "cost": 0.0}}
+        d = E.evaluate_microstructure_ladder(
+            quotes=_quotes(0.40, 0.41, 0.80, 0.81), inv=inv, fill_idx=0,
+            minute=0, strategy_id="dangerously-skip-permissions-v2.7",
+            **_v27base())
+        self.assertEqual(d.role, "TAKER")
+        self.assertEqual(d.sub_reason, "taker-dip-entry")
+
+    def test_taker_dip_respects_threshold(self):
+        # best_ask above takerDipEntryMax falls through to the maker path.
+        inv = {"Up": {"shares": 0.0, "cost": 0.0}, "Down": {"shares": 0.0, "cost": 0.0}}
+        d = E.evaluate_microstructure_ladder(
+            quotes=_quotes(0.40, 0.50, 0.80, 0.81), inv=inv, fill_idx=0,
+            minute=0, strategy_id="dangerously-skip-permissions-v2.7",
+            **_v27base())
+        self.assertEqual(d.role, "MAKER")
+
+
 if __name__ == "__main__":
     unittest.main()
