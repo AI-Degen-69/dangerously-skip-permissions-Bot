@@ -66,6 +66,8 @@ The command center for analyzing execution performance across settled windows.
   - Visual chart of your cumulative paper bankroll trajectory.
 - **Rebate Toggle (`Net before rebates` card):**
   - Switches taker and maker rebates in or out of the P&L. Off, the net, win rate, expectancy, profit factor, Sharpe, the window log and the chart all fall back to price alone, and the rebate cards show what is being left out.
+- **Verified Only Switch (chart card):**
+  - Counts only the fills the tape verifier confirmed against real trade prints. Every window is recomputed from its verified fills, and a window without a verified fill drops out of the view entirely. Taker fills are never verified in paper mode, so they fall away with the unconfirmed makers — the resulting P&L is a subset, not a correction.
 - **Timeframe Filter (below the chart):**
   - `1H · 12H · 1D · 1W · 1M · All` scopes the KPI cards, the chart, the window bars and the window log to that trailing window. The chart is re-based on the capital held when the window opened, so the curve starts where the account actually stood.
 - **Settled Windows Table:**

@@ -6,6 +6,7 @@ import assert from 'node:assert/strict'
 import type { PerfWindow } from '../src/app/lib/bot'
 import { computeKpiStats } from '../src/app/lib/kpiStats'
 import { scopeWindows, timeframeStart, TIMEFRAMES } from '../src/app/lib/timeframes'
+import { verifiedWindow } from '../src/app/lib/verified'
 
 const MINUTE = 60_000
 const NOW = 1_700_000_000_000
@@ -75,5 +76,43 @@ const scopedStats = computeKpiStats(
 )
 assert.equal(scopedStats.currentCapital, hour.baseCapital + scopedStats.netUsd)
 assert.equal(scopedStats.netUsd, -2 + (0.5 * 10 + 0.2 * 50))
+
+// Verified Only: a window carries the numbers its verified fills make, and a
+// window without a verified fill drops out of the view entirely.
+const verified: PerfWindow = {
+  ...win(NOW - 30 * MINUTE, -2, 10, 50),
+  trades: 6,
+  costUsd: 30,
+  payoutUsd: 28,
+  upFills: 3,
+  downFills: 3,
+  verified: {
+    trades: 2,
+    costUsd: 9,
+    payoutUsd: 4,
+    netUsd: -5,
+    feesUsd: 0,
+    makerFeeBaseUsd: 1.5,
+    upFills: 1,
+    downFills: 1,
+    zeroPriceFills: 0,
+  },
+}
+const only = verifiedWindow(verified)
+assert.ok(only)
+assert.equal(only.trades, 2)
+assert.equal(only.costUsd, 9)
+assert.equal(only.payoutUsd, 4)
+assert.equal(only.netUsd, -5)
+assert.equal(only.feesUsd, 0)
+assert.equal(only.makerFeeBaseUsd, 1.5)
+assert.equal(only.bothSides, true)
+
+// No verified fill means nothing to count.
+assert.equal(verifiedWindow({ ...verified, verified: { ...verified.verified!, trades: 0 } }), null)
+assert.equal(verifiedWindow({ ...verified, verified: undefined }), null)
+
+// A pending window has no settlement yet, so its verified net stays open.
+assert.equal(verifiedWindow({ ...verified, pending: true })?.netUsd, null)
 
 console.log('pnl scope ok')
