@@ -27,6 +27,8 @@ export interface InteractivePnlChartProps {
   startingCapital: number
   hoveredSlug?: string | null
   onHoverWindow?: (window: PerfWindow | null) => void
+  /** Baseline caption: the real starting capital, or the base of a scoped view. */
+  baseLabel?: string
   className?: string
 }
 
@@ -64,6 +66,7 @@ export function InteractivePnlChart({
   startingCapital,
   hoveredSlug,
   onHoverWindow,
+  baseLabel = 'Starting capital',
   className,
 }: InteractivePnlChartProps) {
   const chartId = useId()
@@ -231,7 +234,7 @@ export function InteractivePnlChart({
       <span className="sr-only" aria-live="polite">
         {activePoint
           ? activePoint.isStart
-            ? `Starting capital: ${usd(startingCapital)}`
+            ? `${baseLabel}: ${usd(startingCapital)}`
             : `${activePoint.slug}: Capital ${usd(activePoint.capital)}, Total Return ${activePoint.cumNet >= 0 ? '+' : ''}${usd(activePoint.cumNet)}${startingCapital > 0 ? `, ${(((activePoint.capital - startingCapital) / startingCapital) * 100).toFixed(1)}%` : ''}`
           : ''}
       </span>
@@ -360,7 +363,7 @@ export function InteractivePnlChart({
             fill="var(--color-muted)"
             className="font-mono"
           >
-            Starting capital ({usd(startingCapital)})
+            {baseLabel} ({usd(startingCapital)})
           </text>
         </g>
 
@@ -525,12 +528,12 @@ export function InteractivePnlChart({
           {activePoint.isStart ? (
             <div>
               <div className="flex items-center justify-between border-b border-line pb-2">
-                <span className="text-[12px] font-semibold text-fg">Starting Capital</span>
+                <span className="text-[12px] font-semibold text-fg">{baseLabel}</span>
                 <Badge tone="neutral">Base</Badge>
               </div>
               <p className="mt-2 text-[20px] font-bold text-fg tabular-nums">{usd(startingCapital)}</p>
               <p className="mt-1 text-[11.5px] text-muted">
-                Initial trading bankroll before first window opened at {windowTime(activePoint.ts)}.
+                Trading capital before the first window in this view, opened at {windowTime(activePoint.ts)}.
               </p>
             </div>
           ) : activePoint.window ? (

@@ -20,6 +20,8 @@ export interface CalculatedKpis {
   netBeforeRebateUsd: number
   rebatesPerWindow: number
   rebateRate: number
+  /** Whether the rebate credit counted towards netUsd. */
+  rebatesCounted: boolean
 
   // Core KPIs
   winRate: number
@@ -95,25 +97,29 @@ export function computeKpiStats(
   startingCapital: number = 1000,
   apiSummary?: BotPerf['summary'],
   tierRate: number = 0,
+  includeRebates: boolean = true,
 ): CalculatedKpis {
   const settled = windows.filter((w) => !w.pending)
   const pending = windows.filter((w) => w.pending)
 
   // The paper run already charges the taker fee inside costUsd, so a rebate only
   // ever adds to a window's net. Tier rate scales the taker side; the maker side
-  // is a fixed share of the fees its fills were matched against.
-  const netOf = (w: PerfWindow) => (w.netUsd ?? 0) + windowRebate(w, tierRate)
+  // is a fixed share of the fees its fills were matched against. The toggle can
+  // take the credit away again, and every stat below then reads the same way.
+  const rebateOf = (w: PerfWindow) => (includeRebates ? windowRebate(w, tierRate) : 0)
+  const netOf = (w: PerfWindow) => (w.netUsd ?? 0) + rebateOf(w)
 
   const feesUsd = settled.reduce((sum, w) => sum + (w.feesUsd ?? 0), 0)
   const takerRebateUsd = tierRate * feesUsd
   const makerRebateUsd =
     MAKER_REBATE_SHARE * settled.reduce((sum, w) => sum + (w.makerFeeBaseUsd ?? 0), 0)
+  // What the account earned, whether or not the toggle counts it.
   const rebatesUsd = takerRebateUsd + makerRebateUsd
   const netBeforeRebateUsd =
     settled.length > 0
       ? settled.reduce((sum, w) => sum + (w.netUsd ?? 0), 0)
       : (apiSummary?.netUsd ?? 0)
-  const netUsd = netBeforeRebateUsd + rebatesUsd
+  const netUsd = netBeforeRebateUsd + (includeRebates ? rebatesUsd : 0)
 
   const costUsd = apiSummary?.costUsd ?? settled.reduce((sum, w) => sum + w.costUsd, 0)
   const payoutUsd = apiSummary?.payoutUsd ?? settled.reduce((sum, w) => sum + w.payoutUsd, 0)
@@ -262,6 +268,7 @@ export function computeKpiStats(
     netBeforeRebateUsd,
     rebatesPerWindow: settled.length > 0 ? rebatesUsd / settled.length : 0,
     rebateRate: tierRate,
+    rebatesCounted: includeRebates,
 
     winRate,
     lossRate,

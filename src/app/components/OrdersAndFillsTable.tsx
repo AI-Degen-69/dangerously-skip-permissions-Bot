@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Badge, Card, EmptyState } from './ui'
 import { cx } from '../lib/cx'
 import type { BotTrade } from '../lib/bot'
-import { classifyFill, rebateFor, takerFeePerShare, useAccountTier } from '../lib/rebates'
+import { classifyFill, rebateFor, takerFeePerShare, useAccountTier, useIncludeRebates } from '../lib/rebates'
 import { buildWindows, resolveWindowIndex, slotOfSlug, windowSlotOf } from '../lib/windows'
 
 const money = (value: number | null | undefined) =>
@@ -46,6 +46,7 @@ export interface OrdersAndFillsProps {
 
 export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsProps) {
   const [tier] = useAccountTier()
+  const [includeRebates] = useIncludeRebates()
   const [typeFilter, setTypeFilter] = useState<'all' | 'maker' | 'taker'>('all')
   const [sideFilter, setSideFilter] = useState<'all' | 'Up' | 'Down'>('all')
   // null = follow the running window; a slot pins the view to that window.
@@ -99,7 +100,7 @@ export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsP
           </div>
           <p className="text-[12px] text-muted">
             Execution logs with millisecond timestamps, Maker/Taker routing, fees and rebates at {tier.name} (
-            {Math.round(tier.rate * 100)}%).
+            {Math.round(tier.rate * 100)}%){includeRebates ? '' : ' · rebates excluded from the P&L'}.
           </p>
         </div>
 
@@ -231,7 +232,9 @@ export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsP
                         ? trade.shares * takerFeePerShare(trade.price)
                         : null
                 const rebateUsd =
-                  feeUsd == null ? null : rebateFor(trade.price, trade.shares, !!isMaker, tier.rate, feeUsd)
+                  !includeRebates || feeUsd == null
+                    ? null
+                    : rebateFor(trade.price, trade.shares, !!isMaker, tier.rate, feeUsd)
                 const tapeStatus = (detail?.tapeStatus as string | undefined) ?? undefined
                 const statusLabel = isSettled
                   ? 'Settled'
