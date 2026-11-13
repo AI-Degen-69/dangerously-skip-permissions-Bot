@@ -51,6 +51,7 @@ from bot.executor import (
     compute_fill_usd,
     evaluate_microstructure_ladder,
 )
+from bot.fill_audit import audit_window, load_prints
 from bot.risk import RiskState, assert_single_window, check_window, clip_shares, heartbeat
 from bot.runs import RunWorkspace, find_run_id, get_active_run_id, make_run_id, set_active_run_id
 from bot.signal import LeanSignal
@@ -264,6 +265,24 @@ def live_bid_price(c: PublicClient, token_id: str, streamer: LiveBookStreamer | 
         except Exception:
             pass
     return None
+
+
+def live_queue_ahead(streamer: LiveBookStreamer | None, token_id: str, price: float) -> float | None:
+    """Shares already resting at `price` - the queue a new bid joins at the back.
+
+    None when the book has no level data for the token, so the auditor can tell
+    "nobody was ahead" from "the level could not be seen".
+    """
+    if streamer is None:
+        return None
+    try:
+        with streamer._lock:
+            book = streamer.books.get(str(token_id))
+            if book is None:
+                return None
+            return float(book.bids.get(price, 0.0))
+    except Exception:
+        return None
 
 
 def live_quote_pair(
@@ -580,6 +599,7 @@ def trade_window(
         return None
 
     try:
+        closed_cleanly = False
         cutoff_sbc = min(stop_before, C.HARD_CUTOFF_SBC)
         end = int(slot + WINDOW_S - stop_before)  # Strategy early exit countdown (e.g. T-75s)
         sweep_end = int(slot + WINDOW_S - cutoff_sbc)  # Phase 4 hard settlement cutoff (e.g. T-12s)
@@ -750,6 +770,10 @@ def trade_window(
                 "detail": {
                     "minute": minute,
                     "role": role,
+                    # What a real bid at this price would have queued behind.
+                    "queueAhead": live_queue_ahead(
+                        streamer, spec.up_token_id if outcome == "Up" else spec.down_token_id, px
+                    ) if role == "MAKER" else None,
                     "subReason": decision.sub_reason,
                     "feeUsd": fee_usd,
                     "pairCost": pair_cost,
@@ -771,10 +795,18 @@ def trade_window(
             write_state(slug, end_ms, started_ms, fills,
                         ws_status=streamer.get_status(), recent_ticks=streamer.get_recent_ticks(30))
             streamer.wait_for_tick(timeout=0.25)
+        closed_cleanly = True
     finally:
         stop_sync.set()
         sync_thread.join(timeout=1.0)
         verify_thread.join(timeout=2.0)
+        # The audit reads this window's tape to its end. The trading loop exits
+        # early (hedged, or at the settlement cutoff), so keep recording until
+        # the window closes or a late SELL would read as no flow at all.
+        if _tape_on and closed_cleanly:
+            left = float(slot) + C.WINDOW_S - time.time()
+            if left > 0:
+                time.sleep(min(left, float(C.WINDOW_S)))
         streamer.stop()
 
     # --- Final tape verification pass (definitive, all prints available) ---
@@ -797,6 +829,7 @@ def trade_window(
     result = {
         "event_slug": slug,
         "market": spec.question or slug,
+        "condition_id": spec.condition_id,
         "trades": len(fills),
         "cost_usd": round(cost, 2),
         "payout_usd": None,
@@ -834,6 +867,10 @@ def trade_window(
     snap = {
         "slug": slug,
         "market": spec.question or slug,
+        "condition_id": spec.condition_id,
+        # The auditor reads this window's prints back after resolution.
+        "tapeDir": str(_tape_dir) if _tape_dir else None,
+        "slot": slot,
         "fills": fills,
         "cost": round(cost, 2),
         "strategy": C.STRATEGY_ID,
@@ -879,9 +916,28 @@ def settle_slug(slug: str, snap: dict, origin: str | None, budget_s: int = 900) 
         wshares = sum(f["shares"] for f in fills if f["outcome"] == winner)
         payout = round(wshares * 1.0, 2)
         net = round(payout - cost, 2)
+
+    # The definitive read of the fills: a maker fill only counts when the tape
+    # shows enough taker selling behind the queue that was actually resting.
+    # Resolution is when the window's tape is complete, so this is the number
+    # to trust over the assumed paper one.
+    fidelity = None
+    if winner and snap.get("tapeDir") and snap.get("slot"):
+        try:
+            fidelity = audit_window(
+                fills,
+                load_prints(Path(snap["tapeDir"])),
+                float(snap["slot"]),
+                winner,
+                snap.get("condition_id"),
+            )
+        except (OSError, ValueError):
+            fidelity = None
+
     result = {
         "event_slug": slug,
         "market": snap.get("market", slug),
+        "condition_id": snap.get("condition_id"),
         "trades": len(fills),
         "cost_usd": cost,
         "payout_usd": payout,
@@ -895,6 +951,7 @@ def settle_slug(slug: str, snap: dict, origin: str | None, budget_s: int = 900) 
         "taker_fills": snap.get("taker_fills"),
         "fees_usd": snap.get("fees_usd"),
         "pair_cost": snap.get("pair_cost"),
+        "fidelity": fidelity,
     }
     if winner:
         result.pop("pending", None)

@@ -57,10 +57,18 @@ against the recorded prints:
 ```sh
 python bot/verify_run.py --dry-run   # report the coverage, change nothing
 python bot/verify_run.py             # re-stamp every settled window
+python bot/verify_run.py --audit     # re-stamp, and record what could actually fill
 ```
 
 It rewrites only the `detail.tapeStatus` fields of the fills; cost, payout and
 net are untouched.
+
+`--audit` writes each window's `fidelity`: the same fills judged by the only
+trade that can fill a resting bid — a taker SELL at or below the limit, after
+the fill. When the loop recorded `detail.queueAhead` (the size already resting
+at that price), the flow has to outlast it; older fills pass on sell size alone,
+so their attainable number is an upper bound. Taker fills always count. The
+desk shows the result as the "attainable" number beside the net, before rebates.
 
 ## Kill-switch drill (verified 2026-11-07)
 
