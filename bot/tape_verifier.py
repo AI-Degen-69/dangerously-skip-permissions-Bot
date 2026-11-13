@@ -34,7 +34,7 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _fill_epoch_s(fill: dict) -> float:
+def fill_epoch_s(fill: dict) -> float:
     """Extract fill timestamp as epoch seconds."""
     ts = fill.get("ts", 0)
     if isinstance(ts, (int, float)):
@@ -88,7 +88,7 @@ def verify_single_fill(
     if now_s is None:
         now_s = time.time()
 
-    fill_ts_s = _fill_epoch_s(fill)
+    fill_ts_s = fill_epoch_s(fill)
     detail = fill.get("detail") or {}
     role = str(detail.get("role", "")).upper()
     outcome = fill.get("outcome")
@@ -169,7 +169,7 @@ def verify_fills(
 
     # Determine window bounds from fills if not provided
     if window_start_s <= 0:
-        fill_times = [_fill_epoch_s(f) for f in fills]
+        fill_times = [fill_epoch_s(f) for f in fills]
         window_start_s = min(fill_times) - 10  # small lookback
     if window_end_s <= 0:
         window_end_s = time.time() + 60  # future buffer for live windows

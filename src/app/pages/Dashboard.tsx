@@ -16,7 +16,7 @@ import { BotControlTile } from '../components/BotControlTile'
 import { InteractivePnlChart } from '../components/InteractivePnlChart'
 import { BOT_ORIGIN, useBotControl, useBotPerf, useRedeemBot, useStrategySetups, mergeStrategySetups } from '../lib/bot'
 import { STRATEGY_PRESETS } from '../botDefaults'
-import type { BotPerf, PerfGate, PerfWindow, StrategySetup } from '../lib/bot'
+import type { BotPerf, PerfGate, PerfWindow, StrategySetup, WindowFidelity } from '../lib/bot'
 import { computeKpiStats } from '../lib/kpiStats'
 import { ACCOUNT_TIERS, useAccountTier, useIncludeRebates, windowRebate } from '../lib/rebates'
 import type { AccountTier } from '../lib/rebates'
@@ -35,6 +35,25 @@ function windowLabel(slug: string | null): string {
   if (!slug) return '—'
   const epoch = Number(slug.split('-').pop())
   return Number.isFinite(epoch) ? windowTime(epoch * 1000) : slug
+}
+
+/**
+ * The same slice judged by what a real resting bid could have got: a maker fill
+ * only counts when taker selling at its limit outlasted the queue ahead of it.
+ * Windows the auditor could not read carry no fidelity and drop out of both
+ * sides, so the number never mixes judged and unjudged windows.
+ */
+function attainableOf(windows: PerfWindow[]) {
+  const audited = windows.filter((window) => window.fidelity)
+  const sum = (pick: (f: WindowFidelity) => number) =>
+    audited.reduce((total, window) => total + (window.fidelity ? pick(window.fidelity) : 0), 0)
+  return {
+    windows: audited.length,
+    netUsd: sum((f) => f.attainableNetUsd),
+    makerFills: sum((f) => f.makerFills),
+    attainableFills: sum((f) => f.attainableFills),
+    phantomFills: sum((f) => f.phantomFills),
+  }
 }
 
 const GATE_TONE: Record<PerfGate['status'], 'success' | 'warning' | 'danger' | 'neutral'> = {
@@ -121,6 +140,7 @@ export function Dashboard() {
     includeRebates,
   )
   const currentCapital = stats.currentCapital
+  const attainable = attainableOf(scoped.windows)
   // The gate judges the run as it was traded, not the verified subset.
   const gateJudged = allSettled.length >= (data?.targets.windows ?? 288)
   const setupsQuery = useStrategySetups()
@@ -425,6 +445,23 @@ export function Dashboard() {
                 <Badge tone="warning" className="text-[11px]">
                   rebates excluded
                 </Badge>
+              )}
+              {!verifiedOnly && attainable.windows > 0 && (
+                <span
+                  className={cx(
+                    'tabular-nums text-[12.5px] font-semibold',
+                    attainable.netUsd >= 0 ? 'text-success' : 'text-danger',
+                  )}
+                  title={
+                    'Net if every maker fill needed real taker selling at its limit, behind the queue resting at that price where it was recorded, before rebates. ' +
+                    `${attainable.attainableFills.toLocaleString('en-US')} of ${attainable.makerFills.toLocaleString('en-US')} maker fills survive ` +
+                    `across ${attainable.windows.toLocaleString('en-US')} of ${scoped.windows.length.toLocaleString('en-US')} settled windows.`
+                  }
+                >
+                  <span className="mr-1 text-[11px] font-normal text-faint">attainable</span>
+                  {attainable.netUsd >= 0 ? '+' : ''}
+                  {usd(attainable.netUsd)}
+                </span>
               )}
               <span className="text-[11.5px] text-faint">
                 {stats.settled} settled window{stats.settled === 1 ? '' : 's'} · {stats.winsCount} profitable
@@ -1010,13 +1047,28 @@ function CorroborationNote({ windows }: { windows: PerfWindow[] }) {
     (sum, w) => sum + Math.max(0, (w.payoutUsd ?? 0) - (w.verified?.payoutUsd ?? 0)),
     0,
   )
+  // The queue check answers a narrower question than the tape check: not "did
+  // this price trade" but "could our order have got filled while it did".
+  const audited = windows.filter((w) => w.fidelity)
+  const auditedMaker = audited.reduce((sum, w) => sum + (w.fidelity?.makerFills ?? 0), 0)
+  const attainable = audited.reduce((sum, w) => sum + (w.fidelity?.attainableFills ?? 0), 0)
+  const phantom = audited.reduce((sum, w) => sum + (w.fidelity?.phantomFills ?? 0), 0)
   if (maker === 0 && taker === 0) return null
   const pct = maker > 0 ? (100 * corroborated) / maker : 0
+  const attainablePct = auditedMaker > 0 ? (100 * attainable) / auditedMaker : 0
   const n = (value: number) => value.toLocaleString('en-US')
   return (
     <p className="mt-1.5 text-[11.5px] text-faint">
       The tape corroborates {n(corroborated)} of {n(maker)} maker fills ({pct.toFixed(1)}%)
-      {maker - corroborated > 0 && <> · {n(maker - corroborated)} never traded at their limit</>}
+      {auditedMaker > 0 ? (
+        <>
+          {' '}
+          · {n(attainable)} of the {n(auditedMaker)} audited could actually fill (
+          {attainablePct.toFixed(1)}%), {n(phantom)} never could
+        </>
+      ) : (
+        maker - corroborated > 0 && <> · {n(maker - corroborated)} never traded at their limit</>
+      )}
       {taker > 0 && <> · {n(taker)} taker fills cannot be checked in paper mode</>}
       {uncorroboratedPayout > 0 && <> · {usd(uncorroboratedPayout)} of payout rests on the rest</>}
     </p>

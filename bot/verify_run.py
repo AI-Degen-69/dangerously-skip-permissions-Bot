@@ -9,10 +9,15 @@ writes the stamps back, so the view covers the whole run.
 
     python bot/verify_run.py --dry-run     # report only, change nothing
     python bot/verify_run.py               # re-stamp the active run
+    python bot/verify_run.py --audit       # also stamp what could actually fill
 
 A fill is confirmed by prints at or below its limit price inside its own
 window, totalling at least the clip size - the same rule the live verifier
 uses, with the window's own bounds instead of "everything up to now".
+
+``--audit`` goes one step further and writes each window's ``fidelity``: the
+same fills judged by sell-side flow against the queue that was resting ahead,
+so the desk can show the paper net beside the net a real order could have got.
 """
 
 from __future__ import annotations
@@ -26,6 +31,7 @@ if __package__ in (None, ""):  # allow `python bot/verify_run.py`
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from bot import constants as C
+from bot.fill_audit import audit_window, load_prints
 from bot.runs import resolve_run_workspace
 from bot.tape_verifier import verify_fills
 
@@ -45,6 +51,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", default=None, help="run to verify (default: the active run)")
     parser.add_argument("--dry-run", action="store_true", help="report without writing")
+    parser.add_argument("--audit", action="store_true", help="also stamp each window's attainable P&L")
     args = parser.parse_args()
 
     ws = resolve_run_workspace(args.run_id)
@@ -58,6 +65,10 @@ def main() -> int:
         return 1
 
     files = sorted(ws.windows_dir.glob("*.json"))
+    # Loaded once: the auditor slices it per window, and the run holds ~200k
+    # prints, so per-window reloads would dominate the backfill.
+    prints = load_prints(tape_dir) if args.audit else None
+    audited: list[dict] = []
     before = {"verified": 0, "partial": 0, "unverified": 0, "unverified-taker": 0, "none": 0}
     after = dict(before)
     changed_windows = 0
@@ -99,6 +110,12 @@ def main() -> int:
         if before_counts != after_counts:
             changed_windows += 1
 
+        if prints is not None:
+            fidelity = audit_window(fills, prints, float(epoch), record.get("winner"))
+            if fidelity is not None:
+                record["fidelity"] = fidelity
+                audited.append(fidelity)
+
         if not args.dry_run:
             path.write_text(json.dumps(record, indent=2), encoding="utf-8")
 
@@ -119,6 +136,13 @@ def main() -> int:
     if checked:
         print(f"confirmed: {after.get('verified', 0)}/{checked} of the checked fills"
               f" ({100 * after.get('verified', 0) / checked:.1f}%)")
+    if prints is not None:
+        maker = sum(a["makerFills"] for a in audited)
+        kept = sum(a["attainableFills"] for a in audited)
+        net = sum(a["attainableNetUsd"] for a in audited)
+        print(f"audited  : {len(audited)} windows, {kept}/{maker} maker fills could have filled"
+              f" - attainable net ${net:+.2f}"
+              + (" (dry run, nothing written)" if args.dry_run else ""))
     return 0
 
 

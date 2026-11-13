@@ -952,6 +952,9 @@ def _window_row(r: dict) -> dict:
             "zeroPriceFills": v_zero,
         },
         "verifiedMShape": _minute_shape(verified_fills),
+        # What the auditor found once the window resolved: None when the tape
+        # held no print for it, so the desk can tell "not judged" from "zero".
+        "fidelity": r.get("fidelity"),
     }
 
 
@@ -1222,6 +1225,31 @@ def perf() -> dict:
     up_win_rate = round(up_wins / len(up_windows), 4) if up_windows else 0.0
     down_win_rate = round(down_wins / len(down_windows), 4) if down_windows else 0.0
 
+    # Attainable view: the same windows judged by what a real resting bid could
+    # have got behind the queue that was actually there. Windows the auditor
+    # could not read (no prints) carry no fidelity and drop out of both sides,
+    # so the two numbers always cover the same slice.
+    audited = [w["fidelity"] for w in settled if w.get("fidelity")]
+    a_maker = sum(int(f.get("makerFills") or 0) for f in audited)
+    a_fills = sum(int(f.get("attainableFills") or 0) for f in audited)
+    a_phantom = sum(int(f.get("phantomFills") or 0) for f in audited)
+    a_cost = round(sum(_num(f.get("attainableCostUsd")) for f in audited), 2)
+    a_payout = round(sum(_num(f.get("attainablePayoutUsd")) for f in audited), 2)
+    a_assumed = round(sum(_num(f.get("assumedShares")) for f in audited), 2)
+    a_kept = round(sum(_num(f.get("attainableShares")) for f in audited), 2)
+    attainable = {
+        "windows": len(audited),
+        "makerFills": a_maker,
+        "attainableFills": a_fills,
+        "phantomFills": a_phantom,
+        "queueKnownFills": sum(int(f.get("queueKnown") or 0) for f in audited),
+        "costUsd": a_cost,
+        "payoutUsd": a_payout,
+        "netUsd": round(a_payout - a_cost, 2),
+        "fillRate": round(a_fills / a_maker, 4) if a_maker else 0.0,
+        "shareRate": round(a_kept / a_assumed, 4) if a_assumed else 0.0,
+    }
+
     strat = cfg.get("strategy", {})
     strat_id = strat.get("id", C.STRATEGY_ID)
     strat_sym = strat.get("symbol", C.STRATEGY_SYMBOL)
@@ -1289,6 +1317,7 @@ def perf() -> dict:
             "downNetUsd": down_net,
             "upWinRate": up_win_rate,
             "downWinRate": down_win_rate,
+            "attainable": attainable,
         },
         "targets": {
             "windows": C.NUM_WINDOWS_24H,

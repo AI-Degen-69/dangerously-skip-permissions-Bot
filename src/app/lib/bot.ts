@@ -299,6 +299,8 @@ export interface PerfWindow {
   feesUsd?: number
   /** Taker fees on the maker fills, the pool a maker rebate is drawn from. */
   makerFeeBaseUsd?: number
+  /** What the fill auditor found once the window resolved; null when unaudited. */
+  fidelity?: WindowFidelity | null
   /** The same window recomputed from the fills the tape verifier confirmed. */
   verified?: {
     trades: number
@@ -311,6 +313,24 @@ export interface PerfWindow {
     downFills: number
     zeroPriceFills: number
   }
+}
+
+/**
+ * The window measured by what a real resting bid could have got, not by what
+ * the price touched: a maker fill needs taker selling at or below its limit
+ * that outlasts the queue already resting at that level.
+ */
+export interface WindowFidelity {
+  makerFills: number
+  attainableFills: number
+  phantomFills: number
+  /** Maker fills where the queue ahead was recorded at fill time. */
+  queueKnown: number
+  assumedShares: number
+  attainableShares: number
+  attainableCostUsd: number
+  attainablePayoutUsd: number
+  attainableNetUsd: number
 }
 
 export interface PerfNote {
@@ -376,6 +396,19 @@ export interface BotPerf {
     downNetUsd?: number
     upWinRate?: number
     downWinRate?: number
+    /** The run judged by what a real resting bid could have got, pre-rebate. */
+    attainable?: {
+      windows: number
+      makerFills: number
+      attainableFills: number
+      phantomFills: number
+      queueKnownFills: number
+      costUsd: number
+      payoutUsd: number
+      netUsd: number
+      fillRate: number
+      shareRate: number
+    }
   }
   targets: {
     windows: number

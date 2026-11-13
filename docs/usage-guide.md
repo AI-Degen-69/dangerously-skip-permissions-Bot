@@ -70,6 +70,11 @@ The command center for analyzing execution performance across settled windows.
   - Counts only the fills the recorded trade prints corroborate — a maker fill at limit L is confirmed when the tape printed at least the clip's size at or below L inside that window. Every window is recomputed from its confirmed fills, and a window without one drops out of the view entirely. Taker fills cannot be checked in paper mode (there is no real book) and the fills the market never traded drop out too, so read the number as a **lower bound**, not an estimate.
   - The line under the chart says how much of the tape is corroborated: confirmed maker fills vs all maker fills, the fills that never traded, the taker fills that cannot be checked, and how much payout rests on them.
   - The verifier only stamps the window the loop is trading. After a run that started before the verifier existed, re-stamp the whole run against the recorded prints with `python bot/verify_run.py` (see `bot/RUNBOOK.md`), otherwise the view covers a slice of the tape instead of the tape.
+- **Attainable P&L (chart card header):**
+  - The second number beside the net is what the same windows would have made if a maker fill really had to be filled: taker **SELL** prints at or below the limit, after the fill, carrying more size than the queue already resting at that price. Prints record the taker side, so a BUY print never fills a resting bid.
+  - Taker fills always count (they take the ask); the gap between the two numbers is entirely maker fills that could never have filled. Hover it for the count of surviving fills and how many windows the auditor covered.
+  - It is **before rebates**, so turn the rebate switch off to compare it with the net beside it. A window whose tape holds no print at all is left out of both sides — silence is not proof that nothing traded.
+  - The line under the chart says the same thing in counts: how many maker fills could actually fill, and how many never could.
 - **Timeframe Filter (below the chart):**
   - `1H · 12H · 1D · 1W · 1M · All` scopes the KPI cards, the chart, the window bars and the window log to that trailing window. The chart is re-based on the capital held when the window opened, so the curve starts where the account actually stood.
 - **Settled Windows Table:**

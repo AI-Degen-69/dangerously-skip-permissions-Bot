@@ -53,6 +53,7 @@ class LivePaperLoopTests(unittest.TestCase):
         mock_spec = MagicMock()
         mock_spec.up_token_id = "tok_up"
         mock_spec.down_token_id = "tok_down"
+        mock_spec.condition_id = "0xcondition"
         mock_spec.question = "Will BTC be up?"
         mock_get_window.return_value = mock_spec
 
@@ -110,6 +111,7 @@ class LivePaperLoopTests(unittest.TestCase):
         mock_spec = MagicMock()
         mock_spec.up_token_id = "tok_up"
         mock_spec.down_token_id = "tok_down"
+        mock_spec.condition_id = "0xcondition"
         mock_spec.question = "Will BTC be up?"
         mock_get_window.return_value = mock_spec
 
@@ -254,6 +256,7 @@ class LivePaperLoopTests(unittest.TestCase):
         mock_spec = MagicMock()
         mock_spec.up_token_id = "tok_up"
         mock_spec.down_token_id = "tok_down"
+        mock_spec.condition_id = "0xcondition"
         mock_spec.question = "Will BTC be up?"
         mock_get_window.return_value = mock_spec
 
@@ -435,6 +438,7 @@ class LivePaperLoopTests(unittest.TestCase):
         mock_spec = MagicMock()
         mock_spec.up_token_id = "tok_up"
         mock_spec.down_token_id = "tok_down"
+        mock_spec.condition_id = "0xcondition"
         mock_spec.question = "Will BTC be up?"
 
         mock_client = MagicMock()
@@ -503,6 +507,7 @@ class LivePaperLoopTests(unittest.TestCase):
         mock_spec = MagicMock()
         mock_spec.up_token_id = "tok_up"
         mock_spec.down_token_id = "tok_down"
+        mock_spec.condition_id = "0xcondition"
 
         mock_client = MagicMock()
         mock_client.get_price.return_value = "0.50"
