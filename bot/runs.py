@@ -401,6 +401,7 @@ class RunWorkspace:
                     data["net_usd"] = net
                     data.pop("pending", None)
                     data["resolvedAt"] = utc_now_iso()
+                    self._audit_record(data, winner)
                     p.write_text(json.dumps(data, indent=2), encoding="utf-8")
                     if dest.exists():
                         (dest / p.name).write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -409,6 +410,33 @@ class RunWorkspace:
             except Exception:
                 continue
         return resolved_slugs
+
+    def _audit_record(self, data: dict[str, Any], winner: str) -> None:
+        """Stamp what the window's own tape could actually have filled.
+
+        A window resolved outside the trading loop (crash recovery, desk restart)
+        would otherwise carry a net with no fidelity, and the desk's attainable
+        view would silently drop it.
+        """
+        from bot import constants as C
+        from bot.fill_audit import attainable_indexes, audit_window
+        from bot.tape_verifier import load_prints_for_window
+
+        try:
+            start = float(int(str(data.get("event_slug") or "").split("-")[-1]))
+        except (TypeError, ValueError):
+            return
+        fills = data.get("fills") or []
+        if not fills:
+            return
+        try:
+            prints = load_prints_for_window(self.tape_dir, start, start + C.WINDOW_S)
+        except OSError:
+            return
+        cid = data.get("condition_id")
+        for i, ok in (attainable_indexes(fills, prints, cid) or {}).items():
+            fills[i].setdefault("detail", {})["attainable"] = ok
+        data["fidelity"] = audit_window(fills, prints, start, winner, cid)
 
 
 def find_run_id(query: str, runs_root: Path = RUNS_DIR) -> str | None:

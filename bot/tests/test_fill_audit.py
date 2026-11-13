@@ -2,7 +2,7 @@
 
 import unittest
 
-from bot.fill_audit import audit_window, role_of
+from bot.fill_audit import attainable_indexes, audit_window, role_of
 
 START = 1794536700.0  # a real btc-updown-5m slot epoch
 
@@ -47,6 +47,26 @@ class RoleTest(unittest.TestCase):
         fill["detail"] = {}
         fill["reason"] = "hedge-equalizer"
         self.assertEqual(role_of(fill), "TAKER")
+
+
+class AttainableIndexesTest(unittest.TestCase):
+    """The per-fill verdict the desk stamps while the window is still trading."""
+
+    def test_the_most_aggressive_fill_takes_the_print(self):
+        fills = [_fill(shares=10, price=0.42), _fill(shares=10, price=0.40, offset=6)]
+        got = attainable_indexes(fills, [_print(size=10, price=0.40)])
+        self.assertEqual(got, {0: True, 1: False})
+
+    def test_a_taker_always_counts(self):
+        got = attainable_indexes([_fill(role="TAKER")], [_print(size=1, side="BUY")])
+        self.assertEqual(got, {0: True})
+
+    def test_queue_ahead_blocks_the_fill(self):
+        got = attainable_indexes([_fill(queueAhead=20)], [_print(size=20)])
+        self.assertEqual(got, {0: False})
+
+    def test_no_prints_means_not_judged(self):
+        self.assertIsNone(attainable_indexes([_fill()], []))
 
 
 class AuditWindowTest(unittest.TestCase):

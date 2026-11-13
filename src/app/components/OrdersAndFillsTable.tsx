@@ -236,7 +236,18 @@ export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsP
                     ? null
                     : rebateFor(trade.price, trade.shares, !!isMaker, tier.rate, feeUsd)
                 const tapeStatus = (detail?.tapeStatus as string | undefined) ?? undefined
-                const statusLabel = isSettled
+                // Attainable is the stronger verdict: it is the only check that
+                // knows the queue ahead and the sell side. Live it only ever
+                // turns true (more selling can still arrive); the close pass and
+                // the resolution audit write both verdicts.
+                const attainable = detail?.attainable as boolean | undefined
+                const statusLabel = !isMaker
+                  ? 'Taker'
+                  : attainable === true
+                  ? 'Attainable'
+                  : attainable === false
+                  ? 'Phantom'
+                  : isSettled
                   ? 'Settled'
                   : tapeStatus === 'verified'
                   ? 'Verified'
@@ -249,7 +260,13 @@ export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsP
                   : tapeStatus === 'pending'
                   ? 'Pending'
                   : 'Filled'
-                const statusColor = isSettled
+                const statusColor = !isMaker
+                  ? 'bg-faint'
+                  : attainable === true
+                  ? 'bg-success'
+                  : attainable === false
+                  ? 'bg-danger'
+                  : isSettled
                   ? 'bg-accent'
                   : tapeStatus === 'verified'
                   ? 'bg-success'

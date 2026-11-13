@@ -67,10 +67,13 @@ net are untouched.
 
 `--audit` writes each window's `fidelity`: the same fills judged by the only
 trade that can fill a resting bid — a taker SELL at or below the limit, after
-the fill. When the loop recorded `detail.queueAhead` (the size already resting
-at that price), the flow has to outlast it; older fills pass on sell size alone,
-so their attainable number is an upper bound. Taker fills always count. The
-desk shows the result as the "attainable" number beside the net, before rebates.
+the fill. The live loop runs that same rule every 5 s while a window trades and
+finalizes it when the window closes, stamping each fill's `detail.attainable` so
+the desk shows the verdict during the run, not only at the end. When the loop
+recorded `detail.queueAhead` (the size already resting at that price), the flow
+has to outlast it; older fills pass on sell size alone, so their attainable
+number is an upper bound. Taker fills always count. The desk shows the result as
+the "attainable" number beside the net, before rebates.
 
 ## Kill-switch drill (verified 2026-11-07)
 

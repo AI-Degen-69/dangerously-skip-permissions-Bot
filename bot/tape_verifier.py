@@ -155,6 +155,7 @@ def verify_fills(
     window_start_s: float = 0,
     window_end_s: float = 0,
     force: bool = False,
+    prints: list[dict] | None = None,
 ) -> int:
     """Verify all fills in the list against tape prints.
 
@@ -162,7 +163,8 @@ def verify_fills(
     Returns the number of fills whose status changed.
 
     If force=True, re-verifies all fills regardless of current status.
-    Otherwise skips already-verified fills.
+    Otherwise skips already-verified fills. Pass `prints` when the caller has
+    already loaded this window's prints, so they are parsed once.
     """
     if tape_dir is None or not fills:
         return 0
@@ -174,7 +176,8 @@ def verify_fills(
     if window_end_s <= 0:
         window_end_s = time.time() + 60  # future buffer for live windows
 
-    prints = load_prints_for_window(tape_dir, window_start_s, window_end_s)
+    if prints is None:
+        prints = load_prints_for_window(tape_dir, window_start_s, window_end_s)
     now_s = time.time()
     changed = 0
 

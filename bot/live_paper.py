@@ -51,11 +51,11 @@ from bot.executor import (
     compute_fill_usd,
     evaluate_microstructure_ladder,
 )
-from bot.fill_audit import audit_window, load_prints
+from bot.fill_audit import attainable_indexes, audit_window
 from bot.risk import RiskState, assert_single_window, check_window, clip_shares, heartbeat
 from bot.runs import RunWorkspace, find_run_id, get_active_run_id, make_run_id, set_active_run_id
 from bot.signal import LeanSignal
-from bot.tape_verifier import verify_fills
+from bot.tape_verifier import load_prints_for_window, verify_fills
 from bot.ws import LiveBookStreamer
 
 RUNS_DIR = Path("bot/paper_runs")
@@ -123,6 +123,27 @@ def run_tape_dir():
         return None
     ws.tape_dir.mkdir(parents=True, exist_ok=True)
     return ws.tape_dir
+
+
+def _stamp_attainable(fills: list[dict], prints: list[dict], condition_id: str | None, final: bool = False) -> int:
+    """Mark each fill the recorded selling could have filled.
+
+    While the window is still trading this only sets True: more selling can
+    arrive, so a False is "not yet". The close pass and the resolution audit are
+    final and write both verdicts.
+    """
+    verdicts = attainable_indexes(fills, prints, condition_id)
+    if verdicts is None:
+        return 0
+    changed = 0
+    for i, ok in verdicts.items():
+        detail = fills[i].setdefault("detail", {})
+        if not ok and not final:
+            continue
+        if detail.get("attainable") is not ok:
+            detail["attainable"] = ok
+            changed += 1
+    return changed
 
 
 def log_event(kind: str, reason: str, slug: str | None = None, **kw) -> None:
@@ -553,12 +574,17 @@ def trade_window(
             try:
                 # The window's own bounds: a later window's prints must not
                 # confirm this window's fills.
+                prints = load_prints_for_window(_tape_dir, float(slot), float(slot) + C.WINDOW_S)
                 changed = verify_fills(
                     fills,
                     _tape_dir,
                     window_start_s=float(slot),
                     window_end_s=float(slot) + C.WINDOW_S,
+                    prints=prints,
                 )
+                # Same prints, same rule as the resolution audit: the desk can
+                # show which fills the selling so far could actually have filled.
+                changed += _stamp_attainable(fills, prints, spec.condition_id)
                 if changed > 0:
                     # Persist the new statuses: the sync loop preserves whatever
                     # fills it last read, so without this write the API keeps
@@ -805,13 +831,18 @@ def trade_window(
     # --- Final tape verification pass (definitive, all prints available) ---
     if _tape_on and fills:
         try:
+            # The recorder has now run to the window's end, so every print that
+            # can fill a resting bid is on disk: both verdicts are final here.
+            final_prints = load_prints_for_window(_tape_dir, float(slot), float(slot) + C.WINDOW_S)
             verify_fills(
                 fills,
                 _tape_dir,
                 window_start_s=float(slot),
                 window_end_s=float(slot) + C.WINDOW_S,
                 force=True,
+                prints=final_prints,
             )
+            _stamp_attainable(fills, final_prints, spec.condition_id, final=True)
             log(f"tape final: {sum(1 for f in fills if (f.get('detail') or {}).get('tapeStatus') == 'verified')}/{len(fills)} verified")
         except Exception:
             pass
@@ -917,13 +948,12 @@ def settle_slug(slug: str, snap: dict, origin: str | None, budget_s: int = 900) 
     fidelity = None
     if winner and snap.get("tapeDir") and snap.get("slot"):
         try:
-            fidelity = audit_window(
-                fills,
-                load_prints(Path(snap["tapeDir"])),
-                float(snap["slot"]),
-                winner,
-                snap.get("condition_id"),
-            )
+            slot_s = float(snap["slot"])
+            prints = load_prints_for_window(Path(snap["tapeDir"]), slot_s, slot_s + C.WINDOW_S)
+            # Resolution is the last word on attainability: stamp the rows too,
+            # so the fills table and the window total can never disagree.
+            _stamp_attainable(fills, prints, snap.get("condition_id"), final=True)
+            fidelity = audit_window(fills, prints, slot_s, winner, snap.get("condition_id"))
         except (OSError, ValueError):
             fidelity = None
 

@@ -75,6 +75,7 @@ The command center for analyzing execution performance across settled windows.
   - Taker fills always count (they take the ask); the gap between the two numbers is entirely maker fills that could never have filled. Hover it for the count of surviving fills and how many windows the auditor covered.
   - It is **before rebates**, so turn the rebate switch off to compare it with the net beside it. A window whose tape holds no print at all is left out of both sides — silence is not proof that nothing traded.
   - The line under the chart says the same thing in counts: how many maker fills could actually fill, and how many never could.
+  - The same audit runs **while the run is going**, and the `STATUS` column of `Orders & Fills` shows its per-fill verdict: `Attainable` as soon as the selling recorded so far could have filled that order, `Phantom` once the window's tape is complete and it could not. `Verified` remains the weaker tape check — the level traded at your size — and stays on a row only until the audit has judged it.
 - **Timeframe Filter (below the chart):**
   - `1H · 12H · 1D · 1W · 1M · All` scopes the KPI cards, the chart, the window bars and the window log to that trailing window. The chart is re-based on the capital held when the window opened, so the curve starts where the account actually stood.
 - **Settled Windows Table:**

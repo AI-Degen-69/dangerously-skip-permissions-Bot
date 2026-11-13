@@ -83,53 +83,33 @@ def audit_window(
     Returns None when the tape holds no print for this window's own market
     inside it: silence is missing evidence, not proof that nothing traded.
     """
-    start = float(window_start_s)
-    end = start + C.WINDOW_S
-    lo = bisect.bisect_left(prints, start, key=_print_ts)
-    hi = bisect.bisect_right(prints, end, key=_print_ts)
-    tape = _own_market(prints[lo:hi], condition_id)
+    tape = _window_tape(prints, float(window_start_s), condition_id)
     if not tape:
         return None
+    verdicts = _attainability(fills, tape)
 
     maker = attainable = phantom = queue_known = 0
     assumed_shares = attainable_shares = 0.0
     attainable_cost = attainable_payout = 0.0
-
-    maker_fills: list[dict] = []
-    for fill in fills:
+    for i, fill in enumerate(fills):
         shares = _num(fill.get("shares"))
         assumed_shares += shares
+        payout = shares if winner and fill.get("outcome") == winner else 0.0
         if role_of(fill) == "TAKER":
             # A taker fill takes the ask by definition, so the queue cannot
             # block it; only the maker fills can be phantom.
-            payout = shares if winner and fill.get("outcome") == winner else 0.0
             attainable_shares += shares
             attainable_cost += _num(fill.get("usd"))
             attainable_payout += payout
             continue
-        maker_fills.append(fill)
-
-    # One print's size fills one order only, and the taker hits the most
-    # aggressive bid first: spend the flow highest price then oldest first.
-    taken: dict[int, float] = {}
-    for fill in sorted(maker_fills, key=lambda f: (-_num(f.get("price")), fill_epoch_s(f))):
         maker += 1
-        shares = _num(fill.get("shares"))
-        usd = _num(fill.get("usd"))
-        payout = shares if winner and fill.get("outcome") == winner else 0.0
-        ahead = (fill.get("detail") or {}).get("queueAhead")
-        if isinstance(ahead, (int, float)) and not isinstance(ahead, bool) and ahead >= 0:
+        if _queue_ahead_recorded(fill):
             queue_known += 1
-            ahead = float(ahead)
-        else:
-            ahead = 0.0
-        flow = _sell_flow(tape, fill, _num(fill.get("price")))
-        if shares > 0 and _available(tape, flow, taken) - ahead >= shares - PRICE_EPS:
+        if verdicts[i]:
             attainable += 1
             attainable_shares += shares
-            attainable_cost += usd
+            attainable_cost += _num(fill.get("usd"))
             attainable_payout += payout
-            _spend(tape, flow, ahead + shares, taken)
         else:
             phantom += 1
 
@@ -144,6 +124,63 @@ def audit_window(
         "attainablePayoutUsd": round(attainable_payout, 2),
         "attainableNetUsd": round(attainable_payout - attainable_cost, 2),
     }
+
+
+def attainable_indexes(
+    fills: list[dict],
+    window_prints: list[dict],
+    condition_id: str | None = None,
+) -> dict[int, bool] | None:
+    """Fill index -> could it have filled on the selling recorded so far.
+
+    `window_prints` must already be bounded to this window. Winner-independent,
+    so the live loop calls it while the window is still trading: a False there
+    means "not yet" - later selling can still fill the order. None when the tape
+    holds no print for this window's own market.
+    """
+    tape = _own_market(window_prints, condition_id)
+    if not tape:
+        return None
+    return _attainability(fills, tape)
+
+
+def _window_tape(prints: list[dict], start: float, condition_id: str | None) -> list[dict]:
+    lo = bisect.bisect_left(prints, start, key=_print_ts)
+    hi = bisect.bisect_right(prints, start + C.WINDOW_S, key=_print_ts)
+    return _own_market(prints[lo:hi], condition_id)
+
+
+def _attainability(fills: list[dict], tape: list[dict]) -> dict[int, bool]:
+    """One print's size fills one order only, and the taker hits the most
+    aggressive bid first: spend the flow highest price then oldest first."""
+    verdicts: dict[int, bool] = {}
+    taken: dict[int, float] = {}
+    order = sorted(range(len(fills)), key=lambda i: (-_num(fills[i].get("price")), fill_epoch_s(fills[i])))
+    for i in order:
+        fill = fills[i]
+        if role_of(fill) == "TAKER":
+            verdicts[i] = True
+            continue
+        shares = _num(fill.get("shares"))
+        ahead = _queue_ahead(fill)
+        flow = _sell_flow(tape, fill, _num(fill.get("price")))
+        ok = shares > 0 and _available(tape, flow, taken) - ahead >= shares - PRICE_EPS
+        verdicts[i] = ok
+        if ok:
+            _spend(tape, flow, ahead + shares, taken)
+    return verdicts
+
+
+def _queue_ahead_recorded(fill: dict) -> bool:
+    ahead = (fill.get("detail") or {}).get("queueAhead")
+    return isinstance(ahead, (int, float)) and not isinstance(ahead, bool) and ahead >= 0
+
+
+def _queue_ahead(fill: dict) -> float:
+    ahead = (fill.get("detail") or {}).get("queueAhead")
+    if isinstance(ahead, (int, float)) and not isinstance(ahead, bool) and ahead >= 0:
+        return float(ahead)
+    return 0.0
 
 
 def _print_ts(print_row: dict) -> float:
