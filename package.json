@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "check:chart": "bun scripts/chart-math-check.ts",
+    "check:pnl": "bun scripts/pnl-scope-check.ts",
     "check:windows": "bun scripts/window-nav-check.ts"
   },
   "dependencies": {

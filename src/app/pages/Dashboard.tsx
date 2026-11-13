@@ -18,8 +18,9 @@ import { BOT_ORIGIN, useBotControl, useBotPerf, useRedeemBot, useStrategySetups,
 import { STRATEGY_PRESETS } from '../botDefaults'
 import type { BotPerf, PerfGate, PerfWindow, StrategySetup } from '../lib/bot'
 import { computeKpiStats } from '../lib/kpiStats'
-import { ACCOUNT_TIERS, useAccountTier, windowRebate } from '../lib/rebates'
+import { ACCOUNT_TIERS, useAccountTier, useIncludeRebates, windowRebate } from '../lib/rebates'
 import type { AccountTier } from '../lib/rebates'
+import { TIMEFRAMES, scopeWindows, timeframeStart } from '../lib/timeframes'
 import { cx } from '../lib/cx'
 import { money2, relativeTime } from '../lib/format'
 
@@ -67,6 +68,8 @@ export function Dashboard() {
   const toast = useToast()
   const [hoveredSlug, setHoveredSlug] = useState<string | null>(null)
   const [tier, setTier] = useAccountTier()
+  const [includeRebates, setIncludeRebates] = useIncludeRebates()
+  const [timeframeId, setTimeframeId] = useState<string>('all')
 
   const isViewOnly = control.data?.isViewOnly ?? false
   const running = (control.data?.running ?? false) && !isViewOnly
@@ -76,14 +79,35 @@ export function Dashboard() {
   const health = data?.health
   const windows = data?.windows ?? []
   const settled = windows.filter((window) => !window.pending)
+  const startingCapital = data?.summary?.bankrollUsd ?? 1000
+
+  // The timeframe scopes the whole page: the KPI cards, the chart, the bars and
+  // the window log all read the same slice, so they can never disagree.
+  const timeframe = TIMEFRAMES.find((tf) => tf.id === timeframeId) ?? TIMEFRAMES[TIMEFRAMES.length - 1]
+  const cutoff = timeframeStart(timeframe, Date.now())
+  const scoped = scopeWindows(settled, cutoff, tier.rate, includeRebates, startingCapital)
+  // Capital at the start of the slice, so the curve starts where the account was.
+  const baseCapital = scoped.baseCapital
+  // The window log shows the same slice, pending windows included.
+  const scopedLog = windows.filter((window) => window.startMs >= cutoff)
+
   // Credit the rebate per window so the chart, the bars and the window log agree
   // with the KPI cards above them.
   const withRebates = (window: PerfWindow): PerfWindow =>
     window.netUsd == null
       ? window
-      : { ...window, netUsd: window.netUsd + windowRebate(window, tier.rate) }
-  const startingCapital = data?.summary?.bankrollUsd ?? 1000
-  const stats = computeKpiStats(windows, startingCapital, summary, tier.rate)
+      : {
+          ...window,
+          netUsd: window.netUsd + (includeRebates ? windowRebate(window, tier.rate) : 0),
+        }
+  // The API summary covers the whole run, so it can only back an all-time view.
+  const stats = computeKpiStats(
+    scoped.windows,
+    baseCapital,
+    timeframe.ms == null ? summary : undefined,
+    tier.rate,
+    includeRebates,
+  )
   const currentCapital = stats.currentCapital
   const gateJudged = settled.length >= (data?.targets.windows ?? 288)
   const setupsQuery = useStrategySetups()
@@ -168,7 +192,7 @@ export function Dashboard() {
         />
       </Card>
 
-      <TierBar tier={tier} onPick={setTier} rebatesUsd={stats.rebatesUsd} />
+      <TierBar tier={tier} onPick={setTier} rebatesUsd={stats.rebatesUsd} counted={includeRebates} />
 
       <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {!summary ? (
@@ -195,7 +219,9 @@ export function Dashboard() {
                   {stats.netUsd >= 0 ? 'Profitable' : 'Loss'}
                 </Badge>
               }
-              tip="Total realized paper profit/loss across all settled windows vs starting capital."
+              tip={`Total realized paper profit/loss across settled windows${
+                timeframe.ms == null ? '' : ` in the last ${timeframe.label}`
+              } vs starting capital.`}
               icon={<TrendingUp className="size-3.5" />}
             />
             <Stat
@@ -319,6 +345,7 @@ export function Dashboard() {
           value={`+${usd(stats.takerRebateUsd)}`}
           hint={`${Math.round(tier.rate * 100)}% of fees · ${tier.name}`}
           tone="success"
+          badge={includeRebates ? undefined : <Badge tone="neutral">excluded</Badge>}
           tip="Taker fees returned at the selected tier. Polymarket credits this daily at 00:00 UTC on the previous day's fees."
         />
         <Stat
@@ -326,85 +353,80 @@ export function Dashboard() {
           value={`+${usd(stats.makerRebateUsd)}`}
           hint="20% of the fee each maker fill was matched against"
           tone="success"
+          badge={includeRebates ? undefined : <Badge tone="neutral">excluded</Badge>}
           tip="Makers claim a fixed 20% share (crypto markets) of the taker fees collected on the fills they took the other side of. It does not depend on tier."
         />
         <Stat
           label="Net before rebates"
           value={`${stats.netBeforeRebateUsd >= 0 ? '+' : ''}${usd(stats.netBeforeRebateUsd)}`}
-          hint={`Rebates add ${usd(stats.rebatesUsd)}`}
+          hint={
+            includeRebates
+              ? `Rebates add ${usd(stats.rebatesUsd)}`
+              : `Rebates excluded · ${usd(stats.rebatesUsd)} not counted`
+          }
           tone={stats.netBeforeRebateUsd >= 0 ? 'success' : 'danger'}
-          tip="What the strategy earned on price alone, fees charged and no rebate credited. Compare it with Net P&L above to see the subsidy."
+          badge={<RebateToggle on={includeRebates} onToggle={() => setIncludeRebates(!includeRebates)} />}
+          tip="What the strategy earned on price alone, fees charged and no rebate credited. The switch decides whether the rebate is credited on top of it."
         />
       </div>
 
       <div className="mt-3 grid gap-3 lg:grid-cols-3">
         <Card className="p-5 lg:col-span-2">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-[14px] font-semibold">Paper P&amp;L &amp; Capital</h2>
-                <Badge tone="neutral" className="font-mono text-[11px]">
-                  Base {usd(startingCapital)}
+          {summary && (
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="tabular-nums text-[22px] font-semibold tracking-[-0.02em] text-fg">
+                {usd(currentCapital)}
+              </span>
+              <span
+                className={cx(
+                  'tabular-nums text-[13.5px] font-semibold',
+                  stats.netUsd >= 0 ? 'text-success' : 'text-danger',
+                )}
+              >
+                {stats.netUsd >= 0 ? '+' : ''}{usd(stats.netUsd)}
+                {baseCapital > 0
+                  ? ` (${(((currentCapital - baseCapital) / baseCapital) * 100).toFixed(1)}%)`
+                  : ''}
+              </span>
+              {timeframe.ms != null && (
+                <Badge tone="neutral" className="text-[11px]">
+                  last {timeframe.label}
                 </Badge>
-                {stats.settled > 0 && (
-                  <Badge tone={stats.expectancyUsd >= 0 ? 'success' : 'danger'} className="text-[11px]">
-                    EV: {stats.expectancyUsd >= 0 ? '+' : ''}{usd(stats.expectancyUsd)}/window
-                  </Badge>
-                )}
-                {stats.settled > 0 && (
-                  <Badge tone="neutral" className="text-[11px]">
-                    PF: {stats.grossLossUsd === 0 && stats.grossProfitUsd > 0 ? '∞' : stats.profitFactor.toFixed(2)}
-                  </Badge>
-                )}
-              </div>
-              <p className="text-[12.5px] text-muted">
-                Cumulative capital &amp; net per settled window vs {usd(startingCapital)} starting capital; pending windows excluded.
-              </p>
+              )}
+              {!includeRebates && (
+                <Badge tone="warning" className="text-[11px]">
+                  rebates excluded
+                </Badge>
+              )}
+              <span className="text-[11.5px] text-faint">
+                {stats.settled} settled window{stats.settled === 1 ? '' : 's'} · {stats.winsCount} profitable
+              </span>
             </div>
-            {summary && (
-              <div className="text-right">
-                <div className="flex items-baseline justify-end gap-2">
-                  <span className="tabular-nums text-[22px] font-semibold tracking-[-0.02em] text-fg">
-                    {usd(currentCapital)}
-                  </span>
-                  <span
-                    className={cx(
-                      'tabular-nums text-[13.5px] font-semibold',
-                      summary.netUsd >= 0 ? 'text-success' : 'text-danger',
-                    )}
-                  >
-                    {stats.netUsd >= 0 ? '+' : ''}{usd(stats.netUsd)}
-                    {startingCapital > 0
-                      ? ` (${(((currentCapital - startingCapital) / startingCapital) * 100).toFixed(1)}%)`
-                      : ''}
-                  </span>
-                </div>
-                <p className="text-[11.5px] text-faint">
-                  {stats.settled} settled window{stats.settled === 1 ? '' : 's'} · {stats.winsCount} profitable
-                </p>
-              </div>
-            )}
-          </div>
+          )}
 
-          {settled.length > 0 ? (
+          {scoped.windows.length > 0 ? (
             <>
               <div className="mt-3">
                 <InteractivePnlChart
-                  windows={settled.map(withRebates)}
-                  startingCapital={startingCapital}
+                  windows={scoped.windows.map(withRebates)}
+                  startingCapital={baseCapital}
+                  baseLabel={timeframe.ms == null ? undefined : 'Base capital'}
                   hoveredSlug={hoveredSlug}
                   onHoverWindow={(w) => setHoveredSlug(w?.slug ?? null)}
                 />
               </div>
               <div className="mt-4 border-t border-line pt-3">
                 <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-muted">
-                  <span>Last {Math.min(settled.length, 24)} windows</span>
-                  <span className="text-faint">
-                    best {usd(stats.bestUsd)} · worst {usd(stats.worstUsd)}
+                  <span>
+                    Last {Math.min(scoped.windows.length, 24)} windows ·{' '}
+                    <span className="text-faint">
+                      best {usd(stats.bestUsd)} · worst {usd(stats.worstUsd)}
+                    </span>
                   </span>
+                  <TimeframePicker value={timeframeId} onChange={setTimeframeId} />
                 </div>
                 <WindowBars
-                  windows={settled.slice(-24).map(withRebates)}
+                  windows={scoped.windows.slice(-24).map(withRebates)}
                   hoveredSlug={hoveredSlug}
                   onHoverSlug={setHoveredSlug}
                 />
@@ -414,8 +436,12 @@ export function Dashboard() {
             <div className="mt-3">
               <EmptyState
                 icon={<Target />}
-                title="No settled windows yet"
-                description="The first window settles about five minutes after the loop opens it. Everything here fills in on its own."
+                title={settled.length > 0 ? 'No settled windows in this timeframe' : 'No settled windows yet'}
+                description={
+                  settled.length > 0
+                    ? 'Widen the timeframe above to see older windows.'
+                    : 'The first window settles about five minutes after the loop opens it. Everything here fills in on its own.'
+                }
               />
             </div>
           )}
@@ -680,11 +706,15 @@ export function Dashboard() {
           </Link>
         </div>
 
-        {windows.length === 0 ? (
+        {scopedLog.length === 0 ? (
           <EmptyState
             icon={<Target />}
-            title="No windows traded yet"
-            description="Start the loop and the first row appears when it opens a window."
+            title={windows.length === 0 ? 'No windows traded yet' : 'No windows in this timeframe'}
+            description={
+              windows.length === 0
+                ? 'Start the loop and the first row appears when it opens a window.'
+                : 'Widen the timeframe above to see older windows.'
+            }
           />
         ) : (
           <div className="scrollbar-thin mt-3 max-h-[460px] overflow-auto">
@@ -702,7 +732,7 @@ export function Dashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
-                {[...windows].reverse().map(withRebates).map((window) => (
+                {[...scopedLog].reverse().map(withRebates).map((window) => (
                   <tr key={window.slug}>
                     <td className="py-2.5 tabular-nums text-muted">{windowTime(window.startMs)}</td>
                     <td className="py-2.5 text-right tabular-nums">
@@ -832,10 +862,12 @@ function TierBar({
   tier,
   onPick,
   rebatesUsd,
+  counted,
 }: {
   tier: AccountTier
   onPick: (id: string) => void
   rebatesUsd: number
+  counted: boolean
 }) {
   return (
     <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-card border border-line bg-surface-1 px-3.5 py-2.5">
@@ -861,8 +893,68 @@ function TierBar({
         </div>
       </div>
       <p className="text-[11.5px] text-faint">
-        Rebates recompute net P&amp;L, expectancy and profit factor · {usd(rebatesUsd)} credited at {tier.name}
+        {counted
+          ? `Rebates recompute net P&L, expectancy and profit factor · ${usd(rebatesUsd)} credited at ${tier.name}`
+          : `Rebates excluded from the P&L, the stats and the chart · ${usd(rebatesUsd)} not counted`}
       </p>
+    </div>
+  )
+}
+
+function RebateToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      onClick={onToggle}
+      title={
+        on
+          ? 'Rebates are included in the P&L. Click to exclude them.'
+          : 'Rebates are excluded from the P&L. Click to include them.'
+      }
+      className="flex items-center gap-1 text-[10.5px] font-medium text-muted transition-colors hover:text-fg"
+    >
+      <span
+        className={cx(
+          'relative h-[11px] w-[20px] rounded-full transition-colors',
+          on ? 'bg-success' : 'bg-line-strong',
+        )}
+      >
+        <span
+          className={cx(
+            'absolute top-[2px] size-[7px] rounded-full bg-surface transition-all',
+            on ? 'left-[11px]' : 'left-[2px]',
+          )}
+        />
+      </span>
+      Rebates
+    </button>
+  )
+}
+
+function TimeframePicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+  return (
+    <div
+      className="flex flex-wrap gap-0.5 rounded-lg border border-line bg-surface-2 p-0.5"
+      role="group"
+      aria-label="Timeframe"
+    >
+      {TIMEFRAMES.map((option) => (
+        <button
+          key={option.id}
+          type="button"
+          onClick={() => onChange(option.id)}
+          aria-pressed={value === option.id}
+          title={option.ms == null ? 'Since inception' : `Last ${option.label}`}
+          className={cx(
+            'rounded-md px-2 py-1 text-[11.5px] font-medium transition-colors',
+            value === option.id ? 'bg-surface text-fg shadow-xs' : 'text-muted hover:text-fg',
+          )}
+        >
+          {option.label}
+        </button>
+      ))}
     </div>
   )
 }

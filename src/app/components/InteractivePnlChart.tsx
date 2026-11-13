@@ -27,6 +27,8 @@ export interface InteractivePnlChartProps {
   startingCapital: number
   hoveredSlug?: string | null
   onHoverWindow?: (window: PerfWindow | null) => void
+  /** Baseline caption: the real starting capital, or the base of a scoped view. */
+  baseLabel?: string
   className?: string
 }
 
@@ -64,6 +66,7 @@ export function InteractivePnlChart({
   startingCapital,
   hoveredSlug,
   onHoverWindow,
+  baseLabel = 'Starting capital',
   className,
 }: InteractivePnlChartProps) {
   const chartId = useId()
@@ -162,6 +165,17 @@ export function InteractivePnlChart({
     Math.round((i * (points.length - 1)) / Math.max(1, numTimeLabels - 1)),
   )
 
+  // Where the calendar day turns over. The time labels alone cannot say which
+  // day a point belongs to once the view spans midnight, so every new day gets
+  // its own tick on the axis.
+  const dayMarks = points
+    .map((p, idx) => ({ idx, ts: p.ts }))
+    .filter((p, idx) => idx > 0 && new Date(p.ts).toDateString() !== new Date(points[idx - 1].ts).toDateString())
+    .map((p) => ({
+      idx: p.idx,
+      label: new Date(p.ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+    }))
+
   const clipAboveId = `clip-above-${chartId}`
   const clipBelowId = `clip-below-${chartId}`
   const greenGradId = `green-grad-${chartId}`
@@ -231,7 +245,7 @@ export function InteractivePnlChart({
       <span className="sr-only" aria-live="polite">
         {activePoint
           ? activePoint.isStart
-            ? `Starting capital: ${usd(startingCapital)}`
+            ? `${baseLabel}: ${usd(startingCapital)}`
             : `${activePoint.slug}: Capital ${usd(activePoint.capital)}, Total Return ${activePoint.cumNet >= 0 ? '+' : ''}${usd(activePoint.cumNet)}${startingCapital > 0 ? `, ${(((activePoint.capital - startingCapital) / startingCapital) * 100).toFixed(1)}%` : ''}`
           : ''}
       </span>
@@ -360,7 +374,7 @@ export function InteractivePnlChart({
             fill="var(--color-muted)"
             className="font-mono"
           >
-            Starting capital ({usd(startingCapital)})
+            {baseLabel} ({usd(startingCapital)})
           </text>
         </g>
 
@@ -383,6 +397,36 @@ export function InteractivePnlChart({
           stroke="var(--color-line)"
           strokeWidth="1"
         />
+
+        {/* Day change ticks on the X-Axis */}
+        {dayMarks.map((mark) => {
+          const x = xCoord(mark.idx)
+          return (
+            <g key={`day-${mark.idx}`} className="pointer-events-none">
+              <line
+                x1={x}
+                x2={x}
+                y1={padTop}
+                y2={height - padBottom}
+                stroke="var(--color-line-strong)"
+                strokeDasharray="3 3"
+                strokeWidth="1"
+                opacity="0.75"
+              />
+              <text
+                x={Math.min(x + 4, width - padRight - 46)}
+                y={padTop - 8}
+                textAnchor="start"
+                fontSize="10"
+                fontWeight="600"
+                fill="var(--color-muted)"
+                className="font-mono"
+              >
+                {mark.label}
+              </text>
+            </g>
+          )
+        })}
 
         {/* Ticks for EVERY settled window along the X-Axis */}
         {points.map((p, idx) => {
@@ -525,12 +569,12 @@ export function InteractivePnlChart({
           {activePoint.isStart ? (
             <div>
               <div className="flex items-center justify-between border-b border-line pb-2">
-                <span className="text-[12px] font-semibold text-fg">Starting Capital</span>
+                <span className="text-[12px] font-semibold text-fg">{baseLabel}</span>
                 <Badge tone="neutral">Base</Badge>
               </div>
               <p className="mt-2 text-[20px] font-bold text-fg tabular-nums">{usd(startingCapital)}</p>
               <p className="mt-1 text-[11.5px] text-muted">
-                Initial trading bankroll before first window opened at {windowTime(activePoint.ts)}.
+                Trading capital before the first window in this view, opened at {windowTime(activePoint.ts)}.
               </p>
             </div>
           ) : activePoint.window ? (
