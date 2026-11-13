@@ -4,8 +4,8 @@ from typing import ClassVar
 from bot.executor import dip_curve_shares, evaluate_microstructure_ladder, select_ladder_clip
 
 INV = {"Up": {"shares": 30.0, "cost": 3.0}, "Down": {"shares": 30.0, "cost": 24.0}}
-# A balanced book with a hedgeable opposite ask, so a fresh Up dip passes the
-# completable-now gate and the dollar cap is the thing being measured.
+# A balanced book where the opposite ask is far away, so the dollar cap is the
+# only thing standing between a 25-share Up clip and a fill.
 QUOTES = {"Up": {"bid": 0.20, "ask": 0.21}, "Down": {"bid": 0.75, "ask": 0.76}}
 
 

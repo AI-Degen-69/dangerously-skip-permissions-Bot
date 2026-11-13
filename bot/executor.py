@@ -221,20 +221,6 @@ def evaluate_microstructure_ladder(
             return 0.0
         return min(float(shares), float(avail))
 
-    def _completable_now(px: float, opp_ref: float | None) -> bool:
-        """Can the hedge be bought now, at the ask, and still make a pair under the cap?
-
-        A resting bid is not a fill and a future cheap hedge is not a plan. The
-        only hedge that exists at decision time is a taker buy at the opposite
-        ask, so the pair this leg would form costs px + ask + the taker fee. If
-        that is over max_pair_cost, the entry leans on a cheaper second leg
-        arriving later — the assumption that made the paper book look profitable
-        while the tape said otherwise.
-        """
-        if opp_ref is None:
-            return False
-        return px + float(opp_ref) + taker_fee_per_share(float(opp_ref)) <= max_pair_cost
-
     def _side_prices(s: str) -> tuple[float | None, float | None]:
         q = quotes.get(s) or {}
         bid = q.get("bid")
@@ -338,13 +324,17 @@ def evaluate_microstructure_ladder(
             is_v22=is_v22,
             is_v23=is_v23,
         )
-        # Tweak 3: Prioritize 0% maker fills during sweep equalization to eliminate adverse fee drag
-        if in_sweep_phase and bid is not None:
+        # Patient pair, forced close. The hedge rests at the lagging side's bid
+        # and books when a seller comes to it. Crossing the ask on the next tick
+        # is the one timing the ledger measures as a loss (-0.2c per pair at a
+        # 0-5s lag, +2.7c at 61-120s). In the sweep the pair has to close, so
+        # there we cross.
+        if in_sweep_phase or bid is None:
+            role = "TAKER"
+            exec_px = px
+        else:
             role = "MAKER"
             exec_px = bid
-        else:
-            role = "MAKER" if (bid is not None and ask is not None and round(ask - bid, 4) <= 0.01) else "TAKER"
-            exec_px = bid if role == "MAKER" and bid is not None else px
         est_usd, _ = compute_fill_usd(shares, exec_px, role=role, include_fee=(role == "TAKER"))
         proj_pc = _projected_pair_cost(inv, side, shares, est_usd)
 
@@ -433,13 +423,6 @@ def evaluate_microstructure_ladder(
             continue
         dip_max = 0.45 if is_dsp else C.DIP_LADDER_MAX
         if px <= dip_max:
-            # Every speculative leg is checked against the hedge that exists
-            # right now. Closing an existing deficit (deficit > 0) is the
-            # hedge, so it needs no second leg; a fresh dip does.
-            if deficit <= 0 and not _completable_now(px, opp_ref):
-                saw_pair_cap = True
-                continue
-
             # High-Confidence Atomic Arb Detection:
             # If both sides can be filled immediately with sum <= 0.990, flag atomic_arb = True!
             is_atomic = bool(is_confidence and opp_ref is not None and (px + opp_ref <= 0.990))
@@ -501,13 +484,10 @@ def evaluate_microstructure_ladder(
                 )
             saw_pair_cap = True
         elif px <= C.STRADDLE_BAND[1] and inv["Up"]["shares"] == 0 and inv["Down"]["shares"] == 0:
-            # Opening Straddle Leg 1 in (0.50, 0.55]. Both sides are flat, so
-            # this leg is speculative: only open when the opposite ask closes
-            # the pair under the cap right now.
-            if not _completable_now(px, opp_ref):
-                saw_pair_cap = True
-                continue
-
+            # Opening Straddle Leg 1 in (0.45, 0.55]. Both sides are flat, so
+            # this is the at-the-money entry the ledger shows: the first leg
+            # lands near 50c within ~13s of the open. The hedge is not assumed
+            # here — it is placed as a resting bid once this leg fills.
             is_atomic = bool(is_confidence and opp_ref is not None and (px + opp_ref <= 0.990))
             role = "MAKER" if ((bid is not None and px == bid) or bid is None) else "TAKER"
             shares = select_ladder_clip(

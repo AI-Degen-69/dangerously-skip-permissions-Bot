@@ -8,7 +8,7 @@
   "strategy": {
     "id": "dangerously-skip-permissions-v2.6",
     "symbol": "\u26a1 DSP-v2.6",
-    "name": "Dangerously Skip Permissions v2.6 (Hedge-Now Entry)"
+    "name": "Dangerously Skip Permissions v2.6 (Patient Pair)"
   },
   "entry": {
     "startAfterOpenSec": 4,
@@ -16,12 +16,12 @@
     "clipSharesDefault": 10.0,
     "maxShares": 45.0,
     "minFillPrice": 0.07,
-    "maxFillPrice": 0.45,
+    "maxFillPrice": 0.55,
     "benchmarkPairCost": 0.965,
     "targetPairCost": 0.965,
     "maxPairCost": 0.985,
     "maxShareLead": 46.0,
-    "maxUnhedgedUsd": 5.0,
+    "maxUnhedgedUsd": 6.0,
     "rescuePairCostMax": 0.995,
     "rescueCeilingPrice": 0.985,
     "includeTakerFee": true,

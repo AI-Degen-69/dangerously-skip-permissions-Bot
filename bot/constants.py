@@ -252,22 +252,27 @@ STRATEGY_SETUPS = {
     "dangerously-skip-permissions-v2.6": {
         "id": "dangerously-skip-permissions-v2.6",
         "symbol": "⚡ DSP-v2.6",
-        "name": "Dangerously Skip Permissions v2.6 (Hedge-Now Entry)",
+        "name": "Dangerously Skip Permissions v2.6 (Patient Pair)",
         "entry": {
-            # Same numbers as v2.5 on purpose: the only variable is the engine,
-            # which now refuses a speculative leg unless the hedge exists at
-            # entry, and books a maker fill only when a print sells into it.
+            # v2.5's numbers with two placement rules replaced. The band now
+            # reaches the at-the-money entry the ledger shows (first leg near
+            # 50c within ~13s of the open) instead of stopping at 45c, and the
+            # hedge is a resting bid that closes in the sweep, not a taker buy
+            # on the next tick.
             "startAfterOpenSec": 4,
             "stopBeforeCloseSec": 75,
             "clipSharesDefault": 10.0,
             "maxShares": 45.0,
             "minFillPrice": 0.07,
-            "maxFillPrice": 0.45,
+            "maxFillPrice": 0.55,
             "benchmarkPairCost": 0.965,
             "targetPairCost": 0.965,
             "maxPairCost": 0.985,
             "maxShareLead": 46.0,
-            "maxUnhedgedUsd": 5.0,
+            # v2.5's $5.00 vetoed the curve's own mid-band (20 sh at 26c is
+            # $5.20, and the curve peaks at $5.37), so those dips never opened.
+            # $6.00 is the smallest round cap that covers the curve.
+            "maxUnhedgedUsd": 6.0,
             "dipCurve": {"lo": 0.07, "hi": 0.45, "sharesLo": 33.0, "sharesHi": 8.0},
             "rescuePairCostMax": 0.995,
             "rescueCeilingPrice": 0.985,
@@ -320,9 +325,9 @@ _SETUP_FEATURES = {
         "blurb": "inverse-dip clip curve (fatter clips at deep dips) with the gap limit denominated in dollars",
     },
     "dangerously-skip-permissions-v2.6": {
-        "sizing": "inverse-curve", "preflightGate": False, "hedgeNowGate": True,
+        "sizing": "inverse-curve", "preflightGate": False, "patientHedge": True,
         "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
-        "blurb": "v2.5's curve, but a leg opens only when the opposite ask plus its taker fee already completes the pair",
+        "blurb": "v2.5's curve, entered at the touch near 50c, with the hedge resting on the other side instead of crossing its ask",
     },
 }
 
@@ -355,6 +360,7 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
     sizing = f.get("sizing", "ladder")
     preflight = bool(f.get("preflightGate", False))
     hedge_now = bool(f.get("hedgeNowGate", False))
+    patient = bool(f.get("patientHedge", False))
     heavy = bool(f.get("heavyAtomic", False))
     sweep = bool(f.get("sweep", False))
     uncapped = bool(f.get("pairedVolumeCapped", True)) is False
@@ -400,6 +406,13 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
     if preflight:
         gate_txt = f"pre-flight hedge gate plus pair gates (under ${rescue:.3f})"
         sig_gate = f"Pre-Flight Gate (under ${rescue:.3f})"
+    elif patient:
+        gate_txt = (
+            f"a patient pair: the first leg is placed at the touch near the money, the hedge "
+            f"rests on the other side and is crossed only in the sweep, and the pair cost "
+            f"stays under ${cap:.3f}"
+        )
+        sig_gate = f"Patient Pair (under ${cap:.3f})"
     elif hedge_now:
         gate_txt = (
             f"a hedge that exists at entry: the leg plus the opposite ask plus its taker fee "
@@ -439,8 +452,10 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         "dipClips": dip_txt,
         "pairGates": f"fresh under ${tgt:.3f} / close under ${cap:.3f} / rescue under ${rescue:.3f}",
         "preflightGate": ("On (entry + opposite ask under $%.3f)" % rescue) if preflight
-                         else (f"On (leg + opposite ask + taker fee under ${cap:.3f})" if hedge_now
-                               else "Off (pair-cost gates only)"),
+                         else ("On (first leg at the touch, hedge rests on the other side)"
+                               if patient else
+                               (f"On (leg + opposite ask + taker fee under ${cap:.3f})" if hedge_now
+                                else "Off (pair-cost gates only)")),
         "heavyFills": ("%g sh atomic pairs" % mx) if heavy else "None",
         "netGapCap": (f"never ${dollar_cap:.2f} of unhedged cost" if dollar_cap > 0
                       else f"never {lead:g} sh+ (~${exposure:.2f} at ceiling)") + ("; paired volume uncapped" if uncapped else ""),

@@ -321,14 +321,14 @@ class TestStrategySetups(unittest.TestCase):
             CONFIG_PATH.write_text(orig_content, encoding="utf-8")
 
     def test_deficit_rescue_allows_up_to_985_odds(self):
-        """Verify that when an open share deficit exists, odds up to 98.5¢ are accepted to rescue/close the deficit."""
+        """A deficit hedge may quote up to the 98.5c rescue ceiling — as a resting bid."""
         inv = {
             "Up": {"shares": 50.0, "cost": 4.00},   # avg 0.08
             "Down": {"shares": 20.0, "cost": 10.00}, # avg 0.50, deficit = 30 Down needed
         }
         quotes = {
             "Up": {"bid": 0.01, "ask": 0.02},
-            "Down": {"bid": 0.95, "ask": 0.98},  # spread > 0.01 -> TAKER fill at 0.98
+            "Down": {"bid": 0.95, "ask": 0.98},
         }
         dec = evaluate_microstructure_ladder(
             quotes=quotes,
@@ -343,7 +343,8 @@ class TestStrategySetups(unittest.TestCase):
         self.assertEqual(dec.action, "fill")
         self.assertEqual(dec.outcome, "Down")
         self.assertEqual(dec.shares, 30.0)
-        self.assertEqual(dec.price, 0.98)
+        self.assertEqual(dec.price, 0.95)
+        self.assertEqual(dec.role, "MAKER")
 
     def test_balanced_inventory_strictly_rejects_98_odds(self):
         """Verify that when inventory is balanced (deficit=0), 98¢ certainty quotes are strictly skipped."""
