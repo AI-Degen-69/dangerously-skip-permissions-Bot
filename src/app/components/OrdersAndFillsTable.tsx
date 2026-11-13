@@ -60,9 +60,14 @@ export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsP
 
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
-      // Rows belong to the window their timestamp falls in. Matching the market
-      // slug alone leaked fills the bot placed in its pre-open pipeline (a few
-      // seconds before the next window) into that next window's list.
+      // A settlement is not an execution: this table lists orders and fills.
+      // The window result (winner, payout) is already in the decision journal.
+      if (item.kind === 'settle') return false
+
+      // Rows belong to the window of the market they traded. The bot opens the
+      // next window's straddle seconds before that window opens, so those fills
+      // land in the previous window's clock — the slug keeps them with the
+      // window the chart and the positions count them in.
       if (activeSlot != null && windowSlotOf(item) !== activeSlot) return false
 
       const detail = item.detail as Record<string, unknown> | undefined
@@ -188,8 +193,8 @@ export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsP
                 <th className="py-2.5 px-3 font-medium">Type</th>
                 <th className="py-2.5 px-3 text-right font-medium">Size</th>
                 <th className="py-2.5 px-3 text-right font-medium">Price</th>
-                <th className="py-2.5 px-3 text-right font-medium">Total Cost</th>
                 <th className="py-2.5 px-3 text-right font-medium">Fee</th>
+                <th className="py-2.5 px-3 text-right font-medium">Total Cost</th>
                 <th className="py-2.5 px-3 text-right font-medium">Rebate</th>
                 <th className="py-2.5 px-3 font-medium">Status</th>
               </tr>
@@ -317,12 +322,7 @@ export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsP
                       {trade.price != null ? cents(trade.price) : <span className="text-faint">—</span>}
                     </td>
 
-                    {/* 6. Total Cost */}
-                    <td className="py-2.5 px-3 text-right font-mono text-[12.5px] font-semibold tabular-nums text-fg">
-                      {cost != null ? money(cost) : <span className="font-normal text-faint">—</span>}
-                    </td>
-
-                    {/* 7. Fee */}
+                    {/* 6. Fee */}
                     <td className="py-2.5 px-3 text-right font-mono text-[12.5px] tabular-nums">
                       {feeUsd == null ? (
                         <span className="text-faint">—</span>
@@ -331,6 +331,11 @@ export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsP
                       ) : (
                         <span className="text-faint">$0.00</span>
                       )}
+                    </td>
+
+                    {/* 7. Total Cost - the bot fill usd, which already carries the fee */}
+                    <td className="py-2.5 px-3 text-right font-mono text-[12.5px] font-semibold tabular-nums text-fg">
+                      {cost != null ? money(cost) : <span className="font-normal text-faint">—</span>}
                     </td>
 
                     {/* 8. Rebate */}

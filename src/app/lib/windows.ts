@@ -19,12 +19,14 @@ export function slotOfTime(ts: number | string | null | undefined): number | nul
 }
 
 /**
- * The window a feed row belongs to. Its execution timestamp wins over the slug
- * it was recorded under: the bot tags fills placed by its pre-open pipeline
- * with the upcoming window, yet those fills happened before it opened.
+ * The window a feed row belongs to. Its market slug wins: the bot opens the
+ * next window's straddle seconds before that window opens, so those fills sit
+ * in the previous window's clock while belonging to the market they traded —
+ * the same window the chart markers, the positions and the fills badge count
+ * them in. The timestamp is the fallback for rows without a slug.
  */
 export function windowSlotOf(item: { ts?: number | string; slug?: string }): number | null {
-  return slotOfTime(item.ts) ?? slotOfSlug(item.slug)
+  return slotOfSlug(item.slug) ?? slotOfTime(item.ts)
 }
 
 export interface WindowRef {

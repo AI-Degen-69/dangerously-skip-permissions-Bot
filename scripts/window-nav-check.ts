@@ -20,10 +20,12 @@ assert.equal(slotOfTime(new Date(1794297600_000).toISOString()), 1794297600)
 assert.equal(slotOfTime('garbage'), null)
 assert.equal(slotOfTime(undefined), null)
 
-// A fill placed 8s before its market's slot belongs to the window that closed.
+// A fill placed 8s before its market's slot still belongs to that market's
+// window: it is the straddle the bot opens just before the window opens.
 const earlyFill = { ts: 1794297592_000, slug: SLUG_B }
-assert.equal(windowSlotOf(earlyFill), 1794297300, 'pre-open fill lands in the previous window')
+assert.equal(windowSlotOf(earlyFill), 1794297600, 'pre-open fill stays with its market')
 assert.equal(windowSlotOf({ ts: 1794297605_000, slug: SLUG_B }), 1794297600, 'in-window fill stays put')
+assert.equal(windowSlotOf({ ts: 1794297592_000 }), 1794297300, 'no slug falls back to the timestamp')
 assert.equal(windowSlotOf({ slug: SLUG_B }), 1794297600, 'no timestamp falls back to the slug')
 assert.equal(windowSlotOf({}), null)
 
@@ -34,14 +36,22 @@ assert.deepEqual(
   'oldest first, deduped, slug-less rows ignored',
 )
 
-// A fill before its own market's slot keeps that earlier window navigable.
-const earlyWindows = buildWindows([earlyFill], [SLUG_B])
+// A row without a slug is placed by its timestamp, and that window stays navigable.
+const looseFill = { ts: 1794297592_000 }
+const looseWindows = buildWindows([looseFill], [SLUG_B])
 assert.deepEqual(
-  earlyWindows.map((w) => w.slot),
+  looseWindows.map((w) => w.slot),
   [1794297300, 1794297600],
   'timestamp-only window added next to the slug window',
 )
-assert.equal(earlyWindows[0].slug, '', 'timestamp-only window carries no slug')
+assert.equal(looseWindows[0].slug, '', 'timestamp-only window carries no slug')
+
+const earlyWindows = buildWindows([earlyFill], [SLUG_B])
+assert.deepEqual(
+  earlyWindows.map((w) => w.slot),
+  [1794297600],
+  'a pre-open fill adds no window of its own',
+)
 assert.equal(
   earlyWindows.filter((w) => windowSlotOf(earlyFill) === w.slot).length,
   1,
