@@ -1,7 +1,7 @@
 import unittest
 from bot import constants as C
 from bot.executor import evaluate_microstructure_ladder
-from bot.fill_model import bucket_for_price, confirm_maker_buy, label_taker_fill
+from bot.fill_model import bucket_for_price, confirm_maker_buy, label_taker_fill, match_maker_print
 from bot.ws import LiveBookStreamer
 
 
@@ -165,6 +165,54 @@ class WsPrintTests(unittest.TestCase):
             self.assertEqual(s.print_count, 0)
         finally:
             s.stop()
+
+
+class MakerPrintMatchTests(unittest.TestCase):
+    """The resting bid the live loop only fills when someone sells into it."""
+
+    def _order(self, **kw):
+        base = {"side": "Up", "price": 0.42, "shares_left": 10.0, "queue_ahead": 0.0}
+        base.update(kw)
+        return base
+
+    def _print(self, **kw):
+        base = {"outcome": "Up", "side": "SELL", "price": 0.42, "size": 10.0}
+        base.update(kw)
+        return base
+
+    def test_a_sell_at_the_limit_fills_the_order(self):
+        order = self._order()
+        hit = match_maker_print(order, self._print())
+        self.assertEqual(hit["fills"], 10.0)
+        self.assertEqual(order["shares_left"], 0.0)
+
+    def test_a_buy_print_never_fills_a_resting_bid(self):
+        self.assertIsNone(match_maker_print(self._order(), self._print(side="BUY")))
+        self.assertIsNone(match_maker_print(self._order(), self._print(side="")))
+
+    def test_a_sell_above_the_limit_does_not_fill(self):
+        self.assertIsNone(match_maker_print(self._order(price=0.42), self._print(price=0.43)))
+
+    def test_the_queue_is_paid_before_the_order(self):
+        order = self._order(queue_ahead=25.0)
+        self.assertIsNone(match_maker_print(order, self._print(size=20)))
+        self.assertEqual(order["queue_ahead"], 5.0)
+        hit = match_maker_print(order, self._print(size=15))
+        self.assertEqual(hit["fills"], 10.0)
+        self.assertEqual(hit["queueAhead"], 5.0)
+
+    def test_a_large_print_fills_partially(self):
+        order = self._order(shares_left=10.0, queue_ahead=12.0)
+        hit = match_maker_print(order, self._print(size=15))
+        self.assertEqual(hit["fills"], 3.0)
+        self.assertEqual(hit["queueAhead"], 12.0)
+        self.assertEqual(order["shares_left"], 7.0)
+
+    def test_another_outcome_is_not_my_fill(self):
+        self.assertIsNone(match_maker_print(self._order(), self._print(outcome="Down")))
+
+    def test_no_size_no_fill(self):
+        self.assertIsNone(match_maker_print(self._order(), self._print(size=0)))
 
 
 class SetupCopyTests(unittest.TestCase):

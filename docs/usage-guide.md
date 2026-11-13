@@ -121,8 +121,8 @@ Allows adjusting strategy parameters and safety limits. All values are automatic
 
 ### 4. Strategy (`/strategy`) — Technical Breakdown
 An interactive educational breakdown explaining the 5-minute window mechanics:
-- **Phase 0 (13s):** Wait for initial price discovery, assess lean, and take initial position.
-- **Phase 1 (15s–30s):** Take the opposing contract to form a buy-only straddle.
+- **Phase 0 (pre-open):** Warm the live book and the tape before the bell. Nothing is booked here — entries start `startAfterOpenSec` after the window opens, and a pre-open price is not a fill.
+- **Phase 1 (opening):** Rest a bid on both contracts, and the order fills first at the opening clip. The opposing leg is a resting bid, not a promise: it becomes a fill only when someone sells into it.
 - **Phase 2 (M1–M3):** Event-driven clipping up to ~45 fills as liquidity refreshes.
 - **Phase 3 (M4):** Fade execution before window close, hold to settlement, and redeem at $1.00 for winning shares.
 

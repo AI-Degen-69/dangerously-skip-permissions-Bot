@@ -45,11 +45,20 @@ python bot/live_paper.py --slot <epoch>
 
 The recorder writes every trade print the bot sees. Recording is not optional:
 the loop creates the run's tape dir before its first window and refuses to start
-if it cannot, because the verification and the attainable-fill audit below both
-read back from it. The verifier stamps each paper fill with what the tape
-corroborates: a maker fill at limit L counts as `verified` when the tape printed
-at least the clip's size at or below L inside that window. Taker fills stay
-`unverified-taker` — paper mode has no real book to check them against.
+if it cannot, because the fill engine, the verification and the attainable-fill
+audit below all read back from it.
+
+A maker order is not a fill. The loop rests it at its price and it only becomes a
+fill when a taker SELL prints at or below that price, behind whatever was already
+resting there; a partial print fills partially, and re-pricing an order sends it
+to the back of the queue. Taker orders execute at once, because a market order
+really does. Trading starts `startAfterOpenSec` after the bell: Phase 0 warms the
+streamer before it, but nothing is booked against the pre-open book.
+
+The verifier stamps each fill with what the tape corroborates: a maker fill at
+limit L counts as `verified` when the tape printed at least the clip's size at or
+below L inside that window. Taker fills stay `unverified-taker` — paper mode has
+no real book to check them against.
 
 The live loop stamps the window it is trading. A run that started before the
 verifier existed keeps its older fills unstamped, so the desk's "Verified Only"
@@ -69,11 +78,13 @@ net are untouched.
 trade that can fill a resting bid — a taker SELL at or below the limit, after
 the fill. The live loop runs that same rule every 5 s while a window trades and
 finalizes it when the window closes, stamping each fill's `detail.attainable` so
-the desk shows the verdict during the run, not only at the end. When the loop
-recorded `detail.queueAhead` (the size already resting at that price), the flow
-has to outlast it; older fills pass on sell size alone, so their attainable
-number is an upper bound. Taker fills always count. The desk shows the result as
-the "attainable" number beside the net, before rebates.
+the desk shows the verdict during the run, not only at the end. Because the fill
+engine itself now books a maker fill only on that print, the two should agree;
+the audit is the independent check that they do. When the loop recorded
+`detail.queueAhead` (the size already resting at that price), the flow has to
+outlast it; older fills pass on sell size alone, so their attainable number is an
+upper bound. Taker fills always count. The desk shows the result as the
+"attainable" number beside the net, before rebates.
 
 ## Kill-switch drill (verified 2026-11-07)
 

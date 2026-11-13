@@ -63,6 +63,40 @@ def confirm_maker_buy(
     return PrintFillResult(status='unconfirmed', filled_shares=0.0, covering_size=0.0)
 
 
+def match_maker_print(order: dict, print_row: dict) -> dict | None:
+    """Fill a resting bid from one tape print, behind whatever was already there.
+
+    `order` is mutated: the queue at the limit is consumed first, then the
+    order's own shares. Returns {"fills", "queueAhead"} for the fill, or None.
+
+    Only an explicit SELL fills a resting buy, and only at or below the limit.
+    A print with no side is passed over: after the fill audit, an unexplained
+    fill is the one mistake this engine must not repeat.
+    """
+    if str(order.get("side")) != str(print_row.get("outcome")):
+        return None
+    if _norm_side(print_row.get("side")) not in ("SELL", "ASK", "SELLS"):
+        return None
+    try:
+        px = float(print_row.get("price") or 0.0)
+        size = float(print_row.get("size") or 0.0)
+        limit = float(order.get("price") or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if size <= 0 or limit <= 0 or px > limit + 1e-9:
+        return None
+    ahead = max(0.0, float(order.get("queue_ahead") or 0.0))
+    used = min(ahead, size)
+    order["queue_ahead"] = ahead - used
+    right = min(size - used, max(0.0, float(order.get("shares_left") or 0.0)))
+    if right <= 0:
+        return None
+    order["shares_left"] = float(order.get("shares_left") or 0.0) - right
+    # The queue as it stood when this print arrived: stamping the original value
+    # would make the audit re-charge a queue this fill already paid.
+    return {"fills": right, "queueAhead": ahead}
+
+
 def label_taker_fill(clip: float) -> PrintFillResult:
     try:
         want = float(clip)

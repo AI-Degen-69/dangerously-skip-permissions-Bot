@@ -35,6 +35,7 @@ if sys.stderr and hasattr(sys.stderr, "reconfigure"):
     except Exception:
         pass
 
+import collections
 import threading
 import time
 import urllib.request
@@ -52,6 +53,7 @@ from bot.executor import (
     evaluate_microstructure_ladder,
 )
 from bot.fill_audit import attainable_indexes, audit_window
+from bot.fill_model import match_maker_print
 from bot.risk import RiskState, assert_single_window, check_window, clip_shares, heartbeat
 from bot.runs import RunWorkspace, find_run_id, get_active_run_id, make_run_id, set_active_run_id
 from bot.signal import LeanSignal
@@ -617,6 +619,168 @@ def trade_window(
             return round((inv["Up"]["cost"] / inv["Up"]["shares"]) + (inv["Down"]["cost"] / inv["Down"]["shares"]), 4)
         return None
 
+    # --- Fill engine -------------------------------------------------------
+    # A maker order is not a fill. It rests at its price and only becomes a fill
+    # when a taker SELL prints at or below that price, behind whatever was
+    # already resting there. A taker order still executes at once.
+    token_outcome = {str(spec.up_token_id): "Up", str(spec.down_token_id): "Down"}
+    open_orders: dict[str, dict] = {}
+    pending_prints: collections.deque = collections.deque()
+    prints_lock = threading.Lock()
+
+    def _queue_print(pr) -> None:
+        with prints_lock:
+            pending_prints.append(pr)
+
+    # The pre-open streamer was started before this window and has no callback.
+    streamer.on_print = _queue_print
+
+    def _minute_of(ts: float) -> int:
+        return int(min(max((ts - slot) // 60, 0), 4))
+
+    def _book_fill(outcome: str, px: float, shares: float, role: str, minute: int,
+                   reason: str, sub_reason: str, queue_ahead, deficit: float,
+                   ts_ms: int | None = None) -> None:
+        nonlocal cost, total_fees_usd, last_fill_ts, last_fill_px
+        imbalance_before = abs(inv["Up"]["shares"] - inv["Down"]["shares"])
+        usd, fee_usd = compute_fill_usd(shares, px, role=role, include_fee=include_taker_fee)
+        inv[outcome]["shares"] += shares
+        inv[outcome]["cost"] += usd
+        cost += usd
+        total_fees_usd += fee_usd
+        last_fill_ts = time.time()
+        last_fill_px = px
+        # Only stamp a pair cost when this fill REDUCES the imbalance
+        # (i.e. it closes/equalizes a pair). Opening/extending dips get
+        # None: no pair exists yet, so a blended running average here
+        # would read as "this pair cost X" and mislead.
+        imbalance_after = abs(inv["Up"]["shares"] - inv["Down"]["shares"])
+        pair_cost = _live_pair_cost() if imbalance_after < imbalance_before else None
+
+        # Semantic trade tagging
+        if len(fills) == 0:
+            trade_reason = "straddle-open"
+            event_reason = "straddle-open"
+            fill_kind = "entry"
+        elif len(fills) == 1:
+            trade_reason = "hedge-leg"
+            event_reason = "hedge-leg"
+            fill_kind = "entry"
+        elif sub_reason == "rescue-equalizer":
+            trade_reason = "rescue-hedge"
+            event_reason = "clip-fill"
+            fill_kind = "hedge"
+        elif minute == 4 and reason == "m4-snipe":
+            trade_reason = "m4-snipe"
+            event_reason = "m4-snipe"
+            fill_kind = "snipe"
+        elif sub_reason == "hedge-equalizer":
+            trade_reason = "hedge-equalizer"
+            event_reason = "clip-fill"
+            fill_kind = "entry"
+        elif sub_reason == "maker-dip-ladder":
+            trade_reason = "maker-dip-ladder"
+            event_reason = "clip-fill"
+            fill_kind = "entry"
+        else:
+            trade_reason = "straddle-balance"
+            event_reason = "clip-fill"
+            fill_kind = "entry"
+
+        fills.append({
+            "minute": minute,
+            "ts": ts_ms if ts_ms is not None else int(time.time() * 1000),
+            "outcome": outcome,
+            "price": px,
+            "shares": shares,
+            "usd": usd,
+            "reason": trade_reason,
+            "detail": {
+                "minute": minute,
+                "role": role,
+                # The queue this fill actually paid through, not what was
+                # resting when the loop happened to look.
+                "queueAhead": queue_ahead,
+                "subReason": sub_reason,
+                "feeUsd": fee_usd,
+                "pairCost": pair_cost,
+                "deficit": deficit,
+                "strategy": strat_id,
+                "tapeStatus": "pending" if _tape_on else None,
+            },
+        })
+
+        log_event(fill_kind, event_reason, slug, side=outcome,
+                  detail={"minute": f"M{minute}", "price": px, "shares": shares,
+                          "role": role, "subReason": sub_reason,
+                          "feeUsd": fee_usd, "pairCost": pair_cost,
+                          "upShares": round(inv["Up"]["shares"], 1),
+                          "downShares": round(inv["Down"]["shares"], 1),
+                          "fills": len(fills), "cost": round(cost, 2),
+                          "strategy": strat_sym})
+        log(f"M{minute} {outcome} {shares:.1f} @ {px:.3f} [{role} · {trade_reason}] (pair={pair_cost})")
+        write_state(slug, end_ms, started_ms, fills,
+                    ws_status=streamer.get_status(), recent_ticks=streamer.get_recent_ticks(30))
+
+    def _drain_prints() -> None:
+        """Turn the prints that arrived since the last tick into fills."""
+        with prints_lock:
+            batch = list(pending_prints)
+            pending_prints.clear()
+        for pr in batch:
+            outcome = token_outcome.get(str(getattr(pr, "asset_id", "")))
+            if outcome is None:
+                continue
+            order = open_orders.get(outcome)
+            if order is None:
+                continue
+            hit = match_maker_print(order, {
+                "outcome": outcome,
+                "side": getattr(pr, "side", ""),
+                "price": getattr(pr, "price", 0.0),
+                "size": getattr(pr, "size", 0.0),
+            })
+            if hit is not None:
+                ts = float(getattr(pr, "ts", 0.0) or 0.0) or time.time()
+                _book_fill(outcome, order["price"], hit["fills"], "MAKER",
+                           _minute_of(ts),
+                           order["reason"], order["sub_reason"], hit["queueAhead"],
+                           order["deficit"], ts_ms=int(ts * 1000))
+            if order["shares_left"] <= 0:
+                open_orders.pop(outcome, None)
+
+    def _place_maker(outcome: str, px: float, shares: float, minute: int,
+                     reason: str, sub_reason: str, deficit: float) -> None:
+        cur = open_orders.get(outcome)
+        if cur is not None and abs(cur["price"] - px) < 1e-9:
+            # Same price: keep the order where it is. Re-placing it would send
+            # us to the back of the queue on every tick.
+            return
+        ahead = live_queue_ahead(streamer,
+                                 spec.up_token_id if outcome == "Up" else spec.down_token_id, px)
+        open_orders[outcome] = {
+            "side": outcome,
+            "price": px,
+            "shares_left": shares,
+            "queue_ahead": float(ahead) if ahead is not None else 0.0,
+            "placed_ts": time.time(),
+            "reason": reason,
+            "sub_reason": sub_reason,
+            "minute": minute,
+            "deficit": deficit,
+        }
+        shown = ahead if ahead is not None else "unknown"
+        log(f"M{minute} {outcome} rest {shares:.1f} @ {px:.3f} behind {shown} [MAKER · {sub_reason}]")
+
+    def _cancel_orders(why: str) -> None:
+        for side, order in list(open_orders.items()):
+            log(f"cancel {side} {order['shares_left']:.1f} @ {order['price']:.3f} ({why})")
+            log_event("refuse", "order-cancel", slug, side=side,
+                      detail={"minute": f"M{order['minute']}", "price": order["price"],
+                              "shares": round(order["shares_left"], 2), "why": why,
+                              "strategy": strat_sym})
+            open_orders.pop(side, None)
+
     try:
         closed_cleanly = False
         cutoff_sbc = min(stop_before, C.HARD_CUTOFF_SBC)
@@ -629,8 +793,19 @@ def trade_window(
 
         while True:
             now = int(time.time())
+            # Phase 0 warms the streamer before the bell; trading starts when the
+            # window does. Booking fills against the pre-open book was never a
+            # fill anyone could have got.
+            if now < slot + start_after_open:
+                streamer.wait_for_tick(timeout=0.25)
+                continue
+            _drain_prints()
             imbalance = abs(inv["Up"]["shares"] - inv["Down"]["shares"])
             in_sweep_phase = (now >= end and now < sweep_end and imbalance > 0.0)
+            if now >= end and open_orders:
+                # The strategy stops opening in the sweep; a bid left resting
+                # through it would fill on flow the strategy never saw.
+                _cancel_orders("sweep phase")
 
             if now >= sweep_end or (now >= end and imbalance <= 0.0):
                 up_sh = sum(f["shares"] for f in fills if f["outcome"] == "Up")
@@ -734,88 +909,23 @@ def trade_window(
                 streamer.wait_for_tick(timeout=0.25)
                 continue
 
-            usd, fee_usd = compute_fill_usd(shares, px, role=role, include_fee=include_taker_fee)
-            inv[outcome]["shares"] += shares
-            inv[outcome]["cost"] += usd
-            cost += usd
-            total_fees_usd += fee_usd
-            last_fill_ts = time.time()
-            last_fill_px = px
-            # Only stamp a pair cost when this fill REDUCES the imbalance
-            # (i.e. it closes/equalizes a pair). Opening/extending dips get
-            # None: no pair exists yet, so a blended running average here
-            # would read as "this pair cost X" and mislead.
-            imbalance_after = abs(inv["Up"]["shares"] - inv["Down"]["shares"])
-            pair_cost = _live_pair_cost() if imbalance_after < imbalance else None
-
-            # Semantic trade tagging
-            if len(fills) == 0:
-                trade_reason = "straddle-open"
-                event_reason = "straddle-open"
-                fill_kind = "entry"
-            elif len(fills) == 1:
-                trade_reason = "hedge-leg"
-                event_reason = "hedge-leg"
-                fill_kind = "entry"
-            elif decision.sub_reason == "rescue-equalizer":
-                trade_reason = "rescue-hedge"
-                event_reason = "clip-fill"
-                fill_kind = "hedge"
-            elif minute == 4 and decision.reason == "m4-snipe":
-                trade_reason = "m4-snipe"
-                event_reason = "m4-snipe"
-                fill_kind = "snipe"
-            elif decision.sub_reason == "hedge-equalizer":
-                trade_reason = "hedge-equalizer"
-                event_reason = "clip-fill"
-                fill_kind = "entry"
-            elif decision.sub_reason == "maker-dip-ladder":
-                trade_reason = "maker-dip-ladder"
-                event_reason = "clip-fill"
-                fill_kind = "entry"
+            # A taker order really does execute at the ask, so it is booked now.
+            # A maker order only rests: the fill lands when a print sells into it.
+            if role == "TAKER":
+                # A taker order really does execute at the ask, so it is booked
+                # now. Crossing the spread and leaving a resting bid on the same
+                # side would be double exposure the desk never ordered.
+                open_orders.pop(outcome, None)
+                _book_fill(outcome, px, shares, "TAKER", minute,
+                           decision.reason, decision.sub_reason, None,
+                           decision.share_deficit)
             else:
-                trade_reason = "straddle-balance"
-                event_reason = "clip-fill"
-                fill_kind = "entry"
-
-            fills.append({
-                "minute": minute,
-                "ts": int(time.time() * 1000),
-                "outcome": outcome,
-                "price": px,
-                "shares": shares,
-                "usd": usd,
-                "reason": trade_reason,
-                "detail": {
-                    "minute": minute,
-                    "role": role,
-                    # What a real bid at this price would have queued behind.
-                    "queueAhead": live_queue_ahead(
-                        streamer, spec.up_token_id if outcome == "Up" else spec.down_token_id, px
-                    ) if role == "MAKER" else None,
-                    "subReason": decision.sub_reason,
-                    "feeUsd": fee_usd,
-                    "pairCost": pair_cost,
-                    "deficit": decision.share_deficit,
-                    "strategy": strat_id,
-                    "tapeStatus": "pending" if _tape_on else None,
-                },
-            })
-
-            log_event(fill_kind, event_reason, slug, side=outcome,
-                      detail={"minute": f"M{minute}", "price": px, "shares": shares,
-                              "role": role, "subReason": decision.sub_reason,
-                              "feeUsd": fee_usd, "pairCost": pair_cost,
-                              "upShares": round(inv["Up"]["shares"], 1),
-                              "downShares": round(inv["Down"]["shares"], 1),
-                              "fills": len(fills), "cost": round(cost, 2),
-                              "strategy": strat_sym})
-            log(f"M{minute} {outcome} {shares:.1f} @ {px:.3f} [{role} · {trade_reason}] (pair={pair_cost})")
-            write_state(slug, end_ms, started_ms, fills,
-                        ws_status=streamer.get_status(), recent_ticks=streamer.get_recent_ticks(30))
+                _place_maker(outcome, px, shares, minute,
+                             decision.reason, decision.sub_reason, decision.share_deficit)
             streamer.wait_for_tick(timeout=0.25)
         closed_cleanly = True
     finally:
+        _cancel_orders("window closed")
         stop_sync.set()
         sync_thread.join(timeout=1.0)
         verify_thread.join(timeout=2.0)

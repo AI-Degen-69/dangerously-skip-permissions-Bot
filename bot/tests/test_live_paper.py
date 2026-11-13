@@ -14,6 +14,51 @@ from bot.signal import LeanSignal
 from bot.ws import ConnectionState, LiveBookStreamer, TokenBook
 
 
+class _FakeStreamer:
+    """A streamer that emits a SELL print on both outcomes every tick.
+
+    The loop only fills a maker order from a print, so a test streamer that
+    never prints can only ever record zero fills.
+    """
+
+    def __init__(self, clock, price=0.47, size=50.0):
+        self.clock = clock
+        self.price = price
+        self.size = size
+        self.on_print = None
+        self.enable_trade_prints = False
+        self.tape_dir = None
+        self.ids = {"tok_up": "Up", "tok_down": "Down"}
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+    def wait_for_tick(self, timeout=0.25):
+        self.clock[0] += max(0.01, float(timeout))
+        if self.on_print is None:
+            return
+        for asset_id in self.ids:
+            self.on_print(SimpleNamespace(
+                asset_id=asset_id, side="SELL", price=self.price,
+                size=self.size, ts=self.clock[0],
+            ))
+
+    def get_buy_price(self, token_id):
+        return None
+
+    def get_status(self):
+        return {}
+
+    def get_recent_ticks(self, limit=30):
+        return []
+
+    def depth(self, asset_id, levels=1):
+        return {"bids": [], "asks": []}
+
+
 class LivePaperLoopTests(unittest.TestCase):
     def setUp(self):
         self.tmp_dir = tempfile.TemporaryDirectory()
@@ -76,7 +121,8 @@ class LivePaperLoopTests(unittest.TestCase):
         with patch("bot.live_paper.settle_slug"), \
              patch("bot.live_paper.KILL_PATH", self.tmp_path / "kill"), \
              patch("bot.live_paper.time", SimpleNamespace(time=fake_time, sleep=fake_sleep), create=True):
-            res = trade_window(mock_client, slot=slot, origin=None, verbose=False)
+            res = trade_window(mock_client, slot=slot, origin=None, verbose=False,
+                               pre_streamer=_FakeStreamer(clock))
         elapsed = real_time() - t0
 
         self.assertEqual(res["trades"], 4)
@@ -280,7 +326,8 @@ class LivePaperLoopTests(unittest.TestCase):
         with patch("bot.live_paper.settle_slug"), \
              patch("bot.live_paper.KILL_PATH", self.tmp_path / "kill"), \
              patch("bot.live_paper.time", SimpleNamespace(time=fake_time, sleep=fake_sleep), create=True):
-            trade_window(mock_client, slot=slot, origin=None, verbose=False)
+            trade_window(mock_client, slot=slot, origin=None, verbose=False,
+                         pre_streamer=_FakeStreamer(clock))
 
         # Confirm specific straddle & clip decisions were logged
         reasons_only = [r for _, r in logged_reasons]

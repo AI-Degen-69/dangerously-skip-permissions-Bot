@@ -69,6 +69,27 @@ class AttainableIndexesTest(unittest.TestCase):
         self.assertIsNone(attainable_indexes([_fill()], []))
 
 
+class EngineMatchesAuditTest(unittest.TestCase):
+    """The fill engine and the audit must agree: the engine books what the
+    audit would have credited, or the desk's two numbers drift apart again."""
+
+    def test_a_fill_the_engine_booked_is_attainable(self):
+        from bot.fill_model import match_maker_print
+
+        order = {"side": "Down", "price": 0.42, "shares_left": 10.0, "queue_ahead": 5.0}
+        hit = match_maker_print(order, {"outcome": "Down", "side": "SELL", "price": 0.42, "size": 12.0})
+        self.assertEqual(hit["fills"], 7.0)
+        fill = {
+            "ts": int((START + 10) * 1000), "outcome": "Down", "price": 0.42,
+            "shares": 7.0, "usd": 2.94,
+            "detail": {"role": "MAKER", "queueAhead": hit["queueAhead"]},
+        }
+        tape = [{"ts": START + 10, "slug_outcome": "Down", "price": 0.42, "size": 12.0, "side": "SELL"}]
+        got = audit_window([fill], tape, START, "Down")
+        self.assertEqual(got["attainableFills"], 1)
+        self.assertEqual(got["phantomFills"], 0)
+
+
 class AuditWindowTest(unittest.TestCase):
 
     def test_sell_flow_fills_the_clip(self):
