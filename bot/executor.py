@@ -415,6 +415,13 @@ def evaluate_microstructure_ladder(
         px = bid if (bid is not None and bid >= min_fill) else ask
         if px is None:
             continue
+        if is_dsp and (bid is None or bid < min_fill):
+            # DSP only rests bids. With no bid at or above the floor there is
+            # no price to rest at, and the ask fallback would book a taker fill
+            # instead: on 2026-11-13 it took 33 sh at 0.07 against a 0.05 bid
+            # and paid $0.15 of fee on a $2.46 clip, bypassing the dust skip.
+            saw_dust = True
+            continue
         if px < min_fill:
             saw_dust = True
             continue
@@ -518,6 +525,8 @@ def evaluate_microstructure_ladder(
                 share_deficit=0.0,
             )
 
+    # Ceiling first: the opposite side is out of band on almost every DSP tick,
+    # and this ordering is what the journal has always shown.
     if saw_ceiling:
         return MicrostructureDecision(action="skip", outcome=preferred, reason="extreme-price-skip", sub_reason="ceiling-price-skip")
     if saw_dust:
