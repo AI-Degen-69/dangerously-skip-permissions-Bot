@@ -165,6 +165,17 @@ export function InteractivePnlChart({
     Math.round((i * (points.length - 1)) / Math.max(1, numTimeLabels - 1)),
   )
 
+  // Where the calendar day turns over. The time labels alone cannot say which
+  // day a point belongs to once the view spans midnight, so every new day gets
+  // its own tick on the axis.
+  const dayMarks = points
+    .map((p, idx) => ({ idx, ts: p.ts }))
+    .filter((p, idx) => idx > 0 && new Date(p.ts).toDateString() !== new Date(points[idx - 1].ts).toDateString())
+    .map((p) => ({
+      idx: p.idx,
+      label: new Date(p.ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+    }))
+
   const clipAboveId = `clip-above-${chartId}`
   const clipBelowId = `clip-below-${chartId}`
   const greenGradId = `green-grad-${chartId}`
@@ -386,6 +397,36 @@ export function InteractivePnlChart({
           stroke="var(--color-line)"
           strokeWidth="1"
         />
+
+        {/* Day change ticks on the X-Axis */}
+        {dayMarks.map((mark) => {
+          const x = xCoord(mark.idx)
+          return (
+            <g key={`day-${mark.idx}`} className="pointer-events-none">
+              <line
+                x1={x}
+                x2={x}
+                y1={padTop}
+                y2={height - padBottom}
+                stroke="var(--color-line-strong)"
+                strokeDasharray="3 3"
+                strokeWidth="1"
+                opacity="0.75"
+              />
+              <text
+                x={Math.min(x + 4, width - padRight - 46)}
+                y={padTop - 8}
+                textAnchor="start"
+                fontSize="10"
+                fontWeight="600"
+                fill="var(--color-muted)"
+                className="font-mono"
+              >
+                {mark.label}
+              </text>
+            </g>
+          )
+        })}
 
         {/* Ticks for EVERY settled window along the X-Axis */}
         {points.map((p, idx) => {
