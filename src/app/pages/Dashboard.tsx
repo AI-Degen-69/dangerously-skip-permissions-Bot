@@ -99,6 +99,8 @@ export function Dashboard() {
   const baseCapital = scoped.baseCapital
   // The window log shows the same slice, pending windows included.
   const scopedLog = effective.filter((window) => window.startMs >= cutoff)
+  // The same slice as the tape recorded it, for the corroboration readout.
+  const scopedTape = windows.filter((window) => window.startMs >= cutoff)
 
   // Credit the rebate per window so the chart, the bars and the window log agree
   // with the KPI cards above them.
@@ -234,7 +236,7 @@ export function Dashboard() {
                 timeframe.ms == null ? '' : ` in the last ${timeframe.label}`
               } vs starting capital.${
                 verifiedOnly
-                  ? ' Verified fills only — the fills the tape verifier confirmed against real prints. Taker fills are never verified, so they drop out.'
+                  ? ' Verified fills only — the fills the tape corroborates against real prints. The fills the market never traded and the taker fills paper mode cannot check drop out, so read it as a lower bound.'
                   : ''
               }`}
               icon={<TrendingUp className="size-3.5" />}
@@ -434,13 +436,14 @@ export function Dashboard() {
                   onToggle={() => setVerifiedOnly(!verifiedOnly)}
                   title={
                     verifiedOnly
-                      ? 'Counting only the fills the tape verifier confirmed. Click to count every fill.'
-                      : 'Counting every fill. Click to count only the fills the tape verifier confirmed.'
+                      ? 'Counting only the fills the tape corroborates. Click to count every fill.'
+                      : 'Counting every fill. Click to count only the fills the tape corroborates.'
                   }
                 />
               </span>
             </div>
           )}
+          <CorroborationNote windows={scopedTape} />
 
           {scoped.windows.length > 0 ? (
             <>
@@ -992,6 +995,32 @@ function shapeOf(mShape: BotPerf['mShape'], verifiedOnly: boolean): BotPerf['mSh
     targetShare: mShape.targetShare,
     distance: mShape.verifiedDistance ?? mShape.distance,
   }
+}
+
+/**
+ * What the tape actually corroborates inside the view: the fills the real
+ * prints back, the ones the market never traded, and the payout riding on
+ * whatever is left over.
+ */
+function CorroborationNote({ windows }: { windows: PerfWindow[] }) {
+  const maker = windows.reduce((sum, w) => sum + (w.makerFills ?? 0), 0)
+  const taker = windows.reduce((sum, w) => sum + (w.takerFills ?? 0), 0)
+  const corroborated = windows.reduce((sum, w) => sum + (w.verified?.trades ?? 0), 0)
+  const uncorroboratedPayout = windows.reduce(
+    (sum, w) => sum + Math.max(0, (w.payoutUsd ?? 0) - (w.verified?.payoutUsd ?? 0)),
+    0,
+  )
+  if (maker === 0 && taker === 0) return null
+  const pct = maker > 0 ? (100 * corroborated) / maker : 0
+  const n = (value: number) => value.toLocaleString('en-US')
+  return (
+    <p className="mt-1.5 text-[11.5px] text-faint">
+      The tape corroborates {n(corroborated)} of {n(maker)} maker fills ({pct.toFixed(1)}%)
+      {maker - corroborated > 0 && <> · {n(maker - corroborated)} never traded at their limit</>}
+      {taker > 0 && <> · {n(taker)} taker fills cannot be checked in paper mode</>}
+      {uncorroboratedPayout > 0 && <> · {usd(uncorroboratedPayout)} of payout rests on the rest</>}
+    </p>
+  )
 }
 
 function TimeframePicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {

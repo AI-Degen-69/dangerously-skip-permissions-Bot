@@ -932,6 +932,10 @@ def _window_row(r: dict) -> dict:
         "bothSides": len(sides) > 1,
         "upFills": sum(1 for f in fills if f.get("outcome") == "Up"),
         "downFills": sum(1 for f in fills if f.get("outcome") == "Down"),
+        # Maker fills are the ones the tape can corroborate; taker fills cannot
+        # be checked at all in paper mode, so the desk reports the split.
+        "makerFills": int(r.get("maker_fills") or 0),
+        "takerFills": int(r.get("taker_fills") or 0),
         "zeroPriceFills": sum(1 for f in fills if _num(f.get("price")) <= 0),
         "mShape": _minute_shape(fills),
         "feesUsd": round(taker_fees, 4),

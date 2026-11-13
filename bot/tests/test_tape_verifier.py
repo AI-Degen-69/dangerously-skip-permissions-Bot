@@ -78,12 +78,19 @@ class TestVerifySingleFill(unittest.TestCase):
         result = verify_single_fill(fill, prints)
         self.assertEqual(result["tapeStatus"], "unverified")
 
-    def test_maker_unverified_prints_before_fill(self):
+    def test_maker_verified_print_before_fill(self):
+        """The print that took our limit can land just before the fill.
+
+        The bot reads the book after the trade, so the fill timestamp trails
+        the print. Requiring later prints only could never confirm a level the
+        market touched once - exactly the fill that pays out.
+        """
         fill_ts = time.time() - 60
         fill = _make_fill(price=0.42, shares=10, ts_ms=int(fill_ts * 1000))
         prints = [_make_print(price=0.42, size=100.0, ts=fill_ts - 10)]
         result = verify_single_fill(fill, prints)
-        self.assertEqual(result["tapeStatus"], "unverified")
+        self.assertEqual(result["tapeStatus"], "verified")
+        self.assertGreaterEqual(result["tapePrintSize"], 10)
 
     def test_maker_cumulative_size_across_prints(self):
         fill = _make_fill(price=0.42, shares=10, ts_ms=int((time.time() - 60) * 1000))
@@ -170,6 +177,39 @@ class TestVerifyFills(unittest.TestCase):
         changed = verify_fills([fill], self.tape_dir, window_start_s=now - 120, force=True)
         self.assertEqual(fill["detail"]["tapeStatus"], "unverified")
         self.assertEqual(changed, 1)
+
+    def test_next_window_prints_do_not_confirm(self):
+        """Only the window's own prints corroborate its fills.
+
+        The next window trades at the same level all the time, so a fill that
+        can lean on prints from the window after it is not corroborated.
+        """
+        now = time.time()
+        window_start = now - 600
+        window_end = window_start + 300
+        fill = _make_fill(ts_ms=int((window_start + 30) * 1000))
+        self._write_prints([
+            _make_print(price=0.42, size=100.0, ts=window_end + 60),
+        ])
+        verify_fills(
+            [fill], self.tape_dir,
+            window_start_s=window_start, window_end_s=window_end, force=True,
+        )
+        self.assertEqual(fill["detail"]["tapeStatus"], "unverified")
+
+    def test_own_window_prints_confirm(self):
+        now = time.time()
+        window_start = now - 600
+        window_end = window_start + 300
+        fill = _make_fill(ts_ms=int((window_start + 30) * 1000))
+        self._write_prints([
+            _make_print(price=0.42, size=100.0, ts=window_start + 10),
+        ])
+        verify_fills(
+            [fill], self.tape_dir,
+            window_start_s=window_start, window_end_s=window_end, force=True,
+        )
+        self.assertEqual(fill["detail"]["tapeStatus"], "verified")
 
 
 class TestVerificationSummary(unittest.TestCase):

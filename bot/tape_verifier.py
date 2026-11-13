@@ -1,11 +1,16 @@
 """Tape verification engine — checks assumed paper fills against real trade prints.
 
 For each MAKER fill at limit price L with clip size C:
-  1. Collect prints for the same outcome token with ts >= fill_ts and price <= L
+  1. Collect prints for the same outcome token with price <= L
   2. Sum their sizes
   3. If cumulative size >= C → verified
      If cumulative size > 0 but < C → partial
      If no prints → unverified
+
+Prints from either side of the fill count: the print that took the limit can
+land a moment before the fill timestamp, because the bot reads the book after
+the trade. A later window's prints must not count, so callers pass the window
+bounds.
 
 TAKER fills are always stamped 'unverified-taker' — in paper mode our
 hypothetical crossing order never enters the real book.
@@ -116,11 +121,14 @@ def verify_single_fill(
             "tapeCheckedAt": _utc_now_iso(),
         }
 
-    # Filter prints: same outcome, ts >= fill ts, price <= fill price (price priority)
+    # The tape proves the level traded with our size. The print that took our
+    # limit can land just BEFORE the fill timestamp - the bot reads the book
+    # after the trade - so both sides of the fill count. Requiring later prints
+    # only could never confirm a level the market touched once, which is
+    # exactly the one-and-done fill that pays out.
     confirming = [
         p for p in prints
         if p.get("slug_outcome") == outcome
-        and p.get("ts", 0) >= fill_ts_s
         and p.get("price", 999) <= price
     ]
 
