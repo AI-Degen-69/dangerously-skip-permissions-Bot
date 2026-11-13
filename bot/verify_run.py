@@ -111,7 +111,9 @@ def main() -> int:
             changed_windows += 1
 
         if prints is not None:
-            fidelity = audit_window(fills, prints, float(epoch), record.get("winner"))
+            fidelity = audit_window(
+                fills, prints, float(epoch), record.get("winner"), record.get("condition_id")
+            )
             if fidelity is not None:
                 record["fidelity"] = fidelity
                 audited.append(fidelity)

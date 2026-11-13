@@ -11,9 +11,11 @@ Prints record the taker side: a resting BUY is filled by a SELL print, never by
 a BUY print. Getting that backwards inverts the whole result.
 
 Where the queue is unknown (windows from before ``detail.queueAhead`` was
-recorded) the fill is judged on sell size alone, which is an upper bound. No
-prints at all in the window means the window cannot be judged: ``audit_window``
-returns None rather than declaring every fill phantom.
+recorded) the fill is judged on sell size alone, which is an upper bound. Each
+share sold fills one order, so the flow is spent across fills highest price then
+oldest first. No prints at all in the window for its own market means the window
+cannot be judged: ``audit_window`` returns None rather than declaring every fill
+phantom.
 """
 
 from __future__ import annotations
@@ -74,17 +76,18 @@ def audit_window(
     prints: list[dict],
     window_start_s: float,
     winner: str | None,
+    condition_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Compare one closed window's fills with what the tape could have filled.
 
-    Returns None when the tape holds no print inside the window: silence is
-    missing evidence, not proof that nothing traded.
+    Returns None when the tape holds no print for this window's own market
+    inside it: silence is missing evidence, not proof that nothing traded.
     """
     start = float(window_start_s)
     end = start + C.WINDOW_S
     lo = bisect.bisect_left(prints, start, key=_print_ts)
     hi = bisect.bisect_right(prints, end, key=_print_ts)
-    tape = prints[lo:hi]
+    tape = _own_market(prints[lo:hi], condition_id)
     if not tape:
         return None
 
@@ -92,32 +95,41 @@ def audit_window(
     assumed_shares = attainable_shares = 0.0
     attainable_cost = attainable_payout = 0.0
 
+    maker_fills: list[dict] = []
     for fill in fills:
         shares = _num(fill.get("shares"))
-        usd = _num(fill.get("usd"))
-        payout = shares if winner and fill.get("outcome") == winner else 0.0
         assumed_shares += shares
         if role_of(fill) == "TAKER":
             # A taker fill takes the ask by definition, so the queue cannot
             # block it; only the maker fills can be phantom.
+            payout = shares if winner and fill.get("outcome") == winner else 0.0
             attainable_shares += shares
-            attainable_cost += usd
+            attainable_cost += _num(fill.get("usd"))
             attainable_payout += payout
             continue
+        maker_fills.append(fill)
 
+    # One print's size fills one order only, and the taker hits the most
+    # aggressive bid first: spend the flow highest price then oldest first.
+    taken: dict[int, float] = {}
+    for fill in sorted(maker_fills, key=lambda f: (-_num(f.get("price")), fill_epoch_s(f))):
         maker += 1
+        shares = _num(fill.get("shares"))
+        usd = _num(fill.get("usd"))
+        payout = shares if winner and fill.get("outcome") == winner else 0.0
         ahead = (fill.get("detail") or {}).get("queueAhead")
         if isinstance(ahead, (int, float)) and not isinstance(ahead, bool) and ahead >= 0:
             queue_known += 1
             ahead = float(ahead)
         else:
             ahead = 0.0
-        sells = _sells_after(tape, fill, _num(fill.get("price")))
-        if shares > 0 and sells - ahead >= shares - PRICE_EPS:
+        flow = _sell_flow(tape, fill, _num(fill.get("price")))
+        if shares > 0 and _available(tape, flow, taken) - ahead >= shares - PRICE_EPS:
             attainable += 1
             attainable_shares += shares
             attainable_cost += usd
             attainable_payout += payout
+            _spend(tape, flow, ahead + shares, taken)
         else:
             phantom += 1
 
@@ -138,20 +150,54 @@ def _print_ts(print_row: dict) -> float:
     return _num(print_row.get("ts"))
 
 
-def _sells_after(tape: list[dict], fill: dict, price: float) -> float:
-    """Taker SELL size printed at or below `price` from the fill onwards."""
+def _own_market(tape: list[dict], condition_id: str | None) -> list[dict]:
+    """This window's prints only.
+
+    Windows record their condition id; older ones do not, and the window's own
+    recorder is the first to write into its time range, so the earliest market
+    in the slice is this window's. The next market's recorder starts 10s before
+    this one ends, and its "Up"/"Down" SELLs must not read as flow here.
+    """
+    market = str(condition_id or "").strip()
+    if not market:
+        market = str(tape[0].get("market") or "") if tape else ""
+    if not market:
+        return tape
+    return [p for p in tape if str(p.get("market") or "") == market]
+
+
+def _sell_flow(tape: list[dict], fill: dict, price: float) -> list[int]:
+    """Positions in `tape` of taker SELL prints at or below `price`, from the fill on."""
     outcome = fill.get("outcome")
     first = bisect.bisect_left(tape, fill_epoch_s(fill), key=_print_ts)
-    total = 0.0
-    for print_row in tape[first:]:
+    flow: list[int] = []
+    for i in range(first, len(tape)):
+        print_row = tape[i]
         if print_row.get("slug_outcome") != outcome:
             continue
         if str(print_row.get("side") or "").upper() != "SELL":
             continue
         if _num(print_row.get("price")) > price + PRICE_EPS:
             continue
-        total += _num(print_row.get("size"))
-    return total
+        flow.append(i)
+    return flow
+
+
+def _available(tape: list[dict], flow: list[int], taken: dict[int, float]) -> float:
+    """Sell size in `flow` that no earlier fill has spent."""
+    return sum(max(0.0, _num(tape[i].get("size")) - taken.get(i, 0.0)) for i in flow)
+
+
+def _spend(tape: list[dict], flow: list[int], need: float, taken: dict[int, float]) -> None:
+    """Spend `need` shares of the flow, oldest print first."""
+    for i in flow:
+        if need <= PRICE_EPS:
+            return
+        free = max(0.0, _num(tape[i].get("size")) - taken.get(i, 0.0))
+        used = min(free, need)
+        if used > 0.0:
+            taken[i] = taken.get(i, 0.0) + used
+            need -= used
 
 
 def _num(value: Any) -> float:

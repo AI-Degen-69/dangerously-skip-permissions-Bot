@@ -19,14 +19,17 @@ def _fill(outcome="Down", price=0.42, shares=10.0, role="MAKER", offset=10.0, **
     }
 
 
-def _print(outcome="Down", price=0.42, size=50.0, side="SELL", offset=20.0):
-    return {
+def _print(outcome="Down", price=0.42, size=50.0, side="SELL", offset=20.0, market=None):
+    row = {
         "ts": START + offset,
         "slug_outcome": outcome,
         "price": price,
         "size": size,
         "side": side,
     }
+    if market is not None:
+        row["market"] = market
+    return row
 
 
 class RoleTest(unittest.TestCase):
@@ -114,6 +117,52 @@ class AuditWindowTest(unittest.TestCase):
         self.assertIsNone(audit_window([_fill()], [], START, "Down"))
         # A print from a neighbouring window is not evidence about this one.
         self.assertIsNone(audit_window([_fill()], [_print(offset=-10)], START, "Down"))
+
+    def test_one_print_cannot_fill_two_orders(self):
+        got = audit_window(
+            [_fill(shares=10, offset=5), _fill(shares=10, offset=6)],
+            [_print(size=10)],
+            START,
+            "Down",
+        )
+        self.assertEqual(got["makerFills"], 2)
+        self.assertEqual(got["attainableFills"], 1)
+        self.assertEqual(got["phantomFills"], 1)
+
+    def test_the_most_aggressive_fill_gets_the_flow(self):
+        got = audit_window(
+            [_fill(shares=10, price=0.40, offset=5), _fill(shares=10, price=0.42, offset=6)],
+            [_print(size=10, price=0.40)],
+            START,
+            "Down",
+        )
+        self.assertEqual(got["attainableFills"], 1)
+        # The 0.42 bid is the one the taker hits, so its cost is what survives.
+        self.assertEqual(got["attainableCostUsd"], 4.2)
+
+    def test_queue_ahead_is_spent_before_the_fill(self):
+        got = audit_window(
+            [_fill(shares=10, queueAhead=5, offset=5), _fill(shares=10, queueAhead=5, offset=6)],
+            [_print(size=20)],
+            START,
+            "Down",
+        )
+        self.assertEqual(got["attainableFills"], 1)
+
+    def test_prints_from_another_market_are_not_this_window(self):
+        got = audit_window([_fill()], [_print(size=500, market="0xother")], START, "Down", "0xmine")
+        self.assertIsNone(got)
+
+    def test_older_windows_infer_their_market_from_the_tape(self):
+        # The next market's recorder starts before this one ends; its SELLs at
+        # the same outcome name must not read as flow for this window.
+        prints = [
+            _print(size=1, market="0xmine", offset=1),
+            _print(size=500, market="0xother", offset=295),
+        ]
+        got = audit_window([_fill()], prints, START, "Down")
+        self.assertEqual(got["attainableFills"], 0)
+        self.assertEqual(got["phantomFills"], 1)
 
 
 if __name__ == "__main__":

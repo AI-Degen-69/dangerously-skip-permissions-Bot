@@ -49,6 +49,8 @@ function attainableOf(windows: PerfWindow[]) {
     audited.reduce((total, window) => total + (window.fidelity ? pick(window.fidelity) : 0), 0)
   return {
     windows: audited.length,
+    // Pre-rebate, so it is directly comparable with the attainable net.
+    paperNetUsd: audited.reduce((total, window) => total + (window.netUsd ?? 0), 0),
     netUsd: sum((f) => f.attainableNetUsd),
     makerFills: sum((f) => f.makerFills),
     attainableFills: sum((f) => f.attainableFills),
@@ -454,13 +456,17 @@ export function Dashboard() {
                   )}
                   title={
                     'Net if every maker fill needed real taker selling at its limit, behind the queue resting at that price where it was recorded, before rebates. ' +
-                    `${attainable.attainableFills.toLocaleString('en-US')} of ${attainable.makerFills.toLocaleString('en-US')} maker fills survive ` +
-                    `across ${attainable.windows.toLocaleString('en-US')} of ${scoped.windows.length.toLocaleString('en-US')} settled windows.`
+                    `Both figures cover the same ${attainable.windows.toLocaleString('en-US')} of ${scoped.windows.length.toLocaleString('en-US')} settled windows the tape could judge: ` +
+                    `${attainable.attainableFills.toLocaleString('en-US')} of ${attainable.makerFills.toLocaleString('en-US')} maker fills survive.`
                   }
                 >
                   <span className="mr-1 text-[11px] font-normal text-faint">attainable</span>
                   {attainable.netUsd >= 0 ? '+' : ''}
                   {usd(attainable.netUsd)}
+                  <span className="ml-1.5 text-[11px] font-normal text-faint">
+                    vs {attainable.paperNetUsd >= 0 ? '+' : ''}
+                    {usd(attainable.paperNetUsd)} paper on the same windows
+                  </span>
                 </span>
               )}
               <span className="text-[11.5px] text-faint">

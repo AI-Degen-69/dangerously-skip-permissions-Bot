@@ -599,6 +599,7 @@ def trade_window(
         return None
 
     try:
+        closed_cleanly = False
         cutoff_sbc = min(stop_before, C.HARD_CUTOFF_SBC)
         end = int(slot + WINDOW_S - stop_before)  # Strategy early exit countdown (e.g. T-75s)
         sweep_end = int(slot + WINDOW_S - cutoff_sbc)  # Phase 4 hard settlement cutoff (e.g. T-12s)
@@ -794,10 +795,18 @@ def trade_window(
             write_state(slug, end_ms, started_ms, fills,
                         ws_status=streamer.get_status(), recent_ticks=streamer.get_recent_ticks(30))
             streamer.wait_for_tick(timeout=0.25)
+        closed_cleanly = True
     finally:
         stop_sync.set()
         sync_thread.join(timeout=1.0)
         verify_thread.join(timeout=2.0)
+        # The audit reads this window's tape to its end. The trading loop exits
+        # early (hedged, or at the settlement cutoff), so keep recording until
+        # the window closes or a late SELL would read as no flow at all.
+        if _tape_on and closed_cleanly:
+            left = float(slot) + C.WINDOW_S - time.time()
+            if left > 0:
+                time.sleep(min(left, float(C.WINDOW_S)))
         streamer.stop()
 
     # --- Final tape verification pass (definitive, all prints available) ---
@@ -916,7 +925,11 @@ def settle_slug(slug: str, snap: dict, origin: str | None, budget_s: int = 900) 
     if winner and snap.get("tapeDir") and snap.get("slot"):
         try:
             fidelity = audit_window(
-                fills, load_prints(Path(snap["tapeDir"])), float(snap["slot"]), winner
+                fills,
+                load_prints(Path(snap["tapeDir"])),
+                float(snap["slot"]),
+                winner,
+                snap.get("condition_id"),
             )
         except (OSError, ValueError):
             fidelity = None

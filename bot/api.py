@@ -1227,8 +1227,8 @@ def perf() -> dict:
 
     # Attainable view: the same windows judged by what a real resting bid could
     # have got behind the queue that was actually there. Windows the auditor
-    # could not read (no prints) carry no fidelity and drop out of both sides,
-    # so the two numbers always cover the same slice.
+    # could not read (no prints) carry no fidelity and drop out, so this net
+    # covers the audited windows while the headline covers every settled one.
     audited = [w["fidelity"] for w in settled if w.get("fidelity")]
     a_maker = sum(int(f.get("makerFills") or 0) for f in audited)
     a_fills = sum(int(f.get("attainableFills") or 0) for f in audited)
