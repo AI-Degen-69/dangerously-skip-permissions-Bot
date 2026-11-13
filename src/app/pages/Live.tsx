@@ -387,7 +387,7 @@ function RestingOrdersStrip({ orders }: { orders: OpenOrderView[] }) {
             <span className="text-muted">
               {order.queueAhead > 0 ? `${order.queueAhead.toFixed(0)} sh ahead` : 'front of queue'}
             </span>
-            <span className="text-muted">resting {Math.round(order.ageMs / 1000)}s</span>
+            <span className="text-muted">resting {Math.max(0, Math.round((Date.now() - order.placedAtMs) / 1000))}s</span>
             <span className="ml-auto text-faint">
               M{order.minute} · {order.subReason}
             </span>
