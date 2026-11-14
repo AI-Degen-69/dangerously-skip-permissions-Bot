@@ -103,6 +103,15 @@ class PerfTests(unittest.TestCase):
         self.assertEqual(perf["mShape"]["phantom"], [0, 1, 0, 0, 0])
         self.assertNotIn("targets", perf)
 
+    def test_orders_row_counts_what_the_loop_recorded(self):
+        run = paper_run(SLUG, FILLS, "Up")
+        run["orders_posted"] = 3
+        run["orders_cancelled"] = 1
+        perf = self.build([run])
+        rows = {row["key"]: row for row in perf["gate"]}
+
+        self.assertEqual(rows["orders"]["value"], "3 / 1")
+
     def test_redeem_queue_lists_unclaimed_winners(self):
         perf = self.build([paper_run(SLUG, FILLS, "Up")])
 
