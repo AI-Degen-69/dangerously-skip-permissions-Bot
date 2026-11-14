@@ -19,6 +19,9 @@ import time
 from pathlib import Path
 from typing import Any
 
+from bot import constants as C
+from bot.fill_audit import role_of
+
 ROOT = Path(__file__).resolve().parent.parent
 RUNS_DIR = ROOT / "bot" / "runs"
 DEFAULT_BASELINE_ID = "run_20261113_183248_paper_hydrogen_v1_0"
@@ -115,6 +118,28 @@ def _load_run_windows(run_id: str) -> list[dict[str, Any]]:
                 pair_cost = _pair_cost(up_sh, down_sh, up_cost, down_cost)
                 imbalance = round(abs(up_sh - down_sh), 1)
 
+                # Taker-fee and maker-fee bases for the rebate-adjusted view.
+                # Same precedence as api._window_row (canonical: role_of):
+                # a recorded role, then a recorded fee, then legacy reason.
+                taker_fees = 0.0
+                maker_base = 0.0
+                for f in fills:
+                    try:
+                        price = float(f.get("price", 0.0))
+                        shares = float(f.get("shares", 0.0))
+                    except (TypeError, ValueError):
+                        continue
+                    if price <= 0 or shares <= 0:
+                        continue
+                    base = shares * C.TAKER_FEE_COEFF * price * (1 - price)
+                    if role_of(f) == "TAKER":
+                        detail = f.get("detail") or {}
+                        raw_fee = detail.get("feeUsd")
+                        fee = float(raw_fee) if isinstance(raw_fee, (int, float)) and not isinstance(raw_fee, bool) else 0.0
+                        taker_fees += fee if fee > 0 else base
+                    else:
+                        maker_base += base
+
                 payout = 0.0
                 net = None
                 winner = None
@@ -138,6 +163,8 @@ def _load_run_windows(run_id: str) -> list[dict[str, Any]]:
                         "upShares": up_sh,
                         "downShares": down_sh,
                         "winner": winner,
+                        "feesUsd": round(taker_fees, 4),
+                        "makerFeeBaseUsd": round(maker_base, 4),
                     })
             except Exception:
                 pass
@@ -196,6 +223,8 @@ def _empty_stats(observed: int = 0) -> dict[str, Any]:
         "winRate": 0.0,
         "lossRate": 0.0,
         "netPnl": 0.0,
+        "feesUsd": 0.0,
+        "makerFeeBaseUsd": 0.0,
         "meanPnl": 0.0,
         "stdPnl": 0.0,
         "variance": 0.0,
@@ -279,6 +308,8 @@ def _compute_distribution_stats(records: list[dict[str, Any]],
         "winRate": round(wins / n, 4),
         "lossRate": round(losses / n, 4),
         "netPnl": round(net_sum, 2),
+        "feesUsd": round(sum(r.get("feesUsd", 0.0) or 0.0 for r in active), 4),
+        "makerFeeBaseUsd": round(sum(r.get("makerFeeBaseUsd", 0.0) or 0.0 for r in active), 4),
         "meanPnl": round(mean_val, 4),
         "stdPnl": round(std_val, 4),
         "variance": round(variance, 4),
