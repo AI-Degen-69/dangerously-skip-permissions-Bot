@@ -71,7 +71,7 @@ class PerfTests(unittest.TestCase):
         self.assertEqual(perf["summary"]["netUsd"], 0)
         self.assertIsNone(perf["windows"][0]["netUsd"])
 
-    def test_execution_health_rows_measure_the_run_not_a_frozen_tape(self):
+    def test_execution_health_cells_measure_the_run_not_a_frozen_tape(self):
         # Every fill carries a queue verdict: one attainable, one phantom.
         fills = [
             {**FILLS[0], "detail": {"attainable": True}},
@@ -85,35 +85,38 @@ class PerfTests(unittest.TestCase):
             "attainableCostUsd": 15.0, "attainablePayoutUsd": 30.0, "attainableNetUsd": 15.0,
         }
         perf = self.build([run])
-        rows = {row["key"]: row for row in perf["gate"]}
+        cells = {c["key"]: c for c in perf["cells"]}
 
-        self.assertNotIn("target", rows["paired"])
-        self.assertEqual(rows["paired"]["value"], "1 windows · 14 sh")
-        self.assertEqual(rows["paired"]["status"], "pass")
         # 30 Up shares at 50c plus 14 Down shares at 40c; the $0.00 Up fill holds nothing.
-        self.assertEqual(rows["totalShares"]["value"], "44 sh")
-        self.assertTrue(rows["totalShares"]["big"])
-        self.assertEqual(rows["bothSides"]["status"], "pass")
-        self.assertEqual(rows["zeroPrice"]["status"], "fail")
-        self.assertEqual(rows["attainable"]["value"], "50%")
+        self.assertEqual(cells["totalShares"]["value"], "44 sh")
+        self.assertTrue(cells["totalShares"]["big"])
+        self.assertEqual(cells["totalShares"]["sub"][0], {"label": "Up", "value": "30", "tone": None})
+        self.assertEqual(cells["paired"]["value"], "1")
+        self.assertEqual(cells["paired"]["status"], "pass")
+        self.assertIn({"label": "Lock-in", "value": "90.0¢", "tone": None}, cells["paired"]["sub"])
+        self.assertEqual(cells["bothSides"]["status"], "pass")
+        self.assertEqual(cells["zeroPrice"]["status"], "fail")
+        self.assertEqual(cells["attainable"]["value"], "50%")
         # Two Up fills (30 and 14 shares), one Down fill of 14 at 40c.
-        self.assertEqual(rows["fillsUp"]["value"], "2 fills · 22 sh · 50.0¢")
-        self.assertEqual(rows["fillsDown"]["value"], "1 fills · 14 sh · 40.0¢")
+        self.assertEqual(cells["fillsUp"]["value"], "2")
+        self.assertEqual(cells["fillsDown"]["value"], "1")
         # No order counters in this run file, and both legs were taken.
-        self.assertEqual(rows["orders"]["value"], "—")
-        self.assertEqual(rows["single"]["value"], "0")
+        self.assertEqual(cells["orders"]["value"], "—")
+        self.assertEqual(cells["single"]["value"], "0")
         self.assertEqual(perf["mShape"]["attainable"], [1, 0, 0, 0, 0])
         self.assertEqual(perf["mShape"]["phantom"], [0, 1, 0, 0, 0])
         self.assertNotIn("targets", perf)
+        self.assertNotIn("gate", perf)
 
-    def test_orders_row_counts_what_the_loop_recorded(self):
+    def test_orders_cell_counts_what_the_loop_recorded(self):
         run = paper_run(SLUG, FILLS, "Up")
         run["orders_posted"] = 3
         run["orders_cancelled"] = 1
         perf = self.build([run])
-        rows = {row["key"]: row for row in perf["gate"]}
+        cells = {c["key"]: c for c in perf["cells"]}
 
-        self.assertEqual(rows["orders"]["value"], "3 / 1")
+        self.assertEqual(cells["orders"]["value"], "3")
+        self.assertIn({"label": "Cancelled", "value": "1", "tone": None}, cells["orders"]["sub"])
 
     def test_redeem_queue_lists_unclaimed_winners(self):
         perf = self.build([paper_run(SLUG, FILLS, "Up")])

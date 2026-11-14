@@ -1134,73 +1134,70 @@ def perf() -> dict:
     unpaired_total = sum(abs(w["upShares"] - w["downShares"]) for w in settled)
     unpaired_in_two_sided = unpaired_total - sum(single_shares)
 
-    gate = [
-        {"key": "windows", "label": "Windows traded",
-         "value": f"{len(settled)}", "status": "stat",
-         "detail": f"The whole universe: {len(pending)} window(s) still settling are excluded."},
-        {"key": "orders", "label": "Orders made / cancelled",
-         "value": f"{orders_made} / {orders_cancelled}" if counted_orders else "—",
-         "status": "stat",
-         "detail": (
-             f"Resting orders the loop posted, and how many it pulled before they filled "
-             f"({len(counted_orders)} of {len(settled)} windows counted)."
-             if counted_orders
-             else "The loop only started counting posted and cancelled orders recently, so the "
-                  "windows before it have no number to show."
-         )},
-        {"key": "totalShares", "label": "Total shares filled", "big": True,
-         "value": f"{total_shares:,.0f} sh",
-         "status": "stat",
-         "detail": (
-             f"Up {up_shares_total:,.0f} · Down {down_shares_total:,.0f} over "
-             f"{up_stats['count'] + down_stats['count']:,} fills. A pair takes the smaller side, "
-             f"so the two sides differ by {abs(net_side_diff):,.0f} sh."
-         )},
-        {"key": "fillsUp", "label": "Filled orders · Up",
-         "value": f"{up_stats['count']} fills · {up_stats['medianShares']:g} sh · {up_stats['medianPrice'] * 100:.1f}¢",
-         "status": "stat",
-         "detail": "Median shares and price per Up fill."},
-        {"key": "fillsDown", "label": "Filled orders · Down",
-         "value": f"{down_stats['count']} fills · {down_stats['medianShares']:g} sh · {down_stats['medianPrice'] * 100:.1f}¢",
-         "status": "stat",
-         "detail": "Median shares and price per Down fill."},
-        {"key": "paired", "label": "Paired orders",
-         "value": f"{len(paired_windows)} windows · {sum(paired_shares):,.0f} sh" if paired_windows else "—",
-         "status": pair_status,
-         "detail": (
-             f"Both legs taken: median {_median(paired_shares):g} paired shares at a "
-             f"{median_pair_cost * 100:.1f}¢ lock-in · your cap {pair_cap * 100:.1f}¢."
-             if paired_windows
-             else "No window has taken both legs yet."
-         )},
-        {"key": "single", "label": "Single-side positions",
-         "value": f"{len(single_windows)} positions · {sum(single_shares):,.0f} sh" if single_windows else "0",
-         "status": "stat" if not single_windows else ("warn" if len(single_windows) <= len(settled) * 0.2 else "fail"),
-         "detail": (
-             f"Windows that only ever took one leg: {len(single_windows)} positions holding "
-             f"{sum(single_shares):,.0f} shares (median {_median(single_shares):g} each). With the "
-             f"{unpaired_in_two_sided:,.0f} unmatched shares inside two-sided windows, "
-             f"{unpaired_total:,.0f} shares carry no pair."
-             if single_windows
-             else "Every window took both legs."
-         )},
-        {"key": "bothSides", "label": "Both sides covered",
-         "value": f"{both}/{len(settled)}" if settled else "0/0",
-         "status": both_status,
-         "detail": "The straddle must touch both outcomes; a single-sided window is a missed hedge."},
-        {"key": "attainable", "label": "Queue fill rate",
-         "value": f"{fill_rate * 100:.0f}%" if fill_rate is not None else "—",
-         "status": "stat",
-         "detail": f"{a_attainable} of {a_maker} audited maker fills had selling behind the queue ahead; {a_phantom} never could fill."},
-        {"key": "zeroPrice", "label": "Zero-price fills",
-         "value": f"{zero_fills}", "status": "pass" if zero_fills == 0 else "fail",
-         "detail": "Fills at $0.00 move no capital but skew every average."},
-        {"key": "fills", "label": "Fills / window",
-         "value": f"{median_fills:g} · {mean_fills:g}", "status": "stat",
-         "detail": "Median · mean fills per settled window."},
-        {"key": "cost", "label": "Cost / window",
-         "value": f"${median_cost:,.2f} · ${mean_cost:,.2f}", "status": "stat",
-         "detail": "Median · mean cost per settled window."},
+    # The card is a matrix, not a list of sentences: every number lives in a
+    # cell next to the number it belongs with.
+    def cell(key: str, label: str, value: str, sub: list[tuple[str, str]],
+             status: str = "stat", tone: str | None = None, big: bool = False,
+             span: int = 1) -> dict:
+        return {
+            "key": key,
+            "label": label,
+            "value": value,
+            "status": status,
+            "big": big,
+            "span": span,
+            "sub": [{"label": name, "value": text, "tone": tone} for name, text in sub],
+        }
+
+    cells = [
+        cell("windows", "Windows traded", f"{len(settled)}",
+             [("Pending", f"{len(pending)}")]),
+        cell("orders", "Orders made",
+             f"{orders_made}" if counted_orders else "—",
+             ([("Cancelled", f"{orders_cancelled}"),
+               ("Windows counted", f"{len(counted_orders)} of {len(settled)}")] if counted_orders
+              else [("Cancelled", "—"), ("Counted from", "the next window on")])),
+        cell("totalShares", "Total shares filled", f"{total_shares:,.0f} sh",
+             [("Up", f"{up_shares_total:,.0f}"), ("Down", f"{down_shares_total:,.0f}"),
+              ("Fills", f"{up_stats['count'] + down_stats['count']:,}"),
+              ("Side difference", f"{abs(net_side_diff):,.0f} sh")],
+             big=True, span=2),
+        cell("fillsUp", "Filled orders · Up", f"{up_stats['count']:,}",
+             [("Median size", f"{up_stats['medianShares']:g} sh"),
+              ("Median price", f"{up_stats['medianPrice'] * 100:.1f}¢"),
+              ("Shares", f"{up_shares_total:,.0f}")]),
+        cell("fillsDown", "Filled orders · Down", f"{down_stats['count']:,}",
+             [("Median size", f"{down_stats['medianShares']:g} sh"),
+              ("Median price", f"{down_stats['medianPrice'] * 100:.1f}¢"),
+              ("Shares", f"{down_shares_total:,.0f}")]),
+        cell("paired", "Paired orders", f"{len(paired_windows):,}",
+             [("Paired shares", f"{sum(paired_shares):,.0f}"),
+              ("Median / window", f"{_median(paired_shares):g} sh"),
+              ("Lock-in", f"{median_pair_cost * 100:.1f}¢"),
+              ("Your cap", f"{pair_cap * 100:.1f}¢")],
+             status=pair_status, span=2),
+        cell("unpaired", "Unpaired shares", f"{unpaired_total:,.0f} sh",
+             [("Lone-leg positions", f"{sum(single_shares):,.0f}"),
+              ("Inside two-sided windows", f"{unpaired_in_two_sided:,.0f}"),
+              ("Net side difference", f"{abs(net_side_diff):,.0f} sh")]),
+        cell("single", "Single-side positions", f"{len(single_windows):,}",
+             [("Shares held", f"{sum(single_shares):,.0f}"),
+              ("Median size", f"{_median(single_shares):g} sh"),
+              ("Share of windows", f"{(len(single_windows) / len(settled) * 100) if settled else 0:.0f}%")],
+             status="stat" if not single_windows else ("warn" if len(single_windows) <= len(settled) * 0.2 else "fail")),
+        cell("bothSides", "Both sides covered", f"{both}/{len(settled)}" if settled else "0/0",
+             [("Coverage", f"{(both_rate * 100):.0f}%")], status=both_status),
+        cell("attainable", "Queue fill rate",
+             f"{fill_rate * 100:.0f}%" if fill_rate is not None else "—",
+             [("Audited maker fills", f"{a_maker:,}"),
+              ("Could fill", f"{a_attainable:,}"),
+              ("Never could", f"{a_phantom:,}")]),
+        cell("zeroPrice", "Zero-price fills", f"{zero_fills}",
+             [("Cost moved", "$0.00")], status="pass" if zero_fills == 0 else "fail"),
+        cell("perWindow", "Per window", f"{median_fills:g} fills",
+             [("Mean fills", f"{mean_fills:g}"),
+              ("Median cost", f"${median_cost:,.2f}"),
+              ("Mean cost", f"${mean_cost:,.2f}")]),
     ]
 
     redeem_due = [w for w in settled if w["winner"] and not w["redeemed"] and (w.get("payoutUsd") or 0) > 0]
@@ -1434,7 +1431,7 @@ def perf() -> dict:
             "downWinRate": down_win_rate,
             "attainable": attainable,
         },
-        "gate": gate,
+        "cells": cells,
         "mShape": {"live": live_shape, "liveShare": live_share,
                    "attainable": m_attainable, "phantom": m_phantom},
         "redeem": {"count": len(redeem_due), "payoutUsd": redeem_payout},

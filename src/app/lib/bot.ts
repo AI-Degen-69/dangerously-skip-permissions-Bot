@@ -278,15 +278,18 @@ export interface BotControl {
   tape?: TapeStatus
 }
 
-export interface PerfGate {
+/** One cell of the execution-health matrix: a label, the number, its parts. */
+export interface PerfCell {
   key: string
   label: string
   value: string
-  /** `stat` rows are plain measurements with no target to judge against. */
+  /** `stat` cells are plain measurements with no target to judge against. */
   status: 'pass' | 'warn' | 'fail' | 'stat'
-  /** Layer above the rest: the number the other rows are built from. */
+  /** Layer above the rest: the number the other cells are built from. */
   big?: boolean
-  detail: string
+  /** How many grid columns the cell spans. */
+  span?: number
+  sub: { label: string; value: string; tone?: string }[]
 }
 
 export interface PerfWindow {
@@ -429,7 +432,7 @@ export interface BotPerf {
       shareRate: number
     }
   }
-  gate: PerfGate[]
+  cells: PerfCell[]
   mShape: {
     live: number[]
     liveShare: number[]

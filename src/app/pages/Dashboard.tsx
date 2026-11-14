@@ -16,7 +16,7 @@ import { BotControlTile } from '../components/BotControlTile'
 import { InteractivePnlChart } from '../components/InteractivePnlChart'
 import { BOT_ORIGIN, useBotControl, useBotPerf, useRedeemBot, useStrategySetups, mergeStrategySetups } from '../lib/bot'
 import { STRATEGY_PRESETS } from '../botDefaults'
-import type { BotPerf, PerfGate, PerfWindow, StrategySetup, WindowFidelity } from '../lib/bot'
+import type { BotPerf, PerfCell, PerfWindow, StrategySetup, WindowFidelity } from '../lib/bot'
 import { computeKpiStats } from '../lib/kpiStats'
 import { ACCOUNT_TIERS, useAccountTier, useIncludeRebates, windowRebate } from '../lib/rebates'
 import type { AccountTier } from '../lib/rebates'
@@ -58,17 +58,11 @@ function attainableOf(windows: PerfWindow[]) {
   }
 }
 
-const GATE_TONE: Record<PerfGate['status'], 'success' | 'warning' | 'danger' | 'neutral'> = {
-  pass: 'success',
-  warn: 'warning',
-  fail: 'danger',
-  stat: 'neutral',
-}
-const GATE_LABEL: Record<PerfGate['status'], string> = {
-  pass: 'ok',
-  warn: 'watch',
-  fail: 'flag',
-  stat: 'stat',
+const CELL_TONE: Record<PerfCell['status'], string> = {
+  pass: 'text-success',
+  warn: 'text-warning',
+  fail: 'text-danger',
+  stat: 'text-fg',
 }
 
 // One colour class per element: `text-fg` is emitted after `text-danger` in the
@@ -810,37 +804,36 @@ export function Dashboard() {
           </div>
         </div>
 
-        <div className="mt-3 divide-y divide-line">
-          {(data?.gate ?? []).map((row) => (
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+          {(data?.cells ?? []).map((cell) => (
             <div
-              key={row.key}
+              key={cell.key}
               className={cx(
-                'flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5',
-                row.big && 'rounded-tile bg-surface-2/30 px-3 py-3',
+                'rounded-tile border border-line bg-surface-2/30 p-3',
+                cell.big && 'col-span-2 bg-surface-2/50',
               )}
             >
-              <div className="min-w-0 flex-1">
-                <p className={cx('text-[13px]', row.big && 'font-semibold')}>{row.label}</p>
-                <p className="text-[11.5px] text-faint">{row.detail}</p>
-              </div>
-              <span
+              <p className="text-[10px] font-medium uppercase tracking-wide text-faint">{cell.label}</p>
+              <p
                 className={cx(
-                  'tabular-nums font-medium',
-                  row.big ? 'text-[20px] font-semibold tracking-[-0.02em]' : 'text-[13px]',
+                  'mt-0.5 font-semibold tabular-nums tracking-[-0.02em]',
+                  cell.big ? 'text-[26px]' : 'text-[19px]',
+                  CELL_TONE[cell.status] ?? 'text-fg',
                 )}
               >
-                {row.value}
-              </span>
-              {row.status === 'stat' ? (
-                <span className="w-[74px] text-right text-[11.5px] text-faint">stat</span>
-              ) : (
-                <Badge tone={GATE_TONE[row.status] ?? 'neutral'} className="w-[74px] justify-center">
-                  {GATE_LABEL[row.status] ?? row.status}
-                </Badge>
-              )}
+                {cell.value}
+              </p>
+              <dl className="mt-1.5 space-y-0.5">
+                {cell.sub.map((item) => (
+                  <div key={item.label} className="flex items-baseline justify-between gap-2 text-[11.5px]">
+                    <dt className="truncate text-faint">{item.label}</dt>
+                    <dd className={cx('shrink-0 font-medium tabular-nums', item.tone ?? 'text-fg')}>{item.value}</dd>
+                  </div>
+                ))}
+              </dl>
             </div>
           ))}
-          {!data && <Skeleton className="my-4 h-[180px]" />}
+          {!data && <Skeleton className="col-span-2 my-4 h-[180px] lg:col-span-4" />}
         </div>
 
         {data && <ShapeChart mShape={data.mShape} />}
