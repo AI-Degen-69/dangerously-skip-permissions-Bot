@@ -928,6 +928,11 @@ def _window_row(r: dict) -> dict:
     up_usd = sum(_num(f.get("usd")) for f in fills if f.get("outcome") == "Up" and _num(f.get("price")) > 0)
     down_usd = sum(_num(f.get("usd")) for f in fills if f.get("outcome") == "Down" and _num(f.get("price")) > 0)
     pair_cost = round(up_usd / up_shares + down_usd / down_shares, 4) if up_shares > 0 and down_shares > 0 else None
+    # Shares actually held on each side (a $0.00 fill holds nothing) and the
+    # part of the window that never got a partner.
+    up_held = sum(_num(f.get("shares")) for f in fills if f.get("outcome") == "Up" and _num(f.get("price")) > 0)
+    down_held = sum(_num(f.get("shares")) for f in fills if f.get("outcome") == "Down" and _num(f.get("price")) > 0)
+    single_side = (up_held > 0) != (down_held > 0)
 
     # Per-minute queue verdicts for the cadence matrix. Only audited maker fills
     # carry a verdict (a taker fill takes the ask, so the queue cannot block it).
@@ -959,6 +964,15 @@ def _window_row(r: dict) -> dict:
         "pairCost": pair_cost,
         "upFills": sum(1 for f in fills if f.get("outcome") == "Up"),
         "downFills": sum(1 for f in fills if f.get("outcome") == "Down"),
+        "upShares": round(up_held, 2),
+        "downShares": round(down_held, 2),
+        # Shares that ended up on both sides, and the lone leg when they did not.
+        "pairedShares": round(min(up_held, down_held), 2),
+        "singleSide": single_side,
+        "singleShares": round(max(up_held, down_held), 2) if single_side else 0.0,
+        # Resting orders the loop posted and pulled, when the loop counted them.
+        "ordersPosted": r.get("orders_posted"),
+        "ordersCancelled": r.get("orders_cancelled"),
         # Maker fills are the ones the tape can corroborate; taker fills cannot
         # be checked at all in paper mode, so the desk reports the split.
         "makerFills": int(r.get("maker_fills") or 0),
@@ -1004,7 +1018,8 @@ def perf() -> dict:
     """
     from bot import constants as C
 
-    rows = [_window_row(r) for r in sorted(runs(), key=lambda r: str(r.get("event_slug", "")))]
+    raw_runs = sorted(runs(), key=lambda r: str(r.get("event_slug", "")))
+    rows = [_window_row(r) for r in raw_runs]
     settled = [w for w in rows if not w["pending"]]
     pending = [w for w in rows if w["pending"]]
 
@@ -1076,18 +1091,84 @@ def perf() -> dict:
     else:
         pair_status = "warn" if median_pair_cost <= 1.0 else "fail"
 
+    # The funnel the run actually walked: windows -> orders -> fills by side ->
+    # paired positions -> the lone legs that never got a partner.
+    counted_orders = [w for w in settled if w["ordersPosted"] is not None]
+    orders_made = sum(int(w["ordersPosted"] or 0) for w in counted_orders)
+    orders_cancelled = sum(int(w["ordersCancelled"] or 0) for w in counted_orders)
+
+    def side_stats(outcome: str) -> dict:
+        settled_slugs = {w["slug"] for w in settled}
+        side_fills = [
+            f
+            for r in raw_runs
+            if r.get("event_slug") in settled_slugs
+            for f in (r.get("fills") or [])
+            if f.get("outcome") == outcome
+        ]
+        shares = [_num(f.get("shares")) for f in side_fills]
+        prices = [_num(f.get("price")) for f in side_fills if _num(f.get("price")) > 0]
+        return {
+            "count": len(side_fills),
+            "shares": round(sum(shares), 2),
+            "medianShares": _median(shares),
+            "avgShares": _mean(shares),
+            "medianPrice": _median(prices),
+            "avgPrice": _mean(prices),
+        }
+
+    up_stats = side_stats("Up")
+    down_stats = side_stats("Down")
+
+    paired_windows = [w for w in settled if w["upShares"] > 0 and w["downShares"] > 0]
+    paired_shares = [w["pairedShares"] for w in paired_windows]
+    single_windows = [w for w in settled if w["singleSide"]]
+    single_shares = [w["singleShares"] for w in single_windows]
+
     gate = [
-        {"key": "windows", "label": "Windows settled",
+        {"key": "windows", "label": "Windows traded",
          "value": f"{len(settled)}", "status": "stat",
-         "detail": f"{len(pending)} pending excluded from every figure here."},
+         "detail": f"The whole universe: {len(pending)} window(s) still settling are excluded."},
+        {"key": "orders", "label": "Orders made / cancelled",
+         "value": f"{orders_made} / {orders_cancelled}" if counted_orders else "—",
+         "status": "stat",
+         "detail": (
+             f"Resting orders the loop posted, and how many it pulled before they filled "
+             f"({len(counted_orders)} of {len(settled)} windows counted)."
+             if counted_orders
+             else "The loop only started counting posted and cancelled orders recently, so the "
+                  "windows before it have no number to show."
+         )},
+        {"key": "fillsUp", "label": "Filled orders · Up",
+         "value": f"{up_stats['count']} fills · {up_stats['medianShares']:g} sh · {up_stats['medianPrice'] * 100:.1f}¢",
+         "status": "stat",
+         "detail": f"Median {up_stats['medianShares']:g} shares and {up_stats['medianPrice'] * 100:.1f}¢ per Up fill · {up_stats['shares']:,.0f} shares in total."},
+        {"key": "fillsDown", "label": "Filled orders · Down",
+         "value": f"{down_stats['count']} fills · {down_stats['medianShares']:g} sh · {down_stats['medianPrice'] * 100:.1f}¢",
+         "status": "stat",
+         "detail": f"Median {down_stats['medianShares']:g} shares and {down_stats['medianPrice'] * 100:.1f}¢ per Down fill · {down_stats['shares']:,.0f} shares in total."},
+        {"key": "paired", "label": "Paired orders",
+         "value": f"{len(paired_windows)} windows · {median_pair_cost * 100:.1f}¢" if paired_windows else "—",
+         "status": pair_status,
+         "detail": (
+             f"Windows that took both legs: median {_median(paired_shares):g} paired shares at a "
+             f"{median_pair_cost * 100:.1f}¢ lock-in · your cap {pair_cap * 100:.1f}¢."
+             if paired_windows
+             else "No window has taken both legs yet."
+         )},
+        {"key": "single", "label": "Single-side positions",
+         "value": f"{len(single_windows)} positions · {sum(single_shares):,.0f} sh" if single_windows else "0",
+         "status": "stat" if not single_windows else ("warn" if len(single_windows) <= len(settled) * 0.2 else "fail"),
+         "detail": (
+             f"Windows that only ever took one leg: {len(single_windows)} open positions holding "
+             f"{sum(single_shares):,.0f} shares (median {_median(single_shares):g} per position)."
+             if single_windows
+             else "Every window took both legs."
+         )},
         {"key": "bothSides", "label": "Both sides covered",
          "value": f"{both}/{len(settled)}" if settled else "0/0",
          "status": both_status,
          "detail": "The straddle must touch both outcomes; a single-sided window is a missed hedge."},
-        {"key": "pairCost", "label": "Median pair cost",
-         "value": f"{median_pair_cost * 100:.1f}¢" if pair_costs else "—",
-         "status": pair_status,
-         "detail": f"Lock-in cost across both-sided windows · your cap {pair_cap * 100:.1f}¢."},
         {"key": "attainable", "label": "Queue fill rate",
          "value": f"{fill_rate * 100:.0f}%" if fill_rate is not None else "—",
          "status": "stat",

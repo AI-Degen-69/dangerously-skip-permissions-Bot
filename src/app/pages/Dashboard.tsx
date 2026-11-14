@@ -107,7 +107,6 @@ export function Dashboard() {
   const effective = verifiedOnly
     ? windows.map(verifiedWindow).filter((window): window is PerfWindow => window !== null)
     : windows
-  const allSettled = windows.filter((window) => !window.pending)
   const settled = effective.filter((window) => !window.pending)
   const startingCapital = data?.summary?.bankrollUsd ?? 1000
 
@@ -143,6 +142,11 @@ export function Dashboard() {
   )
   const currentCapital = stats.currentCapital
   const attainable = attainableOf(scoped.windows)
+  // Segment widths for the win/loss bar, so the tick labels above it land on
+  // the slice they belong to.
+  const winPct = Math.max(stats.winsCount > 0 ? 2 : 0, stats.winRate * 100)
+  const scratchPct = stats.scratchCount > 0 ? (stats.scratchCount / (stats.settled || 1)) * 100 : 0
+  const upFillPct = (stats.upFills / Math.max(1, stats.upFills + stats.downFills)) * 100
   const setupsQuery = useStrategySetups()
   const allSetups = mergeStrategySetups(setupsQuery.data?.setups, STRATEGY_PRESETS as unknown as Record<string, StrategySetup>)
   const activeId = data?.strategy?.id ?? control.data?.strategy?.id ?? setupsQuery.data?.activeSetupId
@@ -550,38 +554,61 @@ export function Dashboard() {
               <>
                 {/* Win / Loss & Payoff Quality */}
                 <div className="mt-3.5 rounded-tile border border-line bg-surface-2/30 p-3">
-                  <div className="flex items-baseline justify-between text-[12.5px]">
-                    <span className="font-medium text-fg">Win Rate Breakdown</span>
-                    <span className="tabular-nums font-semibold text-fg">
-                      {(stats.winRate * 100).toFixed(1)}%{' '}
-                      <span className="text-[11px] font-normal text-muted">
-                        ({stats.winsCount}W · {stats.lossesCount}L{stats.scratchCount > 0 ? ` · ${stats.scratchCount}T` : ''})
+                  {/* Each result sits above its own slice of the bar, like ticks. */}
+                  <div className="flex items-baseline gap-3 text-[12.5px]">
+                    <div className="flex min-w-0 flex-1 items-baseline">
+                      <span
+                        className="tabular-nums font-semibold text-success"
+                        style={{ width: `${winPct}%` }}
+                        title={`${stats.winsCount} winning windows`}
+                      >
+                        {stats.winsCount}W
                       </span>
-                    </span>
+                      {stats.scratchCount > 0 && (
+                        <span
+                          className="tabular-nums text-muted"
+                          style={{ width: `${scratchPct}%` }}
+                          title={`${stats.scratchCount} break-even windows`}
+                        >
+                          {stats.scratchCount}T
+                        </span>
+                      )}
+                      <span
+                        className="flex-1 text-right tabular-nums font-semibold text-danger"
+                        title={`${stats.lossesCount} losing windows`}
+                      >
+                        {stats.lossesCount}L
+                      </span>
+                    </div>
+                    <span className="tabular-nums font-semibold text-fg">{(stats.winRate * 100).toFixed(1)}%</span>
                   </div>
-                  <div className="mt-2 flex h-2 overflow-hidden rounded-full bg-surface-2">
+                  <div className="mt-1 flex h-2 overflow-hidden rounded-full bg-surface-2">
                     <div
                       className="h-full bg-success transition-all duration-300"
-                      style={{ width: `${Math.max(stats.winsCount > 0 ? 2 : 0, stats.winRate * 100)}%` }}
+                      style={{ width: `${winPct}%` }}
                       title={`${(stats.winRate * 100).toFixed(1)}% Wins (${stats.winsCount})`}
                     />
                     {stats.scratchCount > 0 && (
                       <div
                         className="h-full bg-line/80 transition-all duration-300"
-                        style={{ width: `${((stats.scratchCount / (stats.settled || 1)) * 100).toFixed(1)}%` }}
+                        style={{ width: `${scratchPct.toFixed(1)}%` }}
                         title={`${((stats.scratchCount / (stats.settled || 1)) * 100).toFixed(1)}% Break-even (${stats.scratchCount})`}
                       />
                     )}
                     <div
-                      className="h-full bg-danger transition-all duration-300"
-                      style={{ width: `${Math.max(stats.lossesCount > 0 ? 2 : 0, stats.lossRate * 100)}%` }}
+                      className="h-full flex-1 bg-danger transition-all duration-300"
                       title={`${(stats.lossRate * 100).toFixed(1)}% Losses (${stats.lossesCount})`}
                     />
                   </div>
                   <div className="mt-2.5 grid grid-cols-2 gap-2 border-t border-line/60 pt-2 text-[11.5px]">
                     <div>
                       <span className="text-faint">Payoff (Avg W/L): </span>
-                      <span className="font-medium tabular-nums text-fg">
+                      <span
+                        className={cx(
+                          'font-medium tabular-nums',
+                          stats.payoffRatio >= 1 ? 'text-success' : stats.payoffRatio >= 0.5 ? 'text-warning' : 'text-danger',
+                        )}
+                      >
                         {stats.lossesCount === 0 && stats.winsCount > 0 ? '∞' : `${stats.payoffRatio.toFixed(2)}x`}
                       </span>
                     </div>
@@ -610,20 +637,47 @@ export function Dashboard() {
                         ? 'At All-Time High'
                         : `-${usd(stats.currentDrawdownUsd)} (-${stats.currentDrawdownPct.toFixed(1)}%)`
                     }
-                    tone={stats.currentDrawdownUsd <= 0.01 ? 'success' : undefined}
+                    tone={stats.currentDrawdownUsd <= 0.01 ? 'success' : 'danger'}
                   />
                   <Row
                     label="Sortino Ratio"
                     value={stats.lossesCount === 0 && stats.settled > 0 && stats.netUsd > 0 ? '∞' : stats.sortinoRatio.toFixed(2)}
-                    tone={stats.sortinoRatio >= 1.5 ? 'success' : undefined}
+                    tone={stats.sortinoRatio >= 1 ? 'success' : stats.sortinoRatio < 0 ? 'danger' : 'neutral'}
                   />
                   <Row
                     label="Best / Worst Window"
-                    value={`${stats.bestUsd > 0 ? `+${usd(stats.bestUsd)}` : usd(stats.bestUsd)} / ${stats.worstUsd > 0 ? `+${usd(stats.worstUsd)}` : usd(stats.worstUsd)}`}
+                    value={
+                      <>
+                        <span className="text-success">
+                          {stats.bestUsd > 0 ? `+${usd(stats.bestUsd)}` : usd(stats.bestUsd)}
+                        </span>
+                        {' / '}
+                        <span className="text-danger">
+                          {stats.worstUsd > 0 ? `+${usd(stats.worstUsd)}` : usd(stats.worstUsd)}
+                        </span>
+                      </>
+                    }
                   />
                   <Row
                     label="Streak (Current · Best · Worst)"
-                    value={`${stats.currentStreak > 0 ? `+${stats.currentStreak}W` : stats.currentStreak < 0 ? `${stats.currentStreak}L` : '0'} · +${stats.maxWinStreak}W / -${stats.maxLossStreak}L`}
+                    value={
+                      <>
+                        <span
+                          className={cx(
+                            stats.currentStreak > 0 ? 'text-success' : stats.currentStreak < 0 ? 'text-danger' : 'text-fg',
+                          )}
+                        >
+                          {stats.currentStreak > 0
+                            ? `+${stats.currentStreak}W`
+                            : stats.currentStreak < 0
+                              ? `${stats.currentStreak}L`
+                              : '0'}
+                        </span>
+                        <span className="text-fg">
+                          {' · '}+{stats.maxWinStreak}W / -{stats.maxLossStreak}L
+                        </span>
+                      </>
+                    }
                   />
                 </ul>
 
@@ -666,19 +720,23 @@ export function Dashboard() {
                     </div>
                   </div>
 
-                  <div className="mt-2.5 flex items-center justify-between text-[12px]">
-                    <span className="text-muted">Fill mix</span>
-                    <span className="tabular-nums text-faint">
-                      Up {stats.upFills} · Down {stats.downFills}
+                  <div className="mt-2.5 flex items-baseline text-[12px]">
+                    <span
+                      className="tabular-nums font-semibold text-success"
+                      style={{ width: `${upFillPct}%` }}
+                      title={`${stats.upFills} Up fills`}
+                    >
+                      {stats.upFills} Up
+                    </span>
+                    <span className="flex-1 text-right tabular-nums font-semibold text-danger">
+                      {stats.downFills} Down
                     </span>
                   </div>
                   <div className="mt-1 flex h-1.5 overflow-hidden rounded-full bg-surface-2">
                     <div
                       className="h-full bg-success/80"
-                      style={{
-                        width: `${(stats.upFills / Math.max(1, stats.upFills + stats.downFills)) * 100}%`,
-                      }}
-                      title={`${share(stats.upFills / Math.max(1, stats.upFills + stats.downFills))} Up`}
+                      style={{ width: `${upFillPct}%` }}
+                      title={`${share(upFillPct / 100)} Up`}
                     />
                     <div className="h-full flex-1 bg-danger/70" />
                   </div>
@@ -750,7 +808,6 @@ export function Dashboard() {
               have got. No frozen-tape comparison.
             </p>
           </div>
-          <Badge tone="neutral">{allSettled.length} windows</Badge>
         </div>
 
         <div className="mt-3 divide-y divide-line">
@@ -1108,11 +1165,19 @@ function HealthItem({ label, value, tone }: { label: string; value: string; tone
   )
 }
 
-function Row({ label, value, tone }: { label: string; value: string; tone?: 'success' | 'danger' }) {
+function Row({ label, value, tone }: { label: string; value: React.ReactNode; tone?: 'success' | 'danger' | 'warning' | 'neutral' }) {
   return (
-    <li className="flex items-center justify-between">
+    <li className="flex items-center justify-between gap-3">
       <span className="text-muted">{label}</span>
-      <span className={cx('font-medium tabular-nums', tone === 'success' && 'text-success', tone === 'danger' && 'text-danger')}>
+      <span
+        className={cx(
+          'font-medium tabular-nums',
+          tone === 'success' && 'text-success',
+          tone === 'danger' && 'text-danger',
+          tone === 'warning' && 'text-warning',
+          (tone === 'neutral' || !tone) && 'text-fg',
+        )}
+      >
         {value}
       </span>
     </li>

@@ -365,6 +365,8 @@ def write_state(
     odds_history: list[dict] | None = None,
     closed: bool = False,
     open_orders: list[dict] | None = None,
+    orders_posted: int | None = None,
+    orders_cancelled: int | None = None,
 ) -> None:
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     cfg = load_cfg()
@@ -383,6 +385,10 @@ def write_state(
         "strategySymbol": strat.get("symbol", C.STRATEGY_SYMBOL),
         "strategyName": strat.get("name", C.STRATEGY_NAME),
     }
+    if orders_posted is not None:
+        payload["ordersPosted"] = orders_posted
+    if orders_cancelled is not None:
+        payload["ordersCancelled"] = orders_cancelled
     if closed:
         # Past the cutoff the window is holding, not trading: the flag lets the
         # next window claim the state while this snapshot stays readable.
@@ -486,6 +492,10 @@ def trade_window(
     fills: list[dict] = []
     cost = 0.0
     total_fees_usd = 0.0
+    # Resting orders the loop posted and pulled, so the desk can show the
+    # funnel: windows -> orders -> fills -> paired vs single-side.
+    orders_posted = 0
+    orders_cancelled = 0
     inv: dict[str, dict[str, float]] = {
         "Up": {"shares": 0.0, "cost": 0.0},
         "Down": {"shares": 0.0, "cost": 0.0},
@@ -660,7 +670,8 @@ def trade_window(
 
     def _persist() -> None:
         write_state(slug, end_ms, started_ms, fills, open_orders=_open_order_rows(),
-                    ws_status=streamer.get_status(), recent_ticks=streamer.get_recent_ticks(30))
+                    ws_status=streamer.get_status(), recent_ticks=streamer.get_recent_ticks(30),
+                    orders_posted=orders_posted, orders_cancelled=orders_cancelled)
 
     def _book_fill(outcome: str, px: float, shares: float, role: str, minute: int,
                    reason: str, sub_reason: str, queue_ahead, deficit: float,
@@ -774,6 +785,7 @@ def trade_window(
 
     def _place_maker(outcome: str, px: float, shares: float, minute: int,
                      reason: str, sub_reason: str, deficit: float) -> None:
+        nonlocal orders_posted
         cur = open_orders.get(outcome)
         if cur is not None and abs(cur["price"] - px) < 1e-9:
             # Same price: keep the order where it is. Re-placing it would send
@@ -781,6 +793,7 @@ def trade_window(
             return
         ahead = live_queue_ahead(streamer,
                                  spec.up_token_id if outcome == "Up" else spec.down_token_id, px)
+        orders_posted += 1
         open_orders[outcome] = {
             "side": outcome,
             "price": px,
@@ -797,6 +810,7 @@ def trade_window(
         _persist()
 
     def _cancel_orders(why: str) -> None:
+        nonlocal orders_cancelled
         for side, order in list(open_orders.items()):
             log(f"cancel {side} {order['shares_left']:.1f} @ {order['price']:.3f} ({why})")
             log_event("refuse", "order-cancel", slug, side=side,
@@ -804,6 +818,7 @@ def trade_window(
                               "shares": round(order["shares_left"], 2), "why": why,
                               "strategy": strat_sym})
             open_orders.pop(side, None)
+            orders_cancelled += 1
         _persist()
 
     try:
@@ -1002,6 +1017,8 @@ def trade_window(
         "taker_fills": taker_count,
         "fees_usd": round(total_fees_usd, 2),
         "pair_cost": _live_pair_cost(),
+        "orders_posted": orders_posted,
+        "orders_cancelled": orders_cancelled,
     }
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     (RUNS_DIR / f"{slug}.json").write_text(json.dumps(result, indent=2))
@@ -1019,7 +1036,8 @@ def trade_window(
     # outcome is known.
     try:
         write_state(slug, end_ms, started_ms, fills, closed=True,
-                    ws_status=streamer.get_status(), recent_ticks=streamer.get_recent_ticks(30))
+                    ws_status=streamer.get_status(), recent_ticks=streamer.get_recent_ticks(30),
+                    orders_posted=orders_posted, orders_cancelled=orders_cancelled)
     except Exception as ex:
         log(f"warning: failed to persist the held window state: {type(ex).__name__}")
     log(f"window closed, {len(fills)} fills, cost ${cost:.2f} — settling in background…")
@@ -1038,6 +1056,8 @@ def trade_window(
         "taker_fills": taker_count,
         "fees_usd": round(total_fees_usd, 2),
         "pair_cost": _live_pair_cost(),
+        "orders_posted": orders_posted,
+        "orders_cancelled": orders_cancelled,
     }
     th = threading.Thread(target=settle_slug, args=(slug, snap, origin), kwargs={"budget_s": 900}, daemon=True)
     th.start()
@@ -1109,6 +1129,8 @@ def settle_slug(slug: str, snap: dict, origin: str | None, budget_s: int = 900) 
         "taker_fills": snap.get("taker_fills"),
         "fees_usd": snap.get("fees_usd"),
         "pair_cost": snap.get("pair_cost"),
+        "orders_posted": snap.get("orders_posted"),
+        "orders_cancelled": snap.get("orders_cancelled"),
         "fidelity": fidelity,
     }
     if winner:

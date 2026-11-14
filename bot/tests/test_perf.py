@@ -87,12 +87,18 @@ class PerfTests(unittest.TestCase):
         perf = self.build([run])
         rows = {row["key"]: row for row in perf["gate"]}
 
-        self.assertNotIn("target", rows["pairCost"])
-        self.assertEqual(rows["pairCost"]["value"], "90.0¢")
-        self.assertEqual(rows["pairCost"]["status"], "pass")
+        self.assertNotIn("target", rows["paired"])
+        self.assertEqual(rows["paired"]["value"], "1 windows · 90.0¢")
+        self.assertEqual(rows["paired"]["status"], "pass")
         self.assertEqual(rows["bothSides"]["status"], "pass")
         self.assertEqual(rows["zeroPrice"]["status"], "fail")
         self.assertEqual(rows["attainable"]["value"], "50%")
+        # Two Up fills (30 and 14 shares), one Down fill of 14 at 40c.
+        self.assertEqual(rows["fillsUp"]["value"], "2 fills · 22 sh · 50.0¢")
+        self.assertEqual(rows["fillsDown"]["value"], "1 fills · 14 sh · 40.0¢")
+        # No order counters in this run file, and both legs were taken.
+        self.assertEqual(rows["orders"]["value"], "—")
+        self.assertEqual(rows["single"]["value"], "0")
         self.assertEqual(perf["mShape"]["attainable"], [1, 0, 0, 0, 0])
         self.assertEqual(perf["mShape"]["phantom"], [0, 1, 0, 0, 0])
         self.assertNotIn("targets", perf)
