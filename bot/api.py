@@ -39,6 +39,7 @@ from bot.runs import (
     resolve_run_workspace,
     set_active_run_id,
 )
+from bot.fill_audit import role_of
 from bot import constants as C
 
 BOT_DIR = ROOT / "bot"
@@ -929,12 +930,12 @@ def _window_row(r: dict) -> dict:
     pair_cost = round(up_usd / up_shares + down_usd / down_shares, 4) if up_shares > 0 and down_shares > 0 else None
 
     # Per-minute queue verdicts for the cadence matrix. Only audited maker fills
-    # carry detail.attainable, so the matrix covers a subset of the fills.
+    # carry a verdict (a taker fill takes the ask, so the queue cannot block it).
     m_attainable = [0, 0, 0, 0, 0]
     m_phantom = [0, 0, 0, 0, 0]
     for f in fills:
         ok = (f.get("detail") or {}).get("attainable")
-        if ok is None:
+        if ok is None or role_of(f) == "TAKER":
             continue
         try:
             m = int(f.get("minute", 0))
