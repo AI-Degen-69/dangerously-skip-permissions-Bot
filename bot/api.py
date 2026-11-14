@@ -1149,6 +1149,9 @@ def perf() -> dict:
             "sub": [{"label": name, "value": text, "tone": tone} for name, text in sub],
         }
 
+    def share_fmt(value: float) -> str:
+        return f"{round(value, 1):g} sh"
+
     cells = [
         cell("windows", "Windows traded", f"{len(settled)}",
              [("Pending", f"{len(pending)}")]),
@@ -1163,16 +1166,16 @@ def perf() -> dict:
               ("Side difference", f"{abs(net_side_diff):,.0f} sh")],
              big=True, span=2),
         cell("fillsUp", "Filled orders · Up", f"{up_stats['count']:,}",
-             [("Median size", f"{up_stats['medianShares']:g} sh"),
+             [("Median size", share_fmt(up_stats['medianShares'])),
               ("Median price", f"{up_stats['medianPrice'] * 100:.1f}¢"),
               ("Shares", f"{up_shares_total:,.0f}")]),
         cell("fillsDown", "Filled orders · Down", f"{down_stats['count']:,}",
-             [("Median size", f"{down_stats['medianShares']:g} sh"),
+             [("Median size", share_fmt(down_stats['medianShares'])),
               ("Median price", f"{down_stats['medianPrice'] * 100:.1f}¢"),
               ("Shares", f"{down_shares_total:,.0f}")]),
         cell("paired", "Paired orders", f"{len(paired_windows):,}",
              [("Paired shares", f"{sum(paired_shares):,.0f}"),
-              ("Median / window", f"{_median(paired_shares):g} sh"),
+              ("Median / window", share_fmt(_median(paired_shares))),
               ("Lock-in", f"{median_pair_cost * 100:.1f}¢"),
               ("Your cap", f"{pair_cap * 100:.1f}¢")],
              status=pair_status, span=2),
@@ -1182,7 +1185,7 @@ def perf() -> dict:
               ("Net side difference", f"{abs(net_side_diff):,.0f} sh")]),
         cell("single", "Single-side positions", f"{len(single_windows):,}",
              [("Shares held", f"{sum(single_shares):,.0f}"),
-              ("Median size", f"{_median(single_shares):g} sh"),
+              ("Median size", share_fmt(_median(single_shares))),
               ("Share of windows", f"{(len(single_windows) / len(settled) * 100) if settled else 0:.0f}%")],
              status="stat" if not single_windows else ("warn" if len(single_windows) <= len(settled) * 0.2 else "fail")),
         cell("bothSides", "Both sides covered", f"{both}/{len(settled)}" if settled else "0/0",
@@ -1195,7 +1198,7 @@ def perf() -> dict:
         cell("zeroPrice", "Zero-price fills", f"{zero_fills}",
              [("Cost moved", "$0.00")], status="pass" if zero_fills == 0 else "fail"),
         cell("perWindow", "Per window", f"{median_fills:g} fills",
-             [("Mean fills", f"{mean_fills:g}"),
+             [("Mean fills", f"{mean_fills:.1f}"),
               ("Median cost", f"${median_cost:,.2f}"),
               ("Mean cost", f"${mean_cost:,.2f}")]),
     ]
