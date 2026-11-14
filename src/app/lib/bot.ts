@@ -582,14 +582,14 @@ export const useBotKpis = () =>
     retry: false,
   })
 
-export const useBotControl = () =>
+export const useBotControl = (live = true) =>
   useQuery({
     queryKey: ['bot', 'control'],
     queryFn: () => getJson<BotControl>('/control'),
     placeholderData: (prev) => prev,
-    refetchInterval: 3_000,
+    refetchInterval: live ? 3_000 : false,
     refetchIntervalInBackground: true,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: live,
     retry: false,
   })
 
@@ -775,6 +775,10 @@ export interface AbTestDistributionStats {
   stdPnl: number
   variance: number
   medianPnl: number
+  q25Pnl: number | null
+  q75Pnl: number | null
+  meanMinusStd: number | null
+  meanPlusStd: number | null
   minPnl: number
   maxPnl: number
   meanPairCost: number
@@ -831,11 +835,13 @@ export interface AbTestData {
   histogram: AbTestHistogramBin[]
 }
 
-export const useAbTestData = () =>
+export const useAbTestData = (live = true) =>
   useQuery({
     queryKey: ['bot', 'ab-test'],
     queryFn: () => getJson<AbTestData>('/ab-test'),
-    refetchInterval: 3_000,
+    placeholderData: (prev) => prev,
+    refetchInterval: live ? 10_000 : false,
+    refetchOnWindowFocus: false,
     retry: false,
   })
 

@@ -162,6 +162,22 @@ def _count_observed_windows(run_id: str | None) -> int:
         return 0
 
 
+def _quantile(sorted_vals: list[float], q: float) -> float:
+    """Empirical quantile with linear interpolation (N >= 1)."""
+    n = len(sorted_vals)
+    if n == 0:
+        return 0.0
+    if n == 1:
+        return float(sorted_vals[0])
+    pos = (n - 1) * q
+    lo = int(math.floor(pos))
+    hi = int(math.ceil(pos))
+    if lo == hi:
+        return float(sorted_vals[lo])
+    frac = pos - lo
+    return float(sorted_vals[lo] * (1.0 - frac) + sorted_vals[hi] * frac)
+
+
 def _empty_stats(observed: int = 0) -> dict[str, Any]:
     return {
         "samples": 0,
@@ -184,6 +200,10 @@ def _empty_stats(observed: int = 0) -> dict[str, Any]:
         "stdPnl": 0.0,
         "variance": 0.0,
         "medianPnl": 0.0,
+        "q25Pnl": None,
+        "q75Pnl": None,
+        "meanMinusStd": None,
+        "meanPlusStd": None,
         "minPnl": 0.0,
         "maxPnl": 0.0,
         "meanPairCost": 0.0,
@@ -263,6 +283,10 @@ def _compute_distribution_stats(records: list[dict[str, Any]],
         "stdPnl": round(std_val, 4),
         "variance": round(variance, 4),
         "medianPnl": round(median_val, 2),
+        "q25Pnl": round(_quantile(sorted_pnls, 0.25), 4) if n >= 3 else None,
+        "q75Pnl": round(_quantile(sorted_pnls, 0.75), 4) if n >= 3 else None,
+        "meanMinusStd": round(mean_val - std_val, 4) if n >= 3 else None,
+        "meanPlusStd": round(mean_val + std_val, 4) if n >= 3 else None,
         "minPnl": round(sorted_pnls[0], 2),
         "maxPnl": round(sorted_pnls[-1], 2),
         "meanPairCost": round(mean_pc, 4),
@@ -272,30 +296,51 @@ def _compute_distribution_stats(records: list[dict[str, Any]],
     }
 
 
-def _build_histogram(baseline_pnls: list[float], candidate_pnls: list[float]) -> list[dict[str, Any]]:
-    """Build standardized comparative histogram bins."""
-    bin_edges = [
-        (-999.0, -5.0, "< -$5.00"),
-        (-5.0, -4.0, "-$5.00..-$4.00"),
-        (-4.0, -3.0, "-$4.00..-$3.00"),
-        (-3.0, -2.0, "-$3.00..-$2.00"),
-        (-2.0, -1.0, "-$2.00..-$1.00"),
-        (-1.0, 0.0, "-$1.00..$0.00"),
-        (0.0, 1.0, "$0.00..+$1.00"),
-        (1.0, 2.0, "+$1.00..+$2.00"),
-        (2.0, 3.0, "+$2.00..+$3.00"),
-        (3.0, 4.0, "+$3.00..+$4.00"),
-        (4.0, 5.0, "+$4.00..+$5.00"),
-        (5.0, 999.0, "> +$5.00"),
-    ]
+def _build_histogram(baseline_pnls: list[float], candidate_pnls: list[float],
+                     mu_crit: float | None = None) -> list[dict[str, Any]]:
+    """Build $1.00 integer histogram bins cropped to the observed range.
 
-    bins = []
+    Plot range is only [min - $0.50, max + $0.50] over Baseline A, Candidate B,
+    and `mu_crit` (so `mu_crit` is never clipped; $0 is drawn only when it
+    falls inside that domain). $1 bins overlapping the domain are kept:
+    Binning rule (floor on the linear dollar axis):
+      - x >= 0: bin [k, k + 1) where k = floor(x), labelled "$k.00 to $k.99".
+      - x < 0:  bin [k, k + 1) where k = floor(x), labelled
+        "-$|k|.00 to -$|k+1|.01" (e.g. [-1, 0) -> "-$1.00 to -$0.01").
+    Every $1 step is contiguous on the linear dollar x-axis.
+    """
+    values: list[float] = [float(x) for x in list(baseline_pnls) + list(candidate_pnls)]
+    if mu_crit is not None:
+        try:
+            mc = float(mu_crit)
+            if math.isfinite(mc):
+                values.append(mc)
+        except (TypeError, ValueError):
+            pass
+
+    if not values:
+        lo_k, hi_k = 0, 0
+    else:
+        # Tight tail spacing: half a dollar beyond the extremes, snapped
+        # outward to $1 bin edges so no stick is ever clipped.
+        domain_lo = min(values) - 0.50
+        domain_hi = max(values) + 0.50
+        lo_k = math.floor(domain_lo)
+        hi_k = math.ceil(domain_hi) - 1
+
     n_a = max(1, len(baseline_pnls))
     n_b = max(1, len(candidate_pnls))
 
-    for low, high, label in bin_edges:
-        cnt_a = sum(1 for x in baseline_pnls if low <= x < high)
-        cnt_b = sum(1 for x in candidate_pnls if low <= x < high)
+    bins: list[dict[str, Any]] = []
+    for k in range(lo_k, hi_k + 1):
+        low = float(k)
+        high = float(k + 1)
+        if k >= 0:
+            label = f"${k:.2f} to ${k + 0.99:.2f}"
+        else:
+            label = f"-${abs(k):.2f} to -${abs(k + 1) + 0.01:.2f}"
+        cnt_a = sum(1 for x in baseline_pnls if low <= float(x) < high)
+        cnt_b = sum(1 for x in candidate_pnls if low <= float(x) < high)
         bins.append({
             "label": label,
             "range": [low, high],
@@ -541,7 +586,7 @@ def get_ab_test_data() -> dict[str, Any]:
         verdict = f"No Edge Detected (Fail to Reject H0, p={p_value:.3f})"
         verdict_tone = "danger"
 
-    histogram = _build_histogram(baseline_stats["pnlList"], candidate_stats["pnlList"])
+    histogram = _build_histogram(baseline_stats["pnlList"], candidate_stats["pnlList"], mu_crit)
 
     return {
         "status": "ready",

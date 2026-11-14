@@ -26,12 +26,28 @@ const money = (val: number | null | undefined, digits = 2) =>
 const pct = (val: number | null | undefined) =>
   val == null ? '—' : `${(val * 100).toFixed(1)}%`
 
+/** Kill float noise: 36.980000000000004 → 36.98, 135 → 135. */
+const trim2 = (val: number) => Number(val.toFixed(2))
+
 const TEX: Record<string, string> = {
   '\\alpha': 'α', '\\beta': 'β', '\\mu': 'μ', '\\sigma': 'σ', '\\ge': '≥', '\\le': '≤',
   '\\geq': '≥', '\\leq': '≤', '\\ne': '≠', '\\to': '→', '\\cdot': '·', '\\times': '×',
 }
 
-/** Render a math-like token: Greek/TeX → Unicode, `x_{sub}`/`x_sub` → subscript. Neutral ink chip (no accent color) for max legibility. */
+/** Unicode subscript digits, so `H_0` renders as H₀ instead of a boxed zero. */
+const SUB_DIGIT: Record<string, string> = {
+  '0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄',
+  '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉',
+}
+
+/** Math convention: variables italic, numerals upright. */
+function mathRuns(text: string, key: string): React.ReactNode[] {
+  return text.split(/(\d+(?:[.,]\d+)*)/g).filter(Boolean).map((run, i) =>
+    /^\d/.test(run) ? <span key={`${key}-${i}`} className="not-italic">{run}</span> : run
+  )
+}
+
+/** Render a math-like token: Greek/TeX → Unicode, `x_{sub}`/`x_sub` → subscript. Serif italic math, no chip box. */
 function Var({ children }: { children: string }) {
   const src = children.replace(/\\[a-zA-Z]+/g, (m) => TEX[m] ?? m)
   const parts: React.ReactNode[] = []
@@ -39,19 +55,21 @@ function Var({ children }: { children: string }) {
   let last = 0
   let m: RegExpExecArray | null
   while ((m = re.exec(src))) {
-    if (m.index > last) parts.push(src.slice(last, m.index))
-    parts.push(<sub key={m.index} className="text-[0.7em] not-italic">{m[1].replace(/^\{|\}$/g, '')}</sub>)
+    if (m.index > last) parts.push(...mathRuns(src.slice(last, m.index), `t${m.index}`))
+    const sub = m[1].replace(/^\{|\}$/g, '')
+    parts.push(
+      /^\d+$/.test(sub)
+        ? <span key={`s${m.index}`} className="not-italic">{sub.replace(/\d/g, (d) => SUB_DIGIT[d])}</span>
+        : <sub key={`s${m.index}`} className={/^[A-Za-z]$/.test(sub) ? undefined : 'not-italic'}>{sub}</sub>
+    )
     last = m.index + m[0].length
   }
-  if (last < src.length) parts.push(src.slice(last))
-  return (
-    <span className="mx-px whitespace-nowrap rounded-[4px] bg-surface-2 px-1 font-mono font-semibold not-italic text-fg ring-1 ring-line">
-      {parts}
-    </span>
-  )
+  if (last < src.length) parts.push(...mathRuns(src.slice(last), 'tail'))
+  return <span className="mx-px whitespace-nowrap font-serif font-normal italic text-fg">{parts}</span>
 }
 
-const TOKEN_RE = /(\$[^$]+\$|H[₀₁]|[μσαβ](?:_(?:\{[^}]+\}|[A-Za-z0-9._]*[A-Za-z0-9]))?|\b(?:N|t|p|d|df)\b(?=[\s,.:;)=<>≥≤-]|$))/g
+// TeX-lite only when a command follows `$`; dollar amounts stay plain text.
+const TOKEN_RE = /(\$\\[a-zA-Z]+[^$]*\$|H[₀₁]|[μσαβ](?:_(?:\{[^}]+\}|[A-Za-z0-9._]*[A-Za-z0-9]))?|\b(?:N|t|p|d|df)(?:_(?:\{[^}]+\}|[A-Za-z0-9]+))?\b(?=[\s,.:;)(=<>≥≤-]|$))/g
 
 /** Inline text with math: `$...$` is TeX-lite; known variables (H₀, μ, α, t, p, N…) are auto-highlighted. */
 function Rich({ text }: { text: string }) {
@@ -70,8 +88,9 @@ function Rich({ text }: { text: string }) {
 }
 
 export function AbTest() {
-  const { data, refetch } = useAbTestData()
-  const control = useBotControl()
+  const [live, setLive] = useState(true)
+  const { data, refetch } = useAbTestData(live)
+  const control = useBotControl(live)
   const startCandidate = useStartAbCandidate()
   const stopCandidate = useStopAbCandidate()
   const toast = useToast()
@@ -133,39 +152,73 @@ export function AbTest() {
     return m
   }, [histogram, showA, showB])
 
-  // Map a PnL value to an x% position along the equal-width bin scale.
+  // Linear dollar x-axis over the full-range $1 bins: contiguous [k, k+1)
+  // sticks, so a value maps proportionally between the first bin low and
+  // the last bin high.
+  const histLo = histogram.length > 0 ? histogram[0].range[0] : 0
+  const histHi = histogram.length > 0 ? histogram[histogram.length - 1].range[1] : 1
+  const histSpan = Math.max(1, histHi - histLo)
   const valueToXPct = (v: number): number => {
     if (histogram.length === 0) return 0
-    if (v <= -5) return 0
-    if (v >= 5) return 100
-    for (let i = 0; i < histogram.length; i++) {
-      const [low, high] = histogram[i].range
-      if (v >= low && v < high) {
-        const span = high - low
-        const frac = span > 0 && span < 900 ? (v - low) / span : 0.5
-        return ((i + Math.min(1, Math.max(0, frac))) / histogram.length) * 100
-      }
-    }
-    return 50
+    const frac = (v - histLo) / histSpan
+    return Math.min(100, Math.max(0, frac * 100))
   }
-  // Reference-line rows: $0 stays pinned to the bottom axis so it can never
-  // collide with mu_A near zero; mu_A / mu_B / mu_crit stagger across
-  // distinct top rows (top-0 / top-5 / top-10) with solid pills.
+  // Vertical grid ticks at regular dollar steps ($5, or $10 for wide ranges),
+  // always marking $0.
+  const xTicks = useMemo(() => {
+    if (histogram.length === 0) return [] as number[]
+    const step = histSpan > 40 ? 10 : 5
+    const ticks: number[] = []
+    for (let t = Math.ceil(histLo / step) * step; t <= histHi; t += step) ticks.push(t)
+    if (!ticks.includes(0) && histLo <= 0 && histHi >= 0) ticks.push(0)
+    return ticks.sort((a, b) => a - b)
+  }, [histogram, histLo, histHi, histSpan])
+  // Centered high-visibility reference lines: mu_A (slate), mu_B (emerald),
+  // mu_crit (RED). Zero is a subtle dotted line with no pill. Tiers stagger
+  // only when adjacent labels sit within ~8% x-distance so they never touch.
   const refLines = useMemo(() => {
-    const lines: { key: string; value: number; label: string; className: string; dashed: boolean; row: 'bottom' | 'top-0' | 'top-5' | 'top-10' }[] = [
-      { key: 'zero', value: 0, label: 'Zero $0.00', className: 'bg-fg/60', dashed: false, row: 'bottom' },
-    ]
+    type RefLine = { key: string; value: number; label: React.ReactNode; title: string; lineClass: string; labelClass: string; dashed: boolean; tier: number }
+    const mains: Omit<RefLine, 'tier'>[] = []
     if (baseline != null) {
-      lines.push({ key: 'muA', value: baseline.meanPnl, label: `μ_A $${baseline.meanPnl.toFixed(2)}`, className: 'bg-slate-400', dashed: true, row: 'top-0' })
+      mains.push({ key: 'muA', value: baseline.meanPnl, label: <><Var>μ_A</Var> ${baseline.meanPnl.toFixed(2)}</>, title: `μ_A $${baseline.meanPnl.toFixed(2)}`, lineClass: 'bg-slate-400', labelClass: 'text-muted ring-line', dashed: true })
     }
     if (candidate != null && (candidate.samples ?? 0) > 0) {
-      lines.push({ key: 'muB', value: candidate.meanPnl, label: `μ_B $${candidate.meanPnl.toFixed(2)}`, className: 'bg-emerald-500', dashed: false, row: 'top-5' })
+      mains.push({ key: 'muB', value: candidate.meanPnl, label: <><Var>μ_B</Var> ${candidate.meanPnl.toFixed(2)}</>, title: `μ_B $${candidate.meanPnl.toFixed(2)}`, lineClass: 'bg-emerald-500', labelClass: 'text-emerald-600 ring-emerald-500/30', dashed: false })
     }
     if (stats?.muCritical != null) {
-      lines.push({ key: 'mucrit', value: stats.muCritical, label: `μ_crit $${stats.muCritical.toFixed(2)}`, className: 'bg-amber-500', dashed: true, row: 'top-10' })
+      mains.push({ key: 'mucrit', value: stats.muCritical, label: <><Var>μ_crit</Var> ${stats.muCritical.toFixed(2)}</>, title: `μ_crit $${stats.muCritical.toFixed(2)}`, lineClass: 'bg-danger', labelClass: 'text-danger ring-danger/40', dashed: false })
     }
-    return lines
-  }, [baseline, candidate, stats])
+    const withX = mains.map((l) => ({ ...l, x: valueToXPct(l.value) })).sort((a, b) => a.x - b.x)
+    let tier = 0
+    let prevX: number | null = null
+    return withX.map((l) => {
+      if (prevX != null && Math.abs(l.x - prevX) < 8) tier = Math.min(2, tier + 1)
+      else if (prevX != null && Math.abs(l.x - prevX) >= 8 && tier > 0) tier = Math.max(0, tier - 1)
+      prevX = l.x
+      return { ...l, tier }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseline, candidate, stats, histLo, histSpan])
+  // Faint spread markers: quartiles P25/P50/P75 and ±1σ (~68%) per arm.
+  const spreadLines = useMemo(() => {
+    type Spread = { key: string; value: number; label: string; title: string; arm: 'A' | 'B' }
+    const out: Spread[] = []
+    if (baseline != null && (baseline.samples ?? 0) >= 3) {
+      if (baseline.q25Pnl != null) out.push({ key: 'q25A', value: baseline.q25Pnl, label: 'P25_A', title: `Baseline P25 $${baseline.q25Pnl.toFixed(2)}`, arm: 'A' })
+      if (baseline.medianPnl != null) out.push({ key: 'p50A', value: baseline.medianPnl, label: 'P50_A', title: `Baseline P50 $${Number(baseline.medianPnl).toFixed(2)}`, arm: 'A' })
+      if (baseline.q75Pnl != null) out.push({ key: 'q75A', value: baseline.q75Pnl, label: 'P75_A', title: `Baseline P75 $${baseline.q75Pnl.toFixed(2)}`, arm: 'A' })
+      if (baseline.meanMinusStd != null) out.push({ key: 'm1A', value: baseline.meanMinusStd, label: '−1σ_A', title: `Baseline −1σ $${baseline.meanMinusStd.toFixed(2)}`, arm: 'A' })
+      if (baseline.meanPlusStd != null) out.push({ key: 'p1A', value: baseline.meanPlusStd, label: '+1σ_A', title: `Baseline +1σ $${baseline.meanPlusStd.toFixed(2)}`, arm: 'A' })
+    }
+    if (candidate != null && (candidate.samples ?? 0) >= 3) {
+      if (candidate.q25Pnl != null) out.push({ key: 'q25B', value: candidate.q25Pnl, label: 'P25_B', title: `Candidate P25 $${candidate.q25Pnl.toFixed(2)}`, arm: 'B' })
+      if (candidate.medianPnl != null) out.push({ key: 'p50B', value: candidate.medianPnl, label: 'P50_B', title: `Candidate P50 $${Number(candidate.medianPnl).toFixed(2)}`, arm: 'B' })
+      if (candidate.q75Pnl != null) out.push({ key: 'q75B', value: candidate.q75Pnl, label: 'P75_B', title: `Candidate P75 $${candidate.q75Pnl.toFixed(2)}`, arm: 'B' })
+      if (candidate.meanMinusStd != null) out.push({ key: 'm1B', value: candidate.meanMinusStd, label: '−1σ_B', title: `Candidate −1σ $${candidate.meanMinusStd.toFixed(2)}`, arm: 'B' })
+      if (candidate.meanPlusStd != null) out.push({ key: 'p1B', value: candidate.meanPlusStd, label: '+1σ_B', title: `Candidate +1σ $${candidate.meanPlusStd.toFixed(2)}`, arm: 'B' })
+    }
+    return out
+  }, [baseline, candidate])
 
   return (
     <div className="space-y-6 pb-12">
@@ -381,10 +434,12 @@ export function AbTest() {
       </Card>
 
       {/* 3. Comparative Scorecard: Strategy A (Baseline) vs Strategy B (Candidate) */}
-      <div className="grid gap-4 md:grid-cols-2">
+      {/* Subgrid: both cards span the same 3 parent rows (header / tiles / details),
+          so each row takes the height of the taller card and both columns line up. */}
+      <div className="grid gap-4 md:grid-cols-2 md:gap-y-3">
         {/* Baseline Card */}
-        <Card className="flex flex-col justify-between p-5">
-          <div className="space-y-3">
+        <Card className="grid grid-rows-subgrid row-span-3 gap-y-3 p-5">
+          <div className="contents">
             <div className="flex items-start justify-between">
               <div>
                 <span className="inline-flex items-center gap-1 rounded-[6px] bg-surface-2 px-2 py-0.5 font-mono text-[11px] font-bold text-muted">
@@ -443,8 +498,8 @@ export function AbTest() {
         </Card>
 
         {/* Candidate Card */}
-        <Card className="flex flex-col justify-between border-accent/40 p-5 shadow-xs">
-          <div className="space-y-3">
+        <Card className="grid grid-rows-subgrid row-span-3 gap-y-3 border-accent/40 p-5 shadow-xs">
+          <div className="contents">
             <div className="flex items-start justify-between">
               <div>
                 <span className="inline-flex items-center gap-1 rounded-[6px] bg-accent/15 px-2 py-0.5 font-mono text-[11px] font-bold text-accent">
@@ -550,6 +605,16 @@ export function AbTest() {
               <span className={cx('size-3 rounded-[3px] bg-accent', !showB && 'bg-transparent ring-1 ring-accent')} />
               <span className={cx('font-medium text-fg', !showB && 'line-through')}>Candidate B (N={candidate?.samples ?? 0})</span>
             </button>
+            <button
+              type="button"
+              aria-pressed={live}
+              onClick={() => setLive((v) => !v)}
+              title={live ? 'Pause live updates (freezes the chart for inspection)' : 'Resume live updates (10s poll)'}
+              className={cx('flex items-center gap-1.5 rounded-pill border border-line px-2.5 py-1 transition-all hover:bg-surface-2', !live && 'opacity-60')}
+            >
+              <span className={cx('size-2 rounded-full', live ? 'bg-success' : 'bg-muted')} />
+              <span className={cx(!live && 'line-through')}>{live ? 'Live' : 'Paused'}</span>
+            </button>
             <div className="flex items-center overflow-hidden rounded-pill border border-line text-[11px]" role="group" aria-label="Histogram scale">
               <button
                 type="button"
@@ -571,75 +636,111 @@ export function AbTest() {
           </div>
         </div>
 
-        {/* Histogram Visualization */}
+        {/* Histogram Visualization: cropped $1.00 stick bars on a linear dollar axis */}
         <div className="mt-6 space-y-2">
-          <div className="relative flex h-52 items-end gap-2 border-b border-line pb-2 pt-4">
-            {/* Vertical reference lines: $0 cutoff, mu_A, mu_B, mu_crit */}
+          <div className="relative h-64 border-b border-line pb-6 pt-16">
+            {/* Horizontal grid lines at 25/50/75/100% of max height */}
+            {[25, 50, 75, 100].map((t) => (
+              <div key={t} className="pointer-events-none absolute inset-x-0" style={{ bottom: `calc(1.5rem + ${t}% * 0.01 * (100% - 5.5rem))` }}>
+                <div className="border-t border-dashed border-line/70" />
+                <span className="absolute -top-2 left-0 font-mono text-[10px] text-faint">
+                  {normalized ? `${(maxBinPct * (t / 100)).toFixed(1)}%` : `${Math.round(maxBinCount * (t / 100))}`}
+                </span>
+              </div>
+            ))}
+            {/* Vertical grid lines at regular dollar ticks */}
+            {xTicks.map((t) => (
+              <div
+                key={t}
+                className="pointer-events-none absolute bottom-6 top-16 z-0"
+                style={{ left: `${valueToXPct(t)}%` }}
+              >
+                <div className="absolute inset-y-0 w-px bg-line/50" />
+              </div>
+            ))}
+            {/* Subtle grayed-out dotted zero line (no pill, no footer) */}
+            {histLo <= 0 && histHi >= 0 && (
+              <div
+                className="pointer-events-none absolute bottom-6 top-16 z-10"
+                style={{ left: `${valueToXPct(0)}%` }}
+                title="$0.00"
+              >
+                <div className="h-full w-px border-l border-dotted border-muted/60" />
+              </div>
+            )}
+            {/* Faint quartile / ±1σ spread markers (bottom labels, muted) */}
+            {spreadLines.map((s) => (
+              <div
+                key={s.key}
+                className="pointer-events-none absolute bottom-6 top-16 z-[5]"
+                style={{ left: `${valueToXPct(s.value)}%` }}
+                title={s.title}
+              >
+                <div className={`h-full w-px ${s.arm === 'B' ? 'bg-emerald-500/30' : 'bg-slate-400/30'} [background-image:linear-gradient(to_bottom,currentColor_40%,transparent_40%)] [background-size:1px_4px] bg-transparent`} />
+                <div className="absolute inset-x-0 bottom-0 -translate-x-1/2 whitespace-nowrap text-center font-mono text-[10px] font-medium text-faint">
+                  {s.label}
+                </div>
+              </div>
+            ))}
+            {/* $1.00 stick bars */}
+            <div className="absolute inset-x-0 bottom-6 top-16 flex items-end gap-[1px]">
+              {histogram.map((bin) => {
+                const hA = normalized ? (bin.baselinePct / maxBinPct) * 100 : (bin.baselineCount / maxBinCount) * 100
+                const hB = normalized ? (bin.candidatePct / maxBinPct) * 100 : (bin.candidateCount / maxBinCount) * 100
+                const isPositive = bin.range[0] >= 0
+                return (
+                  <div
+                    key={bin.label}
+                    className="group relative flex h-full flex-1 flex-col justify-end rounded-t-sm transition-colors hover:bg-surface-2/40"
+                    title={`${bin.label} — Base ${bin.baselineCount} (${bin.baselinePct}%) · Cand ${bin.candidateCount} (${bin.candidatePct}%)`}
+                  >
+                    {/* Tooltip on hover: exact $1 range, raw counts, percentages */}
+                    <div className="pointer-events-none absolute -top-2 left-1/2 z-20 hidden -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-tile border border-line bg-surface px-2.5 py-1 text-[11px] shadow-sm group-hover:block">
+                      <p className="font-semibold">{bin.label}</p>
+                      <p className="text-muted">
+                        Base: {bin.baselineCount} ({bin.baselinePct}%) · Cand: {bin.candidateCount} ({bin.candidatePct}%)
+                      </p>
+                    </div>
+                    <div className="flex h-full items-end justify-center gap-[2px] px-px">
+                      {/* Baseline A slate stick */}
+                      <div className={cx('w-[3px] min-w-[3px] max-w-[4px] rounded-t-[1px] bg-muted/40', !showA && 'opacity-0')} style={{ height: showA && bin.baselineCount > 0 ? `${Math.max(3, hA)}%` : '0%' }} />
+                      {/* Candidate B emerald/accent stick */}
+                      <div className={cx('w-[3px] min-w-[3px] max-w-[4px] rounded-t-[1px]', isPositive ? 'bg-success' : 'bg-accent', !showB && 'opacity-0')} style={{ height: showB && bin.candidateCount > 0 ? `${Math.max(3, hB)}%` : '0%' }} />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+            {/* Centered high-visibility mean / critical lines (line slices label dead-center) */}
             {refLines.map((line) => (
               <div
                 key={line.key}
                 className="pointer-events-none absolute inset-y-0 z-10"
                 style={{ left: `${valueToXPct(line.value)}%` }}
-                title={`${line.label} at $${line.value.toFixed(2)}`}
+                title={line.title}
               >
-                <div className={line.row === 'bottom'
-                  ? 'absolute inset-x-0 bottom-0 whitespace-nowrap text-center text-[10px] font-mono font-semibold'
-                  : `absolute inset-x-0 whitespace-nowrap text-[10px] font-mono font-semibold ${line.row === 'top-0' ? 'top-0' : line.row === 'top-5' ? 'top-5' : 'top-10'}`}>
-                  <span className={line.row === 'bottom'
-                    ? '-translate-x-1/2 translate-y-1/2 rounded-pill bg-surface px-1.5 py-px text-fg shadow-xs ring-1 ring-line'
-                    : '-translate-x-1/2 rounded-pill bg-surface px-1.5 py-px text-fg shadow-xs ring-1 ring-line'}>{line.label}</span>
-                </div>
-                <div className={`absolute inset-y-6 w-px ${line.className}${line.dashed ? ' [background-image:linear-gradient(to_bottom,currentColor_55%,transparent_45%)] [background-size:1px_6px] bg-transparent' : ''}`} />
-              </div>
-            ))}
-            {histogram.map((bin) => {
-              const hA = normalized ? (bin.baselinePct / maxBinPct) * 100 : (bin.baselineCount / maxBinCount) * 100
-              const hB = normalized ? (bin.candidatePct / maxBinPct) * 100 : (bin.candidateCount / maxBinCount) * 100
-              const isPositive = bin.range[0] >= 0
-
-              return (
                 <div
-                  key={bin.label}
-                  className="group relative flex h-full flex-1 flex-col justify-end rounded-t-sm transition-colors hover:bg-surface-2/40"
+                  className="absolute inset-x-0 whitespace-nowrap text-center text-[12px] font-semibold"
+                  style={{ top: `${line.tier * 22}px` }}
                 >
-                  {/* Tooltip on hover */}
-                  <div className="pointer-events-none absolute -top-12 left-1/2 z-20 hidden -translate-x-1/2 whitespace-nowrap rounded-tile border border-line bg-surface px-2.5 py-1 text-[11px] shadow-sm group-hover:block">
-                    <p className="font-semibold">{bin.label}</p>
-                    <p className="text-muted">
-                      Base: {bin.baselineCount} ({bin.baselinePct}%) · Cand: {bin.candidateCount} ({bin.candidatePct}%)
-                    </p>
-                  </div>
-
-                  <div className="flex h-full items-end justify-center gap-1 px-0.5">
-                    {/* Baseline Bar */}
-                    <div className={cx('w-1/2 rounded-t-[2px] bg-muted/40 transition-all duration-300', !showA && 'opacity-0')} style={{ height: showA && bin.baselineCount > 0 ? `${Math.max(4, hA)}%` : '0%' }} />
-                    {/* Candidate Bar */}
-                    <div className={cx('w-1/2 rounded-t-[2px] transition-all duration-300', isPositive ? 'bg-success' : 'bg-accent', !showB && 'opacity-0')} style={{ height: showB && bin.candidateCount > 0 ? `${Math.max(4, hB)}%` : '0%' }} />
-                  </div>
+                  <span className={`inline-block -translate-x-1/2 rounded bg-surface px-1.5 py-px shadow-xs ring-1 ${line.labelClass}`}>{line.label}</span>
                 </div>
-              )
-            })}
-          </div>
-
-          {/* Histogram X-Axis Labels */}
-          <div className="flex gap-2 text-[10px] text-faint">
-            {histogram.map((bin) => (
-              <div key={bin.label} className="flex-1 truncate text-center font-mono">
-                {bin.label.replace('..', ' to ')}
+                <div className={`absolute bottom-6 top-16 w-px ${line.lineClass}${line.dashed ? ' [background-image:linear-gradient(to_bottom,currentColor_55%,transparent_45%)] [background-size:1px_6px] bg-transparent' : ''}`} />
               </div>
             ))}
           </div>
-        </div>
-
-        {/* Zero Boundary Marker */}
-        <div className="mt-3 flex items-center justify-between text-[11.5px] text-faint">
-          <span className="flex items-center gap-1 text-danger">
-            ← Net Negative Windows (Loss Drag)
-          </span>
-          <span className="font-mono font-semibold text-fg">Critical Zero Cutoff ($0.00)</span>
-          <span className="flex items-center gap-1 text-success">
-            Net Positive Windows (Arb Profit) →
-          </span>
+          {/* Clean dollar x-axis tick labels */}
+          <div className="relative h-4 text-[10px] text-faint">
+            {xTicks.map((t) => (
+              <span
+                key={t}
+                className="absolute -translate-x-1/2 whitespace-nowrap font-mono"
+                style={{ left: `${valueToXPct(t)}%` }}
+              >
+                {t === 0 ? '$0' : `${t > 0 ? '$' : '−$'}${Math.abs(t)}`}
+              </span>
+            ))}
+          </div>
         </div>
       </Card>
 
@@ -652,7 +753,7 @@ export function AbTest() {
               Live sample stream recorded under Strategy B ({candidate?.windows?.length ?? 0} settled records shown).
             </p>
           </div>
-          <Badge tone="neutral">Auto-updating (3s poll)</Badge>
+          <Badge tone="neutral">Auto-updating (10s poll)</Badge>
         </div>
 
         {candidate?.windows && candidate.windows.length > 0 ? (
@@ -679,7 +780,7 @@ export function AbTest() {
                       </span>
                     </td>
                     <td className="py-2.5 text-right text-muted">
-                      {w.upShares} / {w.downShares} {w.imbalance > 0 && <span className="text-warning">(!{w.imbalance})</span>}
+                      {trim2(w.upShares)} / {trim2(w.downShares)} {w.imbalance > 0 && <span className="text-warning">(!{trim2(w.imbalance)})</span>}
                     </td>
                     <td className="py-2.5 text-right font-medium">
                       <span className={w.pairCost && w.pairCost <= 0.995 ? 'text-success' : 'text-danger'}>
