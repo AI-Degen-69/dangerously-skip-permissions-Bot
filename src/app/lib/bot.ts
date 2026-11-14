@@ -278,14 +278,18 @@ export interface BotControl {
   tape?: TapeStatus
 }
 
-export interface PerfGate {
+/** One cell of the execution-health matrix: a label, the number, its parts. */
+export interface PerfCell {
   key: string
   label: string
   value: string
-  target: string
-  status: 'pass' | 'warn' | 'fail' | 'sample'
-  judged: boolean
-  detail: string
+  /** `stat` cells are plain measurements with no target to judge against. */
+  status: 'pass' | 'warn' | 'fail' | 'stat'
+  /** Layer above the rest: the number the other cells are built from. */
+  big?: boolean
+  /** How many grid columns the cell spans. */
+  span?: number
+  sub: { label: string; value: string; tone?: string }[]
 }
 
 export interface PerfWindow {
@@ -300,6 +304,8 @@ export interface PerfWindow {
   pending: boolean
   redeemed: boolean
   bothSides: boolean
+  /** Lock-in cost of a both-sided window (avg Up + avg Down); null otherwise. */
+  pairCost: number | null
   upFills: number
   downFills: number
   zeroPriceFills: number
@@ -308,6 +314,9 @@ export interface PerfWindow {
   /** Taker fills - paper mode has no real book, so these cannot be checked. */
   takerFills?: number
   mShape: number[]
+  /** Per-minute queue verdicts for audited maker fills. */
+  mAttainable: number[]
+  mPhantom: number[]
   /** Taker fees already charged inside costUsd. */
   feesUsd?: number
   /** Taker fees on the maker fills, the pool a maker rebate is drawn from. */
@@ -423,25 +432,14 @@ export interface BotPerf {
       shareRate: number
     }
   }
-  targets: {
-    windows: number
-    medianFills: number
-    meanFills: number
-    medianCostUsd: number
-    meanCostUsd: number
-    bothSides: number
-  }
-  gate: PerfGate[]
+  cells: PerfCell[]
   mShape: {
     live: number[]
-    target: number[]
     liveShare: number[]
-    targetShare: number[]
-    distance: number
-    /** The same minute mix over the verified fills only. */
-    verifiedLive?: number[]
-    verifiedShare?: number[]
-    verifiedDistance?: number
+    /** Per-minute audited maker fills a real bid could have got. */
+    attainable: number[]
+    /** Per-minute audited maker fills the queue ahead never cleared. */
+    phantom: number[]
   }
   redeem: { count: number; payoutUsd: number }
   health: {
@@ -584,14 +582,14 @@ export const useBotKpis = () =>
     retry: false,
   })
 
-export const useBotControl = () =>
+export const useBotControl = (live = true) =>
   useQuery({
     queryKey: ['bot', 'control'],
     queryFn: () => getJson<BotControl>('/control'),
     placeholderData: (prev) => prev,
-    refetchInterval: 3_000,
+    refetchInterval: live ? 3_000 : false,
     refetchIntervalInBackground: true,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: live,
     retry: false,
   })
 
@@ -754,6 +752,19 @@ export interface AbTestDistributionStats {
   samples: number
   targetSamples?: number
   progressPct?: number
+  /** Total 5m windows observed with the loop on (informational only, never N). */
+  observedWindows: number
+  /** Active traded windows (fills > 0): the Welch t-test sample N. */
+  activeWindows: number
+  /** Paired windows (upShares > 0 && downShares > 0). Target 60. */
+  pairedWindows: number
+  /** Sub-$1.00 pairs (pairCost < 1.00). Target 35+. */
+  subDollarPairs: number
+  pairCostUnder096: number
+  pairCost096to100: number
+  pairCostOver100: number
+  totalLockedShares: number
+  pairsMerged: number
   wins: number
   losses: number
   scratches: number
@@ -764,6 +775,10 @@ export interface AbTestDistributionStats {
   stdPnl: number
   variance: number
   medianPnl: number
+  q25Pnl: number | null
+  q75Pnl: number | null
+  meanMinusStd: number | null
+  meanPlusStd: number | null
   minPnl: number
   maxPnl: number
   meanPairCost: number
@@ -783,11 +798,17 @@ export interface AbTestHistogramBin {
 
 export interface AbTestStatistics {
   targetSampleSize: number
+  targetPaired: number
+  targetSubDollar: number
   alpha: number
   confidenceLevel: string
   power: string
   tStatistic: number
-  tCritical: number
+  /** Dynamic one-tailed critical value from the Welch-Satterthwaite df (null when N too small). */
+  tCritical: number | null
+  /** Exact active-window mean the candidate must cross to reject H0 (null when N too small). */
+  muCritical: number | null
+  standardError: number
   pValue: number
   degreesOfFreedom: number
   cohenD: number
@@ -814,11 +835,13 @@ export interface AbTestData {
   histogram: AbTestHistogramBin[]
 }
 
-export const useAbTestData = () =>
+export const useAbTestData = (live = true) =>
   useQuery({
     queryKey: ['bot', 'ab-test'],
     queryFn: () => getJson<AbTestData>('/ab-test'),
-    refetchInterval: 3_000,
+    placeholderData: (prev) => prev,
+    refetchInterval: live ? 10_000 : false,
+    refetchOnWindowFocus: false,
     retry: false,
   })
 

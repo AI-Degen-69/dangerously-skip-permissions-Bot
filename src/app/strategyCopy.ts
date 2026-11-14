@@ -43,7 +43,12 @@ export function tweakCards(candidate: AbTestDistributionStats | null | undefined
   const cap = money(e.maxPairCost, 0.985)
   const rescue = money(e.rescuePairCostMax, 0.995)
   const cutoff = num(e.stopBeforeCloseSec, 75)
-  const empty = !candidate?.entry
+  const sweep = num(e.sweepBeforeCloseSec, 15)
+  const lateMax = money(e.lateRescueMaxPairCost ?? e.rescuePairCostMax, 0.995)
+  const lateStart = num(e.lateRescueStartSec, 210)
+  const probe = num(e.unhedgedProbeShares, 0)
+  const step = num(e.unhedgedStepCents, 0)
+  const empty = !candidate?.entry || Object.keys(candidate?.entry ?? {}).length === 0
 
   const preflight = f.preflightGate === true
   const sizing = f.sizing ?? ''
@@ -60,11 +65,13 @@ export function tweakCards(candidate: AbTestDistributionStats | null | undefined
     hl.dipClips ??
     (empty
       ? 'Waiting for a candidate run — its live sizing will appear here.'
-      : sizing === 'constant-risk'
-        ? `Every dip sized as $${risk.toFixed(2)} / price (${clip} at ${hiC}c up to ${mx} at 10c), dips at ${hiC}c or cheaper only. No heavy bulk fills; unhedged gap vetoed at ${lead} while total paired volume ${uncapped ? 'has no cap' : 'is capped'}.`
-        : sizing === 'confidence'
-          ? `Sizes heavy (${mx} sh) on 100% risk-free atomic pairs and deficit equalizations, while micro-sizing speculative dips to ${clip} sh.`
-          : `Dip clips of ${clip} sh (max ${mx} sh), dips at ${hiC}c or cheaper.`)
+      : probe > 0
+        ? `Leg-1 fresh clips capped at ${probe} sh unhedged probe; unlocks full ${mx} sh on Leg 2 and paired fills. Additional unhedged fills on the same side require an ${step}¢ step down.`
+        : sizing === 'constant-risk'
+          ? `Every dip sized as $${risk.toFixed(2)} / price (${clip} at ${hiC}c up to ${mx} at 10c), dips at ${hiC}c or cheaper only. No heavy bulk fills; unhedged gap vetoed at ${lead} while total paired volume ${uncapped ? 'has no cap' : 'is capped'}.`
+          : sizing === 'confidence'
+            ? `Sizes heavy (${mx} sh) on 100% risk-free atomic pairs and deficit equalizations, while micro-sizing speculative dips to ${clip} sh.`
+            : `Dip clips of ${clip} sh (max ${mx} sh), dips at ${hiC}c or cheaper.`)
 
   return [
     {
@@ -75,15 +82,17 @@ export function tweakCards(candidate: AbTestDistributionStats | null | undefined
     },
     {
       kicker: 'Tweak 2 · Intake',
-      badge: empty ? '—' : sizing === 'constant-risk' ? `${clip}-${mx} sh` : sizing === 'confidence' ? `${mx} sh / ${clip} sh` : `max ${mx} sh`,
-      title: sizing === 'constant-risk' ? 'Constant Dollar-Risk Sizing' : sizing === 'confidence' ? 'Bi-Modal Confidence Sizing' : 'Dip Intake',
+      badge: empty ? '—' : probe > 0 ? `${probe}-${mx} sh` : sizing === 'constant-risk' ? `${clip}-${mx} sh` : sizing === 'confidence' ? `${mx} sh / ${clip} sh` : `max ${mx} sh`,
+      title: probe > 0 ? 'Probe Sizing & Step Gate' : sizing === 'constant-risk' ? 'Constant Dollar-Risk Sizing' : sizing === 'confidence' ? 'Bi-Modal Confidence Sizing' : 'Dip Intake',
       body: t2body,
     },
     {
-      kicker: 'Tweak 3 · Sweep',
-      badge: `T-${cutoff}s..15s Maker`,
-      title: 'Passive Maker Sweep',
-      body: `Fills remaining deficits with resting maker orders at 0% fee between T-${cutoff}s and T-15s, avoiding taker fee drag.`,
+      kicker: 'Tweak 3 / Sweep',
+      badge: empty ? '---' : `T-${cutoff}s / T-${sweep}s`,
+      title: 'Stop + Sweep + Late Rescue',
+      body: empty
+        ? 'Waiting for a candidate run.'
+        : `Stop opening at T-${cutoff}s, sweep deficits with resting maker orders down to T-${sweep}s, late rescue to ${lateMax} from T+${lateStart}s.`,
     },
   ]
 }

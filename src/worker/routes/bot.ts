@@ -35,7 +35,7 @@ bot.get('/status', async (c) => {
     constants: BOT_CONSTANTS,
     windows: Number(windows.n ?? 0),
     trades: Number(trades.n ?? 0),
-    paperGate: '288-window paper fidelity (45 median trades/window, both-sides rate, M0-M4 shape) — no live funding until gate passes',
+    paperGate: 'Paper-first: no live funding until the execution-health readout (both-sides coverage, pair cost vs cap, queue fill rate) looks right',
   }
   return privateJson(c, body)
 })

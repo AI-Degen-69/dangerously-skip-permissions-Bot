@@ -109,7 +109,8 @@ export function computeKpiStats(
   const rebateOf = (w: PerfWindow) => (includeRebates ? windowRebate(w, tierRate) : 0)
   const netOf = (w: PerfWindow) => (w.netUsd ?? 0) + rebateOf(w)
 
-  const feesUsd = settled.reduce((sum, w) => sum + (w.feesUsd ?? 0), 0)
+  const feesUsd =
+    apiSummary?.feesUsd ?? settled.reduce((sum, w) => sum + (w.feesUsd ?? 0), 0)
   const takerRebateUsd = tierRate * feesUsd
   const makerRebateUsd =
     MAKER_REBATE_SHARE * settled.reduce((sum, w) => sum + (w.makerFeeBaseUsd ?? 0), 0)

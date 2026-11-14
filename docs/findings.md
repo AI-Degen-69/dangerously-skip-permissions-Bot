@@ -3,7 +3,7 @@
 ## Requirements
 - Mimic `0xc533…69a9` 5-min BTC Up/Down execution from `dangerously-skip-permissions_24h_trades.csv`.
 - Buy-only, hold-to-settlement, redeem; every 5-min slot; one window at a time.
-- Paper-first; no live funding until fidelity gate passes.
+- Paper-first; no live funding until the execution-health readout looks right.
 - Python default (matches repo: `scripts/save-trades-to-csv.py`, `unittest` in `tests/`).
 
 ## Research Findings

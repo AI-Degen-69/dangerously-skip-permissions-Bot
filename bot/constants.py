@@ -282,6 +282,127 @@ STRATEGY_SETUPS = {
             "wholeLadderClips": True,
         },
     },
+    "dangerously-skip-permissions-v2.7": {
+        "id": "dangerously-skip-permissions-v2.7",
+        "symbol": "⚡ DSP-v2.7",
+        "name": "Dangerously Skip Permissions v2.7 (Hump + Taker Dip + Late Rescue)",
+        "entry": {
+            # W29-W35 CSV regime: 1st fill median T+21s, p90 last fill T+277s.
+            "startAfterOpenSec": 15,
+            "stopBeforeCloseSec": 30,
+            "sweepBeforeCloseSec": 12,
+            "clipSharesDefault": 10.0,
+            "maxShares": 25.0,
+            "maxClipShares": 25.0,
+            "minFillPrice": 0.07,
+            # Leg 1 capped at 48c (was 55c); Leg 2 decoupled via leg2MaxPrice.
+            "maxFillPrice": 0.48,
+            "maxLeg1Price": 0.48,
+            "leg1MaxPrice": 0.48,
+            "leg2MaxPrice": 0.75,
+            "benchmarkPairCost": 0.960,
+            "targetPairCost": 0.960,
+            "maxPairCost": 0.985,
+            "maxShareLead": 100.0,
+            "maxUnhedgedShares": 100.0,
+            "maxUnhedgedUsd": 45.0,
+            # Hump sizing: 30 sh at <=10c -> ~48.7 sh at 40-50c -> 30 sh at >=70c.
+            # Stored as a flag; executor.select_ladder_clip + replay share the curve.
+            "dipCurve": "hump",
+            "wholeLadderClips": True,
+            "levelsPerSide": 2,
+            "levelSpacing": 0.01,
+            "minSpacingMoveSec": 0.5,
+            "minSpacingStaticSec": 2.5,
+            "staticRequoteSec": 2.5,
+            "includeTakerFee": True,
+            # --- 4 new knobs ---
+            "takerDipEntryMax": 0.45,
+            "lateRescueStartSec": 210,
+            "lateRescueMaxPairCost": 1.02,
+            "rescuePairCostMax": 1.02,
+            "rescueCeilingPrice": 0.985,
+            "maxDepthShares": 0.0,
+        },
+    },
+    "hydrogen-v1.0": {
+        "id": "hydrogen-v1.0",
+        "symbol": "H2 Hydrogen-v1.0",
+        "name": "Hydrogen v1.0",
+        "entry": {
+            "startAfterOpenSec": 15,
+            "stopBeforeCloseSec": 30,
+            "sweepBeforeCloseSec": 12,
+            "clipSharesDefault": 10.0,
+            "maxShares": 25.0,
+            "maxClipShares": 25.0,
+            "minFillPrice": 0.07,
+            "maxFillPrice": 0.48,
+            "maxLeg1Price": 0.48,
+            "leg1MaxPrice": 0.48,
+            "leg2MaxPrice": 0.75,
+            "benchmarkPairCost": 0.960,
+            "targetPairCost": 0.960,
+            "maxPairCost": 0.985,
+            "maxShareLead": 100.0,
+            "maxUnhedgedShares": 100.0,
+            "maxUnhedgedUsd": 45.0,
+            "dipCurve": "hump",
+            "wholeLadderClips": True,
+            "levelsPerSide": 2,
+            "levelSpacing": 0.01,
+            "minSpacingMoveSec": 0.5,
+            "minSpacingStaticSec": 2.5,
+            "staticRequoteSec": 2.5,
+            "includeTakerFee": True,
+            "takerDipEntryMax": 0.42,
+            "lateRescueStartSec": 210,
+            "lateRescueMaxPairCost": 1.02,
+            "rescuePairCostMax": 1.02,
+            "rescueCeilingPrice": 0.985,
+            "maxDepthShares": 0.0,
+        },
+    },
+    "hydrogen-v1.1": {
+        "id": "hydrogen-v1.1",
+        "symbol": "H2 Hydrogen-v1.1",
+        "name": "Hydrogen v1.1",
+        "entry": {
+            "startAfterOpenSec": 15,
+            "stopBeforeCloseSec": 30,
+            "sweepBeforeCloseSec": 12,
+            "clipSharesDefault": 10.0,
+            "maxShares": 25.0,
+            "maxClipShares": 25.0,
+            "minFillPrice": 0.07,
+            "maxFillPrice": 0.48,
+            "maxLeg1Price": 0.48,
+            "leg1MaxPrice": 0.48,
+            "leg2MaxPrice": 0.75,
+            "benchmarkPairCost": 0.960,
+            "targetPairCost": 0.960,
+            "maxPairCost": 0.985,
+            "maxShareLead": 100.0,
+            "maxUnhedgedShares": 100.0,
+            "maxUnhedgedUsd": 45.0,
+            "dipCurve": "hump",
+            "wholeLadderClips": True,
+            "levelsPerSide": 2,
+            "levelSpacing": 0.01,
+            "minSpacingMoveSec": 0.5,
+            "minSpacingStaticSec": 2.5,
+            "staticRequoteSec": 2.5,
+            "includeTakerFee": True,
+            "takerDipEntryMax": 0.36,
+            "unhedgedStepCents": 8.0,
+            "unhedgedProbeShares": 10.0,
+            "lateRescueStartSec": 210,
+            "lateRescueMaxPairCost": 1.02,
+            "rescuePairCostMax": 1.02,
+            "rescueCeilingPrice": 0.985,
+            "maxDepthShares": 0.0,
+        },
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -327,7 +448,22 @@ _SETUP_FEATURES = {
     "dangerously-skip-permissions-v2.6": {
         "sizing": "inverse-curve", "preflightGate": False, "patientHedge": True,
         "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
-        "blurb": "v2.5's curve, entered at the touch near 50c, with the hedge resting on the other side instead of crossing its ask",
+        "blurb": "inverse-dip clip curve entered at the touch near 50c, with the hedge resting on the other side instead of crossing its ask",
+    },
+    "dangerously-skip-permissions-v2.7": {
+        "sizing": "hump", "preflightGate": False, "patientHedge": True, "takerDip": True,
+        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
+        "blurb": "hump-sized dips (fat in the middle) with taker dip entry to 45c, leg-2 ceiling 75c, and a late rescue to $1.02 from T+210s",
+    },
+    "hydrogen-v1.0": {
+        "sizing": "hump", "preflightGate": False, "patientHedge": True, "takerDip": True,
+        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
+        "blurb": "hump-sized dips (fat in the middle) with taker dip entry to 42c, leg-2 ceiling 75c, and a late rescue to $1.02 from T+210s",
+    },
+    "hydrogen-v1.1": {
+        "sizing": "hump", "preflightGate": False, "patientHedge": True, "takerDip": True,
+        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
+        "blurb": "hump-sized dips with 10sh probe, 8c unhedged step, taker dip entry to 36c, leg-2 ceiling 75c, and late rescue to $1.02 from T+210s",
     },
 }
 
@@ -368,14 +504,27 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
     # so the largest clip that can ever fill unhedged is lead - 1.
     reachable = min(mx, max(0.0, float(lead) - 1.0))
 
-    if sizing == "inverse-curve":
+    if sizing == "hump":
+        probe = e.get("unhedgedProbeShares")
+        if probe and float(probe) > 0:
+            dip_txt = f"hump clips ({float(probe):g} sh probe / {mx:g} sh pair)"
+            sig_size = f"Hump Curve ({float(probe):g}sh probe / {mx:g}sh pair)"
+        else:
+            dip_txt = f"hump clips (30 sh at/below 10c, ~48.7 sh at 40-50c, 30 sh at/above 70c, capped at {mx:g} sh)"
+            sig_size = f"Hump Curve (30-48.7-30 sh, cap {mx:g})"
+    elif sizing == "inverse-curve":
         curve = e.get("dipCurve") or {}
-        s_lo = curve.get("sharesLo", clip)
-        s_hi = curve.get("sharesHi", clip)
-        c_lo = round(float(curve.get("lo", lo_c / 100)) * 100)
-        c_hi = round(float(curve.get("hi", hi_c / 100)) * 100)
-        dip_txt = f"{s_lo:g} sh at {c_lo}c falling to {s_hi:g} sh at {c_hi}c"
-        sig_size = f"Inverse-Dip Curve ({s_lo:g} sh @{c_lo}c → {s_hi:g} sh @{c_hi}c)"
+        if not isinstance(curve, dict):
+            dip_txt = f"hump clips (capped at {mx:g} sh)"
+            sig_size = f"Hump Curve (cap {mx:g})"
+            curve = {}
+        else:
+            s_lo = curve.get("sharesLo", clip)
+            s_hi = curve.get("sharesHi", clip)
+            c_lo = round(float(curve.get("lo", lo_c / 100)) * 100)
+            c_hi = round(float(curve.get("hi", hi_c / 100)) * 100)
+            dip_txt = f"{s_lo:g} sh at {c_lo}c falling to {s_hi:g} sh at {c_hi}c"
+            sig_size = f"Inverse-Dip Curve ({s_lo:g} sh @{c_lo}c → {s_hi:g} sh @{c_hi}c)"
     elif sizing == "constant-risk":
         if reachable <= clip:
             dip_txt = (
