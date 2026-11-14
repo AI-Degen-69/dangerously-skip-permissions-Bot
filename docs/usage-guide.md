@@ -61,7 +61,7 @@ The command center for analyzing execution performance across settled windows.
   - Selecting a past run activates **`View Only (past run)`** mode. An amber warning card appears and mutating controls are disabled so you can safely audit past runs without risking live orders.
   - Click **`Return to Live`** anytime to jump back to live operations.
 - **Top Metrics Strip:**
-  - Shows total settled windows, overall Net PnL ($), win rate (%), and median fills per window (target is 45 fills).
+  - Shows total settled windows, overall Net PnL ($), win rate (%), and median fills per window.
 - **Cumulative PnL Curve:**
   - Visual chart of your cumulative paper bankroll trajectory.
 - **Rebate Toggle (`Net before rebates` card):**
@@ -78,6 +78,9 @@ The command center for analyzing execution performance across settled windows.
   - The same audit runs **while the run is going**, and the `STATUS` column of `Orders & Fills` shows its per-fill verdict: `Attainable` as soon as the selling recorded so far could have filled that order, `Phantom` once the window's tape is complete and it could not. `Verified` remains the weaker tape check — the level traded at your size — and stays on a row only until the audit has judged it.
 - **Timeframe Filter (below the chart):**
   - `1H · 12H · 1D · 1W · 1M · All` scopes the KPI cards, the chart, the window bars and the window log to that trailing window. The chart is re-based on the capital held when the window opened, so the curve starts where the account actually stood.
+- **Execution health (card below the chart):**
+  - No frozen-tape comparison: every row is either a plain measurement or judged against the strategy's own rules. **Both sides covered** is the straddle invariant — a single-sided window is a missed hedge. **Median pair cost** is the lock-in cost of both-sided windows against your configured `maxPairCost`. **Queue fill rate** is how many audited maker fills had selling behind the queue ahead; the rest never could fill. **Zero-price fills** must stay at zero. Fills and cost per window are shown as median · mean with no target.
+  - The minute matrix under the rows splits the audited maker fills per minute M0–M4 into fills a real bid could have got (accent) and phantom fills the queue never cleared (red). It answers where in the window the quoting works, not whether it resembles an old wallet.
 - **Settled Windows Table:**
   - Displays each 5-minute window slug, trade count, dollar volume, settlement outcome (Up / Down), and net PnL.
 
@@ -89,8 +92,6 @@ Watch the bot make trading decisions live inside the active 5-minute window.
 - **Connection Health Badges:**
   - `WSS Live (<40ms)`: Live streaming orderbook connected to Polymarket CLOB.
   - `REST Fallback`: Active background polling (1.0s–1.5s cadence) if WebSocket is stale.
-- **Microprice Lean Gauge:**
-  - Shows current fair value drift between BTC spot and Polymarket quotes (ranges from `-1.0` maximum Down lean to `+1.0` maximum Up lean).
 - **Interactive Depth & Book Panel:**
   - Displays real-time bid/ask prices and depth for both the **Up** and **Down** contracts.
 - **Live Fills Feed:**

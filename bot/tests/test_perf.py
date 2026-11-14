@@ -71,12 +71,31 @@ class PerfTests(unittest.TestCase):
         self.assertEqual(perf["summary"]["netUsd"], 0)
         self.assertIsNone(perf["windows"][0]["netUsd"])
 
-    def test_below_48_windows_every_metric_is_a_sample(self):
-        perf = self.build([paper_run(SLUG, FILLS, "Up")])
+    def test_execution_health_rows_measure_the_run_not_a_frozen_tape(self):
+        # Every fill carries a queue verdict: one attainable, one phantom.
+        fills = [
+            {**FILLS[0], "detail": {"attainable": True}},
+            {**FILLS[1], "detail": {"attainable": False}},
+            FILLS[2],
+        ]
+        run = paper_run(SLUG, fills, "Up")
+        run["fidelity"] = {
+            "makerFills": 2, "attainableFills": 1, "phantomFills": 1,
+            "queueKnown": 2, "assumedShares": 58.0, "attainableShares": 30.0,
+            "attainableCostUsd": 15.0, "attainablePayoutUsd": 30.0, "attainableNetUsd": 15.0,
+        }
+        perf = self.build([run])
+        rows = {row["key"]: row for row in perf["gate"]}
 
-        self.assertEqual(perf["gate"][0]["status"], "sample")
-        self.assertTrue(all(row["status"] == "sample" for row in perf["gate"][1:]))
-        self.assertTrue(any("Sample is 1/288 windows" == note["title"] for note in perf["notes"]))
+        self.assertNotIn("target", rows["pairCost"])
+        self.assertEqual(rows["pairCost"]["value"], "90.0¢")
+        self.assertEqual(rows["pairCost"]["status"], "pass")
+        self.assertEqual(rows["bothSides"]["status"], "pass")
+        self.assertEqual(rows["zeroPrice"]["status"], "fail")
+        self.assertEqual(rows["attainable"]["value"], "50%")
+        self.assertEqual(perf["mShape"]["attainable"], [1, 0, 0, 0, 0])
+        self.assertEqual(perf["mShape"]["phantom"], [0, 1, 0, 0, 0])
+        self.assertNotIn("targets", perf)
 
     def test_redeem_queue_lists_unclaimed_winners(self):
         perf = self.build([paper_run(SLUG, FILLS, "Up")])

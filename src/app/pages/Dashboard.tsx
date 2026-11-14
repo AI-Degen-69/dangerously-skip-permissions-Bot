@@ -62,13 +62,13 @@ const GATE_TONE: Record<PerfGate['status'], 'success' | 'warning' | 'danger' | '
   pass: 'success',
   warn: 'warning',
   fail: 'danger',
-  sample: 'neutral',
+  stat: 'neutral',
 }
 const GATE_LABEL: Record<PerfGate['status'], string> = {
-  pass: 'pass',
+  pass: 'ok',
   warn: 'watch',
-  fail: 'off',
-  sample: 'sample',
+  fail: 'flag',
+  stat: 'stat',
 }
 
 // One colour class per element: `text-fg` is emitted after `text-danger` in the
@@ -143,8 +143,6 @@ export function Dashboard() {
   )
   const currentCapital = stats.currentCapital
   const attainable = attainableOf(scoped.windows)
-  // The gate judges the run as it was traded, not the verified subset.
-  const gateJudged = allSettled.length >= (data?.targets.windows ?? 288)
   const setupsQuery = useStrategySetups()
   const allSetups = mergeStrategySetups(setupsQuery.data?.setups, STRATEGY_PRESETS as unknown as Record<string, StrategySetup>)
   const activeId = data?.strategy?.id ?? control.data?.strategy?.id ?? setupsQuery.data?.activeSetupId
@@ -746,18 +744,13 @@ export function Dashboard() {
       <Card className="mt-3 p-5">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
-            <h2 className="text-[14px] font-semibold">Fidelity gate</h2>
+            <h2 className="text-[14px] font-semibold">Execution health</h2>
             <p className="text-[12.5px] text-muted">
-              How close the live paper tape is to the frozen 24h sample — 45 median fills, both sides, $316/$447 cost,
-              M0–M4 shape.
-              {verifiedOnly && (
-                <span className="text-faint"> Judged on the whole run, not the verified subset.</span>
-              )}
+              Is the run executing the strategy — both legs bought, pair cost under your cap, fills a real bid could
+              have got. No frozen-tape comparison.
             </p>
           </div>
-          <Badge tone={gateJudged ? 'success' : 'neutral'}>
-            {gateJudged ? 'judged' : `sample · ${allSettled.length}/288`}
-          </Badge>
+          <Badge tone="neutral">{allSettled.length} windows</Badge>
         </div>
 
         <div className="mt-3 divide-y divide-line">
@@ -768,18 +761,19 @@ export function Dashboard() {
                 <p className="text-[11.5px] text-faint">{row.detail}</p>
               </div>
               <span className="tabular-nums text-[13px] font-medium">{row.value}</span>
-              <span className="w-[92px] text-right text-[12px] text-faint">tape {row.target}</span>
-              <Badge tone={GATE_TONE[row.status]} className="w-[74px] justify-center">
-                {GATE_LABEL[row.status]}
-              </Badge>
+              {row.status === 'stat' ? (
+                <span className="w-[74px] text-right text-[11.5px] text-faint">stat</span>
+              ) : (
+                <Badge tone={GATE_TONE[row.status] ?? 'neutral'} className="w-[74px] justify-center">
+                  {GATE_LABEL[row.status] ?? row.status}
+                </Badge>
+              )}
             </div>
           ))}
           {!data && <Skeleton className="my-4 h-[180px]" />}
         </div>
 
-        {data && (
-          <ShapeChart mShape={shapeOf(data.mShape, verifiedOnly)} liveLabel={verifiedOnly ? 'verified' : 'live'} />
-        )}
+        {data && <ShapeChart mShape={data.mShape} />}
       </Card>
 
       <Card className="mt-3 p-5">
@@ -1028,18 +1022,6 @@ function Toggle({
   )
 }
 
-/** The fill cadence over every fill, or over the verified ones only. */
-function shapeOf(mShape: BotPerf['mShape'], verifiedOnly: boolean): BotPerf['mShape'] {
-  if (!verifiedOnly || !mShape.verifiedShare) return mShape
-  return {
-    live: mShape.verifiedLive ?? mShape.live,
-    target: mShape.target,
-    liveShare: mShape.verifiedShare,
-    targetShare: mShape.targetShare,
-    distance: mShape.verifiedDistance ?? mShape.distance,
-  }
-}
-
 /**
  * What the tape actually corroborates inside the view: the fills the real
  * prints back, the ones the market never traded, and the payout riding on
@@ -1137,54 +1119,66 @@ function Row({ label, value, tone }: { label: string; value: string; tone?: 'suc
   )
 }
 
-function ShapeChart({ mShape, liveLabel = 'live' }: { mShape: BotPerf['mShape']; liveLabel?: string }) {
-  const max = Math.max(0.05, ...mShape.liveShare, ...mShape.targetShare)
-  // Name the minute that drifts furthest from the tape instead of assuming it
-  // is always M4 — the verified subset is M0-heavy, the full tape is not.
-  const worst = mShape.liveShare
-    .map((live, index) => ({ index, gap: live - mShape.targetShare[index] }))
-    .reduce((a, b) => (Math.abs(b.gap) > Math.abs(a.gap) ? b : a))
+function ShapeChart({ mShape }: { mShape: BotPerf['mShape'] }) {
+  // An API server that predates the queue split must not blank the dashboard.
+  const attainable = mShape.attainable ?? []
+  const phantom = mShape.phantom ?? []
+  const liveShare = mShape.liveShare ?? []
+  const totals = attainable.map((n, index) => n + (phantom[index] ?? 0))
+  const audited = totals.reduce((sum, n) => sum + n, 0)
+  const attainableTotal = attainable.reduce((sum, n) => sum + n, 0)
+  const max = Math.max(1, ...totals)
+  // Where the queue hurts most, as a share of the fills audited in that minute.
+  const worst = totals
+    .map((total, index) => ({ index, rate: total > 0 ? (phantom[index] ?? 0) / total : 0 }))
+    .reduce((a, b) => (b.rate > a.rate ? b : a))
   return (
     <div className="mt-4 rounded-tile border border-line bg-surface-2/30 p-3.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[12.5px] font-medium">Fill cadence · minutes 0–4</p>
         <div className="flex items-center gap-3 text-[11px] text-faint">
           <span className="flex items-center gap-1">
-            <span className="size-2 rounded-[2px] bg-accent" /> {liveLabel}
+            <span className="size-2 rounded-[2px] bg-accent" /> could fill
           </span>
           <span className="flex items-center gap-1">
-            <span className="size-2 rounded-[2px] bg-line-strong" /> tape
+            <span className="size-2 rounded-[2px] bg-danger" /> phantom
           </span>
         </div>
       </div>
       <div className="mt-3 grid grid-cols-5 gap-3">
-        {mShape.liveShare.map((live, index) => (
-          <div key={index}>
-            <div className="flex h-16 items-end justify-center gap-1.5">
-              <div
-                className="w-1/3 rounded-t-[3px] bg-accent"
-                style={{ height: `${Math.max(2, (live / max) * 100)}%` }}
-                title={`${liveLabel} ${share(live)} · ${mShape.live[index]} fills`}
-              />
-              <div
-                className="w-1/3 rounded-t-[3px] bg-line-strong"
-                style={{ height: `${Math.max(2, (mShape.targetShare[index] / max) * 100)}%` }}
-                title={`tape ${share(mShape.targetShare[index])} · ${mShape.target[index]} fills`}
-              />
+        {liveShare.map((live, index) => {
+          const total = totals[index] ?? 0
+          return (
+            <div key={index} title={`M${index}: ${attainable[index] ?? 0} fillable · ${phantom[index] ?? 0} phantom`}>
+              <div className="flex h-16 flex-col justify-end">
+                {total > 0 ? (
+                  <>
+                    <div
+                      className="rounded-t-[3px] bg-danger/70"
+                      style={{ height: `${Math.max(2, ((phantom[index] ?? 0) / max) * 100)}%` }}
+                    />
+                    <div
+                      className="bg-accent"
+                      style={{ height: `${Math.max(2, ((attainable[index] ?? 0) / max) * 100)}%` }}
+                    />
+                  </>
+                ) : (
+                  <div className="rounded-t-[3px] bg-line-strong" style={{ height: '2%' }} />
+                )}
+              </div>
+              <p className="mt-1 text-center text-[11px] text-faint">
+                M{index} <span className="text-fg">{share(live)}</span> of fills
+              </p>
             </div>
-            <p className="mt-1 text-center text-[11px] text-faint">
-              M{index} <span className="text-fg">{share(live)}</span> / {share(mShape.targetShare[index])}
-            </p>
-          </div>
-        ))}
+          )
+        })}
       </div>
       <p className="mt-2 text-[11.5px] text-faint">
-        {(mShape.distance * 100).toFixed(1)}% total-variation distance from the tape.{' '}
-        {mShape.distance > 0.2
-          ? `M${worst.index} carries ${
-              worst.gap > 0 ? 'more' : 'fewer'
-            } fills than the tape (${share(mShape.liveShare[worst.index])} vs ${share(mShape.targetShare[worst.index])}).`
-          : 'Shape is inside the band.'}
+        {audited === 0
+          ? 'No audited fills yet — the queue check runs once a window’s tape is read.'
+          : `Bars show the ${audited} audited maker fills: ${attainableTotal} had selling behind the queue ahead, ${
+              audited - attainableTotal
+            } never could.${worst.rate > 0 ? ` M${worst.index} is the weakest minute (${share(worst.rate)} phantom).` : ''}`}
       </p>
     </div>
   )

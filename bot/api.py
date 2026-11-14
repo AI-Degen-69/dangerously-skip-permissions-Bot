@@ -921,6 +921,28 @@ def _window_row(r: dict) -> dict:
     )
     v_payout = round(v_win_shares * 1.0, 2) if winner else 0.0
 
+    # Lock-in cost of a window that took both legs: avg Up price + avg Down price.
+    up_shares = sum(_num(f.get("shares")) for f in fills if f.get("outcome") == "Up" and _num(f.get("price")) > 0)
+    down_shares = sum(_num(f.get("shares")) for f in fills if f.get("outcome") == "Down" and _num(f.get("price")) > 0)
+    up_usd = sum(_num(f.get("usd")) for f in fills if f.get("outcome") == "Up" and _num(f.get("price")) > 0)
+    down_usd = sum(_num(f.get("usd")) for f in fills if f.get("outcome") == "Down" and _num(f.get("price")) > 0)
+    pair_cost = round(up_usd / up_shares + down_usd / down_shares, 4) if up_shares > 0 and down_shares > 0 else None
+
+    # Per-minute queue verdicts for the cadence matrix. Only audited maker fills
+    # carry detail.attainable, so the matrix covers a subset of the fills.
+    m_attainable = [0, 0, 0, 0, 0]
+    m_phantom = [0, 0, 0, 0, 0]
+    for f in fills:
+        ok = (f.get("detail") or {}).get("attainable")
+        if ok is None:
+            continue
+        try:
+            m = int(f.get("minute", 0))
+        except (TypeError, ValueError):
+            m = 0
+        if 0 <= m <= 4:
+            (m_attainable if ok else m_phantom)[m] += 1
+
     return {
         "slug": r.get("event_slug"),
         "market": r.get("market"),
@@ -933,6 +955,7 @@ def _window_row(r: dict) -> dict:
         "pending": pending,
         "redeemed": bool(r.get("redeemedAt")),
         "bothSides": len(sides) > 1,
+        "pairCost": pair_cost,
         "upFills": sum(1 for f in fills if f.get("outcome") == "Up"),
         "downFills": sum(1 for f in fills if f.get("outcome") == "Down"),
         # Maker fills are the ones the tape can corroborate; taker fills cannot
@@ -941,6 +964,8 @@ def _window_row(r: dict) -> dict:
         "takerFills": int(r.get("taker_fills") or 0),
         "zeroPriceFills": sum(1 for f in fills if _num(f.get("price")) <= 0),
         "mShape": _minute_shape(fills),
+        "mAttainable": m_attainable,
+        "mPhantom": m_phantom,
         "feesUsd": round(taker_fees, 4),
         "makerFeeBaseUsd": round(maker_fee_base, 4),
         "verified": {
@@ -954,7 +979,6 @@ def _window_row(r: dict) -> dict:
             "downFills": v_down,
             "zeroPriceFills": v_zero,
         },
-        "verifiedMShape": _minute_shape(verified_fills),
         # What the auditor found once the window resolved: None when the tape
         # held no print for it, so the desk can tell "not judged" from "zero".
         "fidelity": r.get("fidelity"),
@@ -969,22 +993,13 @@ def _mean(values: list[float]) -> float:
     return round(statistics.mean(values), 2) if values else 0.0
 
 
-def _band_status(value: float, target: float, tight: float, loose: float) -> str:
-    delta = abs(value - target)
-    if delta <= target * tight:
-        return "pass"
-    if delta <= target * loose:
-        return "warn"
-    return "fail"
-
-
 def perf() -> dict:
-    """Fidelity + performance for the straddle-plus-lean paper loop.
+    """Performance and execution health for the straddle paper loop.
 
     Everything here is computed from bot/paper_runs/*.json (no network), so the
     desk can answer two questions in one read: how much did the paper loop make,
-    and how close is its behaviour to the frozen tape (45 fills, 280/288 both
-    sides, $316/$447 cost, M0-M4 shape).
+    and is it executing the way the strategy intends — both legs covered, pair
+    cost under its own cap, fills a real bid could have got.
     """
     from bot import constants as C
 
@@ -1009,62 +1024,82 @@ def perf() -> dict:
     mean_cost = _mean([w["costUsd"] for w in settled])
 
     live_shape = [0, 0, 0, 0, 0]
+    m_attainable = [0, 0, 0, 0, 0]
+    m_phantom = [0, 0, 0, 0, 0]
     for w in settled:
         for i, n in enumerate(w["mShape"]):
             live_shape[i] += n
+        for i in range(5):
+            m_attainable[i] += w["mAttainable"][i]
+            m_phantom[i] += w["mPhantom"][i]
     live_total = sum(live_shape) or 1
     live_share = [round(n / live_total, 4) for n in live_shape]
-    target_shape = [int(n) for n in C.M_BUCKETS]
-    target_total = sum(target_shape)
-    target_share = [round(n / target_total, 4) for n in target_shape]
-    shape_tv = round(0.5 * sum(abs(a - b) for a, b in zip(live_share, target_share)), 4)
 
-    # The same minute mix over the verified fills only.
-    verified_shape = [0, 0, 0, 0, 0]
-    for w in settled:
-        for i, n in enumerate(w.get("verifiedMShape") or []):
-            verified_shape[i] += n
-    verified_total = sum(verified_shape) or 1
-    verified_share = [round(n / verified_total, 4) for n in verified_shape]
-    verified_tv = round(0.5 * sum(abs(a - b) for a, b in zip(verified_share, target_share)), 4)
+    # The queue audit judges only maker fills the tape could read at all.
+    audited = [w["fidelity"] for w in settled if w.get("fidelity")]
+    a_maker = sum(int(f.get("makerFills") or 0) for f in audited)
+    a_attainable = sum(int(f.get("attainableFills") or 0) for f in audited)
+    a_phantom = sum(int(f.get("phantomFills") or 0) for f in audited)
+    fill_rate = round(a_attainable / a_maker, 4) if a_maker else None
+
+    # Config decides the pair-cost bar: the strategy's own cap, not a tape mean.
+    cfg = None
+    cfg_bankroll = None
+    sel = get_selected_run_id()
+    if sel:
+        ws = resolve_run_workspace(sel)
+        if ws:
+            meta = ws.read_meta()
+            if meta and meta.config_snapshot:
+                cfg = meta.config_snapshot
+                cfg_bankroll = cfg.get("bankrollUsd")
+    if cfg is None:
+        cfg = load_config()
+    if not isinstance(cfg, dict):
+        cfg = {}
+    if cfg_bankroll is None:
+        cfg_bankroll = cfg.get("bankrollUsd")
+    bankroll = _num(cfg_bankroll, default=float(BANKROLL_DEFAULT))
+    entry_cfg = cfg.get("entry") if isinstance(cfg.get("entry"), dict) else {}
+    pair_cap = _num(entry_cfg.get("maxPairCost"), default=0.985)
 
     both_rate = round(both / len(settled), 4) if settled else 0.0
-    judged = len(settled) >= 48  # below this the metrics are noise, not a verdict
+    pair_costs = [w["pairCost"] for w in settled if w["pairCost"] is not None]
+    median_pair_cost = _median(pair_costs)
 
-    def mark(status: str) -> str:
-        return status if judged else "sample"
-
-    both_status = "pass" if both_rate >= C.BOTH_SIDES_RATE else ("warn" if both_rate >= 0.93 else "fail")
-    shape_status = "pass" if shape_tv <= 0.10 else ("warn" if shape_tv <= 0.20 else "fail")
+    both_status = "stat" if not settled else ("pass" if both == len(settled) else ("warn" if both_rate >= 0.8 else "fail"))
+    if not pair_costs:
+        pair_status = "stat"
+    elif median_pair_cost <= pair_cap:
+        pair_status = "pass"
+    else:
+        pair_status = "warn" if median_pair_cost <= 1.0 else "fail"
 
     gate = [
         {"key": "windows", "label": "Windows settled",
-         "value": f"{len(settled)} / {C.NUM_WINDOWS_24H}",
-         "target": f"{C.NUM_WINDOWS_24H}",
-         "status": "pass" if len(settled) >= C.NUM_WINDOWS_24H else "sample",
-         "judged": len(settled) >= C.NUM_WINDOWS_24H,
-         "detail": "A full 24h slate is the gate; one JSON per settled window."},
-        {"key": "medianFills", "label": "Median fills / window",
-         "value": f"{median_fills:g}", "target": f"{C.MEDIAN_TRADES_PER_WINDOW:g}",
-         "status": mark(_band_status(median_fills, C.MEDIAN_TRADES_PER_WINDOW, 0.2, 0.35)),
-         "judged": judged, "detail": "Tape median ticket count per 5m window."},
+         "value": f"{len(settled)}", "status": "stat",
+         "detail": f"{len(pending)} pending excluded from every figure here."},
         {"key": "bothSides", "label": "Both sides covered",
          "value": f"{both}/{len(settled)}" if settled else "0/0",
-         "target": f"{round(C.NUM_WINDOWS_24H * C.BOTH_SIDES_RATE)}/{C.NUM_WINDOWS_24H}",
-         "status": mark(both_status), "judged": judged,
-         "detail": "The straddle must touch both outcomes, not pick a direction."},
-        {"key": "medianCost", "label": "Median cost / window",
-         "value": f"${median_cost:,.2f}", "target": f"${C.MEDIAN_USD_PER_WINDOW:,.0f}",
-         "status": mark(_band_status(median_cost, C.MEDIAN_USD_PER_WINDOW, 0.25, 0.4)),
-         "judged": judged, "detail": "Live spreads run wider than the flat 0.476 model, so cost is watched, not tuned."},
-        {"key": "meanCost", "label": "Mean cost / window",
-         "value": f"${mean_cost:,.2f}", "target": f"${C.MEAN_USD_PER_WINDOW:,.0f}",
-         "status": mark(_band_status(mean_cost, C.MEAN_USD_PER_WINDOW, 0.25, 0.4)),
-         "judged": judged, "detail": "Sensitive to the few fat windows in the tape."},
-        {"key": "shape", "label": "M0-M4 cadence",
-         "value": f"{shape_tv * 100:.1f}% TV", "target": "≤10%",
-         "status": mark(shape_status), "judged": judged,
-         "detail": "Total-variation distance from the tape's minute mix (3,081/3,821/4,289/3,914/1,750)."},
+         "status": both_status,
+         "detail": "The straddle must touch both outcomes; a single-sided window is a missed hedge."},
+        {"key": "pairCost", "label": "Median pair cost",
+         "value": f"{median_pair_cost * 100:.1f}¢" if pair_costs else "—",
+         "status": pair_status,
+         "detail": f"Lock-in cost across both-sided windows · your cap {pair_cap * 100:.1f}¢."},
+        {"key": "attainable", "label": "Queue fill rate",
+         "value": f"{fill_rate * 100:.0f}%" if fill_rate is not None else "—",
+         "status": "stat",
+         "detail": f"{a_attainable} of {a_maker} audited maker fills had selling behind the queue ahead; {a_phantom} never could fill."},
+        {"key": "zeroPrice", "label": "Zero-price fills",
+         "value": f"{zero_fills}", "status": "pass" if zero_fills == 0 else "fail",
+         "detail": "Fills at $0.00 move no capital but skew every average."},
+        {"key": "fills", "label": "Fills / window",
+         "value": f"{median_fills:g} · {mean_fills:g}", "status": "stat",
+         "detail": "Median · mean fills per settled window."},
+        {"key": "cost", "label": "Cost / window",
+         "value": f"${median_cost:,.2f} · ${mean_cost:,.2f}", "status": "stat",
+         "detail": "Median · mean cost per settled window."},
     ]
 
     redeem_due = [w for w in settled if w["winner"] and not w["redeemed"] and (w.get("payoutUsd") or 0) > 0]
@@ -1102,53 +1137,34 @@ def perf() -> dict:
              "The window may have died mid-fill. Restart the loop — do not delete state.json while it owns the window (assert_single_window).")
     if pending:
         note("info", f"{len(pending)} window{'s' if len(pending) != 1 else ''} still settling",
-             "Payout is not final until the market resolves; these are excluded from net, cost and the gate.")
+             "Payout is not final until the market resolves; these are excluded from net, cost and the health rows.")
     if redeem_due:
         note("warning", f"{len(redeem_due)} winning window{'s' if len(redeem_due) != 1 else ''} unredeemed (${redeem_payout:,.2f})",
              "Hold-to-redeem is the strategy: paper only books the win when claimed. Redeem via the Dashboard or run python bot/redeem.py.")
     if zero_fills:
         note("danger", f"{zero_fills} fills at $0.00",
-             "No capital moved, but they still count toward the fill median and skew the M4 bucket. Fix the late dust path before trusting fill fidelity.")
-    if settled and shape_tv > 0.20:
-        note("warning", "Cadence is M4-heavy",
-             f"Live minute mix {'/'.join(f'{s * 100:.0f}%' for s in live_share)} vs the tape's {'/'.join(f'{s * 100:.0f}%' for s in target_share)}. Late dust quotes are inflating the last bucket.")
+             "No capital moved, but they still count toward every fill average. Fix the late dust path before trusting the queue audit.")
+    if a_maker and a_phantom:
+        phantom_rate = a_phantom / a_maker
+        if phantom_rate > 0.25:
+            note("warning", f"{phantom_rate * 100:.0f}% of audited maker fills were phantom",
+                 f"The tape shows no selling behind the queue at {a_phantom} of {a_maker} audited limits, so the paper tape overstates what a real bid would have filled.")
     if settled and both < len(settled):
         note("warning", f"{len(settled) - both} single-sided window{'s' if len(settled) - both != 1 else ''}",
-             "A missed hedge leg breaks the straddle. Both-sides coverage is a hard fidelity target (280/288).")
+             "A missed hedge leg breaks the straddle: the first leg filled but the other outcome was never bought.")
     if fills and max(up_fills, down_fills) / fills > 0.75:
         lead = "Up" if up_fills >= down_fills else "Down"
         share = max(up_fills, down_fills) / fills
         note("warning", f"Fill mix is {share * 100:.0f}% {lead}",
-             f"{up_fills} Up vs {down_fills} Down fills. The tape tilts about 28%, never this hard — the lean/alternation is not flipping sides the way the strategy expects.")
+             f"{up_fills} Up vs {down_fills} Down fills — the lean/alternation is not flipping sides the way the strategy expects.")
     if settled:
         roi = net / cost if cost else 0.0
         note("success" if net > 0 else "danger",
              f"Paper net {'+' if net >= 0 else '−'}${abs(net):,.2f} on ${cost:,.2f} staked",
              f"{profitable}/{len(settled)} windows profitable ({roi * 100:+.1f}% on cost). Winners pay $1/share at resolution; there are no sells.")
-    if len(settled) < C.NUM_WINDOWS_24H:
-        note("info", f"Sample is {len(settled)}/{C.NUM_WINDOWS_24H} windows",
-             "Median, cost and cadence drift heavily at this size. python bot/run_paper.py (288 deterministic windows) is the gate until a full live slate exists.")
 
     severity = {"danger": 0, "warning": 1, "info": 2, "success": 3}
     notes.sort(key=lambda n: severity.get(n["tone"], 9))
-
-    cfg = None
-    cfg_bankroll = None
-    sel = get_selected_run_id()
-    if sel:
-        ws = resolve_run_workspace(sel)
-        if ws:
-            meta = ws.read_meta()
-            if meta and meta.config_snapshot:
-                cfg = meta.config_snapshot
-                cfg_bankroll = cfg.get("bankrollUsd")
-    if cfg is None:
-        cfg = load_config()
-    if not isinstance(cfg, dict):
-        cfg = {}
-    if cfg_bankroll is None:
-        cfg_bankroll = cfg.get("bankrollUsd")
-    bankroll = _num(cfg_bankroll, default=float(BANKROLL_DEFAULT))
 
     wins = [n for n in nets if n > 0]
     losses = [-n for n in nets if n < 0]
@@ -1232,10 +1248,6 @@ def perf() -> dict:
     # have got behind the queue that was actually there. Windows the auditor
     # could not read (no prints) carry no fidelity and drop out, so this net
     # covers the audited windows while the headline covers every settled one.
-    audited = [w["fidelity"] for w in settled if w.get("fidelity")]
-    a_maker = sum(int(f.get("makerFills") or 0) for f in audited)
-    a_fills = sum(int(f.get("attainableFills") or 0) for f in audited)
-    a_phantom = sum(int(f.get("phantomFills") or 0) for f in audited)
     a_cost = round(sum(_num(f.get("attainableCostUsd")) for f in audited), 2)
     a_payout = round(sum(_num(f.get("attainablePayoutUsd")) for f in audited), 2)
     a_assumed = round(sum(_num(f.get("assumedShares")) for f in audited), 2)
@@ -1243,13 +1255,13 @@ def perf() -> dict:
     attainable = {
         "windows": len(audited),
         "makerFills": a_maker,
-        "attainableFills": a_fills,
+        "attainableFills": a_attainable,
         "phantomFills": a_phantom,
         "queueKnownFills": sum(int(f.get("queueKnown") or 0) for f in audited),
         "costUsd": a_cost,
         "payoutUsd": a_payout,
         "netUsd": round(a_payout - a_cost, 2),
-        "fillRate": round(a_fills / a_maker, 4) if a_maker else 0.0,
+        "fillRate": round(a_attainable / a_maker, 4) if a_maker else 0.0,
         "shareRate": round(a_kept / a_assumed, 4) if a_assumed else 0.0,
     }
 
@@ -1259,7 +1271,6 @@ def perf() -> dict:
     strat_name = strat.get("name", C.STRATEGY_NAME)
     setup_info = C.STRATEGY_SETUPS.get(strat_id, {})
     strat_sig = setup_info.get("signature", C.STRATEGY_SIGNATURE)
-    entry_cfg = cfg.get("entry", {})
 
     return {
         "strategy": {
@@ -1322,19 +1333,9 @@ def perf() -> dict:
             "downWinRate": down_win_rate,
             "attainable": attainable,
         },
-        "targets": {
-            "windows": C.NUM_WINDOWS_24H,
-            "medianFills": C.MEDIAN_TRADES_PER_WINDOW,
-            "meanFills": C.MEAN_TRADES_PER_WINDOW,
-            "medianCostUsd": C.MEDIAN_USD_PER_WINDOW,
-            "meanCostUsd": C.MEAN_USD_PER_WINDOW,
-            "bothSides": round(C.NUM_WINDOWS_24H * C.BOTH_SIDES_RATE),
-        },
         "gate": gate,
-        "mShape": {"live": live_shape, "target": target_shape,
-                   "liveShare": live_share, "targetShare": target_share, "distance": shape_tv,
-                   "verifiedLive": verified_shape, "verifiedShare": verified_share,
-                   "verifiedDistance": verified_tv},
+        "mShape": {"live": live_shape, "liveShare": live_share,
+                   "attainable": m_attainable, "phantom": m_phantom},
         "redeem": {"count": len(redeem_due), "payoutUsd": redeem_payout},
         "health": health,
         "notes": notes,
