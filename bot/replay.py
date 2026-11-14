@@ -44,6 +44,7 @@ from bot.runs import tape_segments
 WINDOW_S = int(C.WINDOW_S)
 STRATEGY_V26 = "dangerously-skip-permissions-v2.6"
 STRATEGY_V27 = "dangerously-skip-permissions-v2.7"
+STRATEGY_HYDROGEN = "hydrogen-v1.0"
 BASELINE_RUN = "run_20261113_080232_paper_dsp_v2_6"
 LOOP_LOG = Path("bot/loop.log")
 
@@ -326,7 +327,8 @@ def _quotes_from_state(state: dict) -> dict:
 def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list,
                     strategy_id: str, entry: dict, levels: int = 1,
                     spacing: float = 0.02, queue_mode: str = "exact",
-                    eval_floor_s: float = 0.0) -> dict:
+                    eval_floor_s: float = 0.0,
+                    unhedged_step_cents: float = 0.0) -> dict:
     """Replay one window. Deterministic: same inputs -> same output."""
     start_after_open = float(entry.get("startAfterOpenSec", 4))
     stop_before = float(entry.get("stopBeforeCloseSec", 75))
@@ -366,6 +368,24 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
         taker_dip_max = float(taker_dip_max) if taker_dip_max is not None else None
     except (TypeError, ValueError):
         taker_dip_max = None
+    taker_hedge_cap = entry.get("takerHedgeMaxPairCost", entry.get("takerHedgeMaxPair", None))
+    try:
+        taker_hedge_cap = float(taker_hedge_cap) if taker_hedge_cap is not None else None
+    except (TypeError, ValueError):
+        taker_hedge_cap = None
+    hedge_clip = entry.get("hedgeMaxClip", entry.get("takerHedgeMaxClip", None))
+    try:
+        hedge_clip = float(hedge_clip) if hedge_clip is not None else None
+    except (TypeError, ValueError):
+        hedge_clip = None
+    try:
+        unhedged_step_cents = float(entry.get("unhedgedStepCents", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        unhedged_step_cents = 0.0
+    try:
+        unhedged_probe_shares = float(entry.get("unhedgedProbeShares", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        unhedged_probe_shares = 0.0
     late_start = entry.get("lateRescueStartSec", None)
     try:
         late_start = float(late_start) if late_start is not None else None
@@ -412,6 +432,9 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
         usd, fee_usd = compute_fill_usd(shares, px, role=role, include_fee=include_fee)
         inv[outcome]["shares"] += shares
         inv[outcome]["cost"] += usd
+        cur_low = inv[outcome].get("lowest_price")
+        if cur_low is None or px < cur_low:
+            inv[outcome]["lowest_price"] = px
         cost += usd
         fees += fee_usd
         last_fill_ts = ts
@@ -433,6 +456,13 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
             hit = match_maker_print(order, {"outcome": outcome, "side": side,
                                             "price": px, "size": remaining})
             if hit is not None:
+                if unhedged_step_cents > 0:
+                    opp_side = "Down" if outcome == "Up" else "Up"
+                    if inv[opp_side]["shares"] == 0 and inv[outcome]["shares"] > 0:
+                        held_pxs = [f["price"] for f in fills if f["outcome"] == outcome]
+                        min_held = min(held_pxs) if held_pxs else 1.0
+                        if order["price"] > min_held - (unhedged_step_cents / 100.0) + 1e-9:
+                            continue
                 consumed = ((hit["queueAhead"] - float(order.get("queue_ahead") or 0.0))
                             + hit["fills"])
                 remaining = max(0.0, remaining - consumed)
@@ -465,6 +495,13 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
         nonlocal placements, queue_unknown
         bids = state[outcome]["bids"] or []
         desired = [round(px - i * spacing, 4) for i in range(max(1, levels))]
+        if unhedged_step_cents > 0:
+            opp_side = "Down" if outcome == "Up" else "Up"
+            if inv[opp_side]["shares"] == 0 and inv[outcome]["shares"] > 0:
+                held_pxs = [f["price"] for f in fills if f["outcome"] == outcome]
+                min_held = min(held_pxs) if held_pxs else 1.0
+                max_allowed = min_held - (unhedged_step_cents / 100.0) + 1e-9
+                desired = [d for d in desired if d <= max_allowed]
         keep = []
         for order in resting[outcome]:
             if any(abs(order["price"] - d) < 1e-9 for d in desired):
@@ -575,9 +612,13 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
             rescue_max_pair_cost=rescue_max,
             leg1_max_price=leg1_max, leg2_max_price=leg2_max,
             taker_dip_max=taker_dip_max,
+            taker_hedge_max_pair_cost=taker_hedge_cap,
+            hedge_max_clip=hedge_clip,
             late_rescue_start_sec=late_start,
             late_rescue_max_pair_cost=late_max,
             elapsed_sec=float(ts - slot),
+            unhedged_step_cents=unhedged_step_cents,
+            unhedged_probe_shares=unhedged_probe_shares,
         )
         if decision.action == "skip" or decision.outcome is None or decision.price is None:
             continue
@@ -590,6 +631,13 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
         if time_since_fill < required:
             continue
         if decision.role == "TAKER":
+            if unhedged_step_cents > 0:
+                opp_side = "Down" if outcome_d == "Up" else "Up"
+                if inv[opp_side]["shares"] == 0 and inv[outcome_d]["shares"] > 0:
+                    held_pxs = [f["price"] for f in fills if f["outcome"] == outcome_d]
+                    min_held = min(held_pxs) if held_pxs else 1.0
+                    if px > min_held - (unhedged_step_cents / 100.0) + 1e-9:
+                        continue
             resting[outcome_d] = []
             book_fill(outcome_d, px, shares, "TAKER", _minute(ts),
                       decision.sub_reason, None, decision.share_deficit, ts)
@@ -774,7 +822,9 @@ def run_rule(run_ids: list[str], rule: str, ceiling: float | None, levels: int,
              eval_floor_s: float = 0.0, leg1_max: float | None = None,
              leg2_ceiling: float | None = None, unhedged_usd: float | None = None,
              taker_dip_max: float | None = None, rescue_max_pair: float | None = None,
-             late_rescue_start: float | None = None) -> list[dict]:
+             late_rescue_start: float | None = None, taker_hedge_pair: float | None = None,
+             hedge_clip: float | None = None,
+             unhedged_step_cents: float = 0.0) -> list[dict]:
     """Replay windows under a rule.
 
     frozen_config=True (gate mode): each run replays under its own frozen
@@ -785,9 +835,10 @@ def run_rule(run_ids: list[str], rule: str, ceiling: float | None, levels: int,
     The v2.7 ablation knobs each change one thing at a time against the
     baseline: leg1_max (Leg-1 ceiling), leg2_ceiling (hedge ceiling),
     unhedged_usd (dollar gap cap), taker_dip_max (fresh-leg taker entry),
-    rescue_max_pair + late_rescue_start (late-window rescue cap).
+    rescue_max_pair + late_rescue_start (late-window rescue cap),
+    taker_hedge_pair (profit-lock deficit taker hedge) + hedge_clip.
     """
-    canon_sid = STRATEGY_V27 if rule == "v2.7" else STRATEGY_V26
+    canon_sid = {"v2.7": STRATEGY_V27, "hydrogen": STRATEGY_HYDROGEN}.get(rule, STRATEGY_V26)
     canon_entry = dict(C.STRATEGY_SETUPS[canon_sid]["entry"])
     results = []
     for run_id in run_ids:
@@ -820,6 +871,10 @@ def run_rule(run_ids: list[str], rule: str, ceiling: float | None, levels: int,
             entry["lateRescueMaxPairCost"] = float(rescue_max_pair)
         if late_rescue_start is not None:
             entry["lateRescueStartSec"] = float(late_rescue_start)
+        if taker_hedge_pair is not None:
+            entry["takerHedgeMaxPairCost"] = float(taker_hedge_pair)
+        if hedge_clip is not None:
+            entry["hedgeMaxClip"] = float(hedge_clip)
         slices = load_slices(run_id, runs_root)
         asset_outcome = slices.get("asset_outcome", {})
         book = slices.get("book", {})
@@ -846,7 +901,8 @@ def run_rule(run_ids: list[str], rule: str, ceiling: float | None, levels: int,
                     prows.append((ts, oc, px, size, side, aid))
                 res = simulate_window(w["slot"], w.get("winner"), book.get(str(w["slot"]), []),
                                       prows, strategy_id, entry, levels=levels, spacing=spacing,
-                                      queue_mode=queue_mode, eval_floor_s=eval_floor_s)
+                                      queue_mode=queue_mode, eval_floor_s=eval_floor_s,
+                                      unhedged_step_cents=unhedged_step_cents)
                 res["run"] = run_id
                 res["slug"] = w["slug"]
                 res["rule"] = rule
@@ -938,7 +994,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Replay recorded tape to test placement rules.")
     ap.add_argument("--run", action="append", default=[], help="run id (repeatable)")
     ap.add_argument("--runs", default=None, help="'all' for the full corpus")
-    ap.add_argument("--rule", default="v2.6", choices=["v2.6", "hump", "v2.7"])
+    ap.add_argument("--rule", default="v2.6", choices=["v2.6", "hump", "v2.7", "hydrogen"])
     ap.add_argument("--ceiling", type=float, default=None)
     ap.add_argument("--levels", type=int, default=None)
     ap.add_argument("--spacing", type=float, default=None)
@@ -954,6 +1010,12 @@ def main(argv=None) -> int:
                     help="v2.7 ablation: late-window rescue pair-cost cap")
     ap.add_argument("--late-rescue-start", type=float, default=None,
                     help="v2.7 ablation: elapsed seconds when the late rescue cap takes over")
+    ap.add_argument("--unhedged-step-cents", type=float, default=0.0,
+                    help="Arm S1: min cents below lowest held unhedged fill price before allowing another fill on that side")
+    ap.add_argument("--taker-hedge-max-pair", type=float, default=None,
+                    help="profit-lock ablation: deficit hedge crosses the ask as TAKER if fee-inclusive pair cost <= this (off when absent)")
+    ap.add_argument("--hedge-max-clip", type=float, default=None,
+                    help="profit-lock ablation: deficit taker-hedge clip cap in shares (default: maxShares)")
     ap.add_argument("--out", default=None)
     ap.add_argument("--against-live", action="store_true")
     ap.add_argument("--limit", type=int, default=None)
@@ -997,7 +1059,10 @@ def main(argv=None) -> int:
                        unhedged_usd=args.unhedged_usd,
                        taker_dip_max=args.taker_dip_max,
                        rescue_max_pair=args.rescue_max_pair,
-                       late_rescue_start=args.late_rescue_start)
+                       late_rescue_start=args.late_rescue_start,
+                       taker_hedge_pair=args.taker_hedge_max_pair,
+                       hedge_clip=args.hedge_max_clip,
+                       unhedged_step_cents=args.unhedged_step_cents)
     summary = summarize(results)
 
     if args.against_live:

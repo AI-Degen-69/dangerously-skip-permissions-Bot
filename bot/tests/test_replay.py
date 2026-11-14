@@ -188,5 +188,55 @@ class TakerDipTests(unittest.TestCase):
         self.assertEqual(d.role, "MAKER")
 
 
+def _deficit_inv(lead_shares=25.0, lead_avg=0.40):
+    return {"Up": {"shares": 0.0, "cost": 0.0},
+            "Down": {"shares": float(lead_shares), "cost": float(lead_shares) * lead_avg}}
+
+
+class TakerHedgeLockTests(unittest.TestCase):
+    def test_off_by_default_rests_maker(self):
+        # No knob: deficit hedge rests at the bid (legacy patient pair).
+        d = E.evaluate_microstructure_ladder(
+            quotes=_quotes(0.29, 0.31, 0.40, 0.41), inv=_deficit_inv(), fill_idx=1,
+            minute=0, strategy_id="dangerously-skip-permissions-v2.7",
+            **_v27base())
+        self.assertEqual(d.role, "MAKER")
+        self.assertEqual(d.sub_reason, "hedge-equalizer")
+
+    def test_profitable_hedge_crosses_taker(self):
+        # Down holds 25 sh @ 40c; Up ask 31c + fee ~1.3c -> pair ~72.3c <= 0.92.
+        d = E.evaluate_microstructure_ladder(
+            quotes=_quotes(0.29, 0.31, 0.40, 0.41), inv=_deficit_inv(), fill_idx=1,
+            minute=0, strategy_id="dangerously-skip-permissions-v2.7",
+            **_v27base(taker_hedge_max_pair_cost=0.92))
+        self.assertEqual(d.role, "TAKER")
+        self.assertEqual(d.sub_reason, "taker-hedge-lock")
+        self.assertLessEqual(d.projected_pair_cost, 0.92)
+
+    def test_unprofitable_hedge_stays_maker(self):
+        # Same book, cap 0.70: 72.3c pair does not lock -> rests at bid.
+        d = E.evaluate_microstructure_ladder(
+            quotes=_quotes(0.29, 0.31, 0.40, 0.41), inv=_deficit_inv(), fill_idx=1,
+            minute=0, strategy_id="dangerously-skip-permissions-v2.7",
+            **_v27base(taker_hedge_max_pair_cost=0.70))
+        self.assertEqual(d.role, "MAKER")
+        self.assertEqual(d.sub_reason, "hedge-equalizer")
+
+    def test_hedge_clip_uncaps_deficit(self):
+        # 75-share deficit: default snaps to 25 sh, hedgeMaxClip=50 takes 50.
+        inv = _deficit_inv(lead_shares=75.0)
+        d25 = E.evaluate_microstructure_ladder(
+            quotes=_quotes(0.29, 0.31, 0.40, 0.41), inv=dict(inv), fill_idx=1,
+            minute=0, strategy_id="dangerously-skip-permissions-v2.7",
+            **_v27base(taker_hedge_max_pair_cost=0.92))
+        self.assertEqual(d25.shares, 25.0)
+        d50 = E.evaluate_microstructure_ladder(
+            quotes=_quotes(0.29, 0.31, 0.40, 0.41), inv=dict(inv), fill_idx=1,
+            minute=0, strategy_id="dangerously-skip-permissions-v2.7",
+            **_v27base(taker_hedge_max_pair_cost=0.92, hedge_max_clip=50.0))
+        self.assertEqual(d50.shares, 50.0)
+        self.assertEqual(d50.role, "TAKER")
+
+
 if __name__ == "__main__":
     unittest.main()

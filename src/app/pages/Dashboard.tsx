@@ -16,7 +16,7 @@ import { BotControlTile } from '../components/BotControlTile'
 import { InteractivePnlChart } from '../components/InteractivePnlChart'
 import { BOT_ORIGIN, useBotControl, useBotPerf, useRedeemBot, useStrategySetups, mergeStrategySetups } from '../lib/bot'
 import { STRATEGY_PRESETS } from '../botDefaults'
-import type { BotPerf, PerfGate, PerfWindow, StrategySetup, WindowFidelity } from '../lib/bot'
+import type { BotPerf, PerfCell, PerfWindow, StrategySetup, WindowFidelity } from '../lib/bot'
 import { computeKpiStats } from '../lib/kpiStats'
 import { ACCOUNT_TIERS, useAccountTier, useIncludeRebates, windowRebate } from '../lib/rebates'
 import type { AccountTier } from '../lib/rebates'
@@ -58,17 +58,11 @@ function attainableOf(windows: PerfWindow[]) {
   }
 }
 
-const GATE_TONE: Record<PerfGate['status'], 'success' | 'warning' | 'danger' | 'neutral'> = {
-  pass: 'success',
-  warn: 'warning',
-  fail: 'danger',
-  sample: 'neutral',
-}
-const GATE_LABEL: Record<PerfGate['status'], string> = {
-  pass: 'pass',
-  warn: 'watch',
-  fail: 'off',
-  sample: 'sample',
+const CELL_TONE: Record<PerfCell['status'], string> = {
+  pass: 'text-success',
+  warn: 'text-warning',
+  fail: 'text-danger',
+  stat: 'text-fg',
 }
 
 // One colour class per element: `text-fg` is emitted after `text-danger` in the
@@ -107,7 +101,6 @@ export function Dashboard() {
   const effective = verifiedOnly
     ? windows.map(verifiedWindow).filter((window): window is PerfWindow => window !== null)
     : windows
-  const allSettled = windows.filter((window) => !window.pending)
   const settled = effective.filter((window) => !window.pending)
   const startingCapital = data?.summary?.bankrollUsd ?? 1000
 
@@ -143,8 +136,11 @@ export function Dashboard() {
   )
   const currentCapital = stats.currentCapital
   const attainable = attainableOf(scoped.windows)
-  // The gate judges the run as it was traded, not the verified subset.
-  const gateJudged = allSettled.length >= (data?.targets.windows ?? 288)
+  // Segment widths for the win/loss bar, so the tick labels above it land on
+  // the slice they belong to.
+  const winPct = Math.max(stats.winsCount > 0 ? 2 : 0, stats.winRate * 100)
+  const scratchPct = stats.scratchCount > 0 ? (stats.scratchCount / (stats.settled || 1)) * 100 : 0
+  const upFillPct = (stats.upFills / Math.max(1, stats.upFills + stats.downFills)) * 100
   const setupsQuery = useStrategySetups()
   const allSetups = mergeStrategySetups(setupsQuery.data?.setups, STRATEGY_PRESETS as unknown as Record<string, StrategySetup>)
   const activeId = data?.strategy?.id ?? control.data?.strategy?.id ?? setupsQuery.data?.activeSetupId
@@ -375,8 +371,13 @@ export function Dashboard() {
         <Stat
           label="Taker Fees"
           value={stats.feesUsd > 0 ? `−${usd(stats.feesUsd)}` : usd(0)}
-          hint={`${stats.costUsd > 0 ? ((stats.feesUsd / stats.costUsd) * 100).toFixed(1) : '0.0'}% of cost`}
-          tone="danger"
+          hint={
+            verifiedOnly
+              ? 'Taker fills excluded in verified view'
+              : `${stats.costUsd > 0 ? ((stats.feesUsd / stats.costUsd) * 100).toFixed(1) : '0.0'}% of cost`
+          }
+          tone={stats.feesUsd > 0 ? 'danger' : 'neutral'}
+          badge={verifiedOnly ? <Badge tone="neutral">maker only</Badge> : undefined}
           tip="Polymarket's parabolic taker fee, 0.07 · p · (1 − p) per share, already charged inside each taker fill's cost. Maker fills pay none."
         />
         <Stat
@@ -384,7 +385,7 @@ export function Dashboard() {
           value={`+${usd(stats.takerRebateUsd)}`}
           hint={`${Math.round(tier.rate * 100)}% of fees · ${tier.name}`}
           tone="success"
-          badge={includeRebates ? undefined : <Badge tone="neutral">excluded</Badge>}
+          badge={verifiedOnly ? <Badge tone="neutral">maker only</Badge> : includeRebates ? undefined : <Badge tone="neutral">excluded</Badge>}
           tip="Taker fees returned at the selected tier. Polymarket credits this daily at 00:00 UTC on the previous day's fees."
         />
         <Stat
@@ -552,38 +553,61 @@ export function Dashboard() {
               <>
                 {/* Win / Loss & Payoff Quality */}
                 <div className="mt-3.5 rounded-tile border border-line bg-surface-2/30 p-3">
-                  <div className="flex items-baseline justify-between text-[12.5px]">
-                    <span className="font-medium text-fg">Win Rate Breakdown</span>
-                    <span className="tabular-nums font-semibold text-fg">
-                      {(stats.winRate * 100).toFixed(1)}%{' '}
-                      <span className="text-[11px] font-normal text-muted">
-                        ({stats.winsCount}W · {stats.lossesCount}L{stats.scratchCount > 0 ? ` · ${stats.scratchCount}T` : ''})
+                  {/* Each result sits above its own slice of the bar, like ticks. */}
+                  <div className="flex items-baseline gap-3 text-[12.5px]">
+                    <div className="flex min-w-0 flex-1 items-baseline">
+                      <span
+                        className="tabular-nums font-semibold text-success"
+                        style={{ width: `${winPct}%` }}
+                        title={`${stats.winsCount} winning windows`}
+                      >
+                        {winPct >= 6 ? `${stats.winsCount}W` : ''}
                       </span>
-                    </span>
+                      {stats.scratchCount > 0 && (
+                        <span
+                          className="tabular-nums text-muted"
+                          style={{ width: `${scratchPct}%` }}
+                          title={`${stats.scratchCount} break-even windows`}
+                        >
+                          {scratchPct >= 6 ? `${stats.scratchCount}T` : ''}
+                        </span>
+                      )}
+                      <span
+                        className="flex-1 text-right tabular-nums font-semibold text-danger"
+                        title={`${stats.lossesCount} losing windows`}
+                      >
+                        {stats.lossesCount}L
+                      </span>
+                    </div>
+                    <span className="tabular-nums font-semibold text-fg">{(stats.winRate * 100).toFixed(1)}%</span>
                   </div>
-                  <div className="mt-2 flex h-2 overflow-hidden rounded-full bg-surface-2">
+                  <div className="mt-1 flex h-2 overflow-hidden rounded-full bg-surface-2">
                     <div
                       className="h-full bg-success transition-all duration-300"
-                      style={{ width: `${Math.max(stats.winsCount > 0 ? 2 : 0, stats.winRate * 100)}%` }}
+                      style={{ width: `${winPct}%` }}
                       title={`${(stats.winRate * 100).toFixed(1)}% Wins (${stats.winsCount})`}
                     />
                     {stats.scratchCount > 0 && (
                       <div
                         className="h-full bg-line/80 transition-all duration-300"
-                        style={{ width: `${((stats.scratchCount / (stats.settled || 1)) * 100).toFixed(1)}%` }}
+                        style={{ width: `${scratchPct.toFixed(1)}%` }}
                         title={`${((stats.scratchCount / (stats.settled || 1)) * 100).toFixed(1)}% Break-even (${stats.scratchCount})`}
                       />
                     )}
                     <div
-                      className="h-full bg-danger transition-all duration-300"
-                      style={{ width: `${Math.max(stats.lossesCount > 0 ? 2 : 0, stats.lossRate * 100)}%` }}
+                      className="h-full flex-1 bg-danger transition-all duration-300"
                       title={`${(stats.lossRate * 100).toFixed(1)}% Losses (${stats.lossesCount})`}
                     />
                   </div>
                   <div className="mt-2.5 grid grid-cols-2 gap-2 border-t border-line/60 pt-2 text-[11.5px]">
                     <div>
                       <span className="text-faint">Payoff (Avg W/L): </span>
-                      <span className="font-medium tabular-nums text-fg">
+                      <span
+                        className={cx(
+                          'font-medium tabular-nums',
+                          stats.payoffRatio >= 1 ? 'text-success' : stats.payoffRatio >= 0.5 ? 'text-warning' : 'text-danger',
+                        )}
+                      >
                         {stats.lossesCount === 0 && stats.winsCount > 0 ? '∞' : `${stats.payoffRatio.toFixed(2)}x`}
                       </span>
                     </div>
@@ -612,20 +636,47 @@ export function Dashboard() {
                         ? 'At All-Time High'
                         : `-${usd(stats.currentDrawdownUsd)} (-${stats.currentDrawdownPct.toFixed(1)}%)`
                     }
-                    tone={stats.currentDrawdownUsd <= 0.01 ? 'success' : undefined}
+                    tone={stats.currentDrawdownUsd <= 0.01 ? 'success' : 'danger'}
                   />
                   <Row
                     label="Sortino Ratio"
                     value={stats.lossesCount === 0 && stats.settled > 0 && stats.netUsd > 0 ? '∞' : stats.sortinoRatio.toFixed(2)}
-                    tone={stats.sortinoRatio >= 1.5 ? 'success' : undefined}
+                    tone={stats.sortinoRatio >= 1 ? 'success' : stats.sortinoRatio < 0 ? 'danger' : 'neutral'}
                   />
                   <Row
                     label="Best / Worst Window"
-                    value={`${stats.bestUsd > 0 ? `+${usd(stats.bestUsd)}` : usd(stats.bestUsd)} / ${stats.worstUsd > 0 ? `+${usd(stats.worstUsd)}` : usd(stats.worstUsd)}`}
+                    value={
+                      <>
+                        <span className="text-success">
+                          {stats.bestUsd > 0 ? `+${usd(stats.bestUsd)}` : usd(stats.bestUsd)}
+                        </span>
+                        {' / '}
+                        <span className="text-danger">
+                          {stats.worstUsd > 0 ? `+${usd(stats.worstUsd)}` : usd(stats.worstUsd)}
+                        </span>
+                      </>
+                    }
                   />
                   <Row
                     label="Streak (Current · Best · Worst)"
-                    value={`${stats.currentStreak > 0 ? `+${stats.currentStreak}W` : stats.currentStreak < 0 ? `${stats.currentStreak}L` : '0'} · +${stats.maxWinStreak}W / -${stats.maxLossStreak}L`}
+                    value={
+                      <>
+                        <span
+                          className={cx(
+                            stats.currentStreak > 0 ? 'text-success' : stats.currentStreak < 0 ? 'text-danger' : 'text-fg',
+                          )}
+                        >
+                          {stats.currentStreak > 0
+                            ? `+${stats.currentStreak}W`
+                            : stats.currentStreak < 0
+                              ? `${stats.currentStreak}L`
+                              : '0'}
+                        </span>
+                        <span className="text-fg">
+                          {' · '}+{stats.maxWinStreak}W / -{stats.maxLossStreak}L
+                        </span>
+                      </>
+                    }
                   />
                 </ul>
 
@@ -668,19 +719,23 @@ export function Dashboard() {
                     </div>
                   </div>
 
-                  <div className="mt-2.5 flex items-center justify-between text-[12px]">
-                    <span className="text-muted">Fill mix</span>
-                    <span className="tabular-nums text-faint">
-                      Up {stats.upFills} · Down {stats.downFills}
+                  <div className="mt-2.5 flex items-baseline text-[12px]">
+                    <span
+                      className="tabular-nums font-semibold text-success"
+                      style={{ width: `${upFillPct}%` }}
+                      title={`${stats.upFills} Up fills`}
+                    >
+                      {upFillPct >= 10 ? `${stats.upFills} Up` : ''}
+                    </span>
+                    <span className="flex-1 text-right tabular-nums font-semibold text-danger">
+                      {stats.downFills} Down
                     </span>
                   </div>
                   <div className="mt-1 flex h-1.5 overflow-hidden rounded-full bg-surface-2">
                     <div
                       className="h-full bg-success/80"
-                      style={{
-                        width: `${(stats.upFills / Math.max(1, stats.upFills + stats.downFills)) * 100}%`,
-                      }}
-                      title={`${share(stats.upFills / Math.max(1, stats.upFills + stats.downFills))} Up`}
+                      style={{ width: `${upFillPct}%` }}
+                      title={`${share(upFillPct / 100)} Up`}
                     />
                     <div className="h-full flex-1 bg-danger/70" />
                   </div>
@@ -746,40 +801,47 @@ export function Dashboard() {
       <Card className="mt-3 p-5">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
-            <h2 className="text-[14px] font-semibold">Fidelity gate</h2>
+            <h2 className="text-[14px] font-semibold">Execution health</h2>
             <p className="text-[12.5px] text-muted">
-              How close the live paper tape is to the frozen 24h sample — 45 median fills, both sides, $316/$447 cost,
-              M0–M4 shape.
-              {verifiedOnly && (
-                <span className="text-faint"> Judged on the whole run, not the verified subset.</span>
-              )}
+              Is the run executing the strategy — both legs bought, pair cost under your cap, fills a real bid could
+              have got. No frozen-tape comparison.
             </p>
           </div>
-          <Badge tone={gateJudged ? 'success' : 'neutral'}>
-            {gateJudged ? 'judged' : `sample · ${allSettled.length}/288`}
-          </Badge>
         </div>
 
-        <div className="mt-3 divide-y divide-line">
-          {(data?.gate ?? []).map((row) => (
-            <div key={row.key} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5">
-              <div className="min-w-0 flex-1">
-                <p className="text-[13px]">{row.label}</p>
-                <p className="text-[11.5px] text-faint">{row.detail}</p>
-              </div>
-              <span className="tabular-nums text-[13px] font-medium">{row.value}</span>
-              <span className="w-[92px] text-right text-[12px] text-faint">tape {row.target}</span>
-              <Badge tone={GATE_TONE[row.status]} className="w-[74px] justify-center">
-                {GATE_LABEL[row.status]}
-              </Badge>
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+          {(data?.cells ?? []).map((cell) => (
+            <div
+              key={cell.key}
+              className={cx(
+                'rounded-tile border border-line bg-surface-2/30 p-3',
+                cell.big && 'col-span-2 bg-surface-2/50',
+              )}
+            >
+              <p className="text-[10px] font-medium uppercase tracking-wide text-faint">{cell.label}</p>
+              <p
+                className={cx(
+                  'mt-0.5 font-semibold tabular-nums tracking-[-0.02em]',
+                  cell.big ? 'text-[26px]' : 'text-[19px]',
+                  CELL_TONE[cell.status] ?? 'text-fg',
+                )}
+              >
+                {cell.value}
+              </p>
+              <dl className="mt-1.5 space-y-0.5">
+                {cell.sub.map((item) => (
+                  <div key={item.label} className="flex items-baseline justify-between gap-2 text-[11.5px]">
+                    <dt className="truncate text-faint">{item.label}</dt>
+                    <dd className={cx('shrink-0 font-medium tabular-nums', item.tone ?? 'text-fg')}>{item.value}</dd>
+                  </div>
+                ))}
+              </dl>
             </div>
           ))}
-          {!data && <Skeleton className="my-4 h-[180px]" />}
+          {!data && <Skeleton className="col-span-2 my-4 h-[180px] lg:col-span-4" />}
         </div>
 
-        {data && (
-          <ShapeChart mShape={shapeOf(data.mShape, verifiedOnly)} liveLabel={verifiedOnly ? 'verified' : 'live'} />
-        )}
+        {data && <ShapeChart mShape={data.mShape} />}
       </Card>
 
       <Card className="mt-3 p-5">
@@ -810,21 +872,21 @@ export function Dashboard() {
             <table className="w-full min-w-[720px] text-left text-[13px]">
               <thead className="sticky top-0 bg-surface text-[11.5px] uppercase tracking-wide text-faint">
                 <tr className="border-b border-line">
-                  <th className="py-2 font-medium">Window</th>
-                  <th className="py-2 text-right font-medium">Fills</th>
-                  <th className="py-2 font-medium">Sides</th>
-                  <th className="py-2 text-right font-medium">Cost</th>
-                  <th className="py-2 text-right font-medium">Payout</th>
-                  <th className="py-2 text-right font-medium">Net</th>
-                  <th className="py-2 font-medium">Winner</th>
-                  <th className="py-2 font-medium">Redeem</th>
+                  <th className="py-2 pr-3 font-medium">Window</th>
+                  <th className="py-2 px-3 text-right font-medium">Fills</th>
+                  <th className="py-2 px-3 font-medium">Sides</th>
+                  <th className="py-2 px-3 text-right font-medium">Cost</th>
+                  <th className="py-2 px-3 text-right font-medium">Payout</th>
+                  <th className="py-2 px-3 text-right font-medium">Net</th>
+                  <th className="py-2 px-3 font-medium">Winner</th>
+                  <th className="py-2 pl-3 font-medium">Redeem</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
                 {[...scopedLog].reverse().map(withRebates).map((window) => (
                   <tr key={window.slug}>
-                    <td className="py-2.5 tabular-nums text-muted">{windowTime(window.startMs)}</td>
-                    <td className="py-2.5 text-right tabular-nums">
+                    <td className="py-2.5 pr-3 tabular-nums text-muted">{windowTime(window.startMs)}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums">
                       {window.trades}
                       {window.zeroPriceFills > 0 && (
                         <span className="ml-1 text-[11px] text-danger" title={`${window.zeroPriceFills} fills at $0.00`}>
@@ -832,29 +894,29 @@ export function Dashboard() {
                         </span>
                       )}
                     </td>
-                    <td className="py-2.5">
+                    <td className="py-2.5 px-3">
                       <Badge tone={window.bothSides ? 'neutral' : 'warning'} className="capitalize">
                         {window.bothSides ? 'both' : 'single'}
                       </Badge>
                     </td>
-                    <td className="py-2.5 text-right tabular-nums text-muted">{usd(window.costUsd)}</td>
-                    <td className="py-2.5 text-right tabular-nums text-muted">{usd(window.payoutUsd)}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums text-muted">{usd(window.costUsd)}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums text-muted">{usd(window.payoutUsd)}</td>
                     <td
                       className={cx(
-                        'py-2.5 text-right font-medium tabular-nums',
+                        'py-2.5 px-3 text-right font-medium tabular-nums',
                         window.netUsd == null ? 'text-faint' : window.netUsd >= 0 ? 'text-success' : 'text-danger',
                       )}
                     >
                       {window.netUsd == null ? 'settling…' : usd(window.netUsd)}
                     </td>
-                    <td className="py-2.5">
+                    <td className="py-2.5 px-3">
                       {window.winner ? (
                         <Badge tone={window.winner === 'Up' ? 'success' : 'danger'}>{window.winner}</Badge>
                       ) : (
                         <span className="text-faint">—</span>
                       )}
                     </td>
-                    <td className="py-2.5 text-muted">
+                    <td className="py-2.5 pl-3 text-muted">
                       {window.pending ? '—' : (window.payoutUsd ?? 0) <= 0 ? '—' : window.redeemed ? 'claimed' : 'due'}
                     </td>
                   </tr>
@@ -1028,18 +1090,6 @@ function Toggle({
   )
 }
 
-/** The fill cadence over every fill, or over the verified ones only. */
-function shapeOf(mShape: BotPerf['mShape'], verifiedOnly: boolean): BotPerf['mShape'] {
-  if (!verifiedOnly || !mShape.verifiedShare) return mShape
-  return {
-    live: mShape.verifiedLive ?? mShape.live,
-    target: mShape.target,
-    liveShare: mShape.verifiedShare,
-    targetShare: mShape.targetShare,
-    distance: mShape.verifiedDistance ?? mShape.distance,
-  }
-}
-
 /**
  * What the tape actually corroborates inside the view: the fills the real
  * prints back, the ones the market never traded, and the payout riding on
@@ -1126,65 +1176,85 @@ function HealthItem({ label, value, tone }: { label: string; value: string; tone
   )
 }
 
-function Row({ label, value, tone }: { label: string; value: string; tone?: 'success' | 'danger' }) {
+function Row({ label, value, tone }: { label: string; value: React.ReactNode; tone?: 'success' | 'danger' | 'warning' | 'neutral' }) {
   return (
-    <li className="flex items-center justify-between">
+    <li className="flex items-center justify-between gap-3">
       <span className="text-muted">{label}</span>
-      <span className={cx('font-medium tabular-nums', tone === 'success' && 'text-success', tone === 'danger' && 'text-danger')}>
+      <span
+        className={cx(
+          'font-medium tabular-nums',
+          tone === 'success' && 'text-success',
+          tone === 'danger' && 'text-danger',
+          tone === 'warning' && 'text-warning',
+          (tone === 'neutral' || !tone) && 'text-fg',
+        )}
+      >
         {value}
       </span>
     </li>
   )
 }
 
-function ShapeChart({ mShape, liveLabel = 'live' }: { mShape: BotPerf['mShape']; liveLabel?: string }) {
-  const max = Math.max(0.05, ...mShape.liveShare, ...mShape.targetShare)
-  // Name the minute that drifts furthest from the tape instead of assuming it
-  // is always M4 — the verified subset is M0-heavy, the full tape is not.
-  const worst = mShape.liveShare
-    .map((live, index) => ({ index, gap: live - mShape.targetShare[index] }))
-    .reduce((a, b) => (Math.abs(b.gap) > Math.abs(a.gap) ? b : a))
+function ShapeChart({ mShape }: { mShape: BotPerf['mShape'] }) {
+  // An API server that predates the queue split must not blank the dashboard.
+  const attainable = mShape.attainable ?? []
+  const phantom = mShape.phantom ?? []
+  const liveShare = mShape.liveShare ?? []
+  const totals = attainable.map((n, index) => n + (phantom[index] ?? 0))
+  const audited = totals.reduce((sum, n) => sum + n, 0)
+  const attainableTotal = attainable.reduce((sum, n) => sum + n, 0)
+  const max = Math.max(1, ...totals)
+  // Where the queue hurts most, as a share of the fills audited in that minute.
+  const worst = totals
+    .map((total, index) => ({ index, rate: total > 0 ? (phantom[index] ?? 0) / total : 0 }))
+    .reduce((a, b) => (b.rate > a.rate ? b : a))
   return (
     <div className="mt-4 rounded-tile border border-line bg-surface-2/30 p-3.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[12.5px] font-medium">Fill cadence · minutes 0–4</p>
         <div className="flex items-center gap-3 text-[11px] text-faint">
           <span className="flex items-center gap-1">
-            <span className="size-2 rounded-[2px] bg-accent" /> {liveLabel}
+            <span className="size-2 rounded-[2px] bg-accent" /> could fill
           </span>
           <span className="flex items-center gap-1">
-            <span className="size-2 rounded-[2px] bg-line-strong" /> tape
+            <span className="size-2 rounded-[2px] bg-danger" /> phantom
           </span>
         </div>
       </div>
       <div className="mt-3 grid grid-cols-5 gap-3">
-        {mShape.liveShare.map((live, index) => (
-          <div key={index}>
-            <div className="flex h-16 items-end justify-center gap-1.5">
-              <div
-                className="w-1/3 rounded-t-[3px] bg-accent"
-                style={{ height: `${Math.max(2, (live / max) * 100)}%` }}
-                title={`${liveLabel} ${share(live)} · ${mShape.live[index]} fills`}
-              />
-              <div
-                className="w-1/3 rounded-t-[3px] bg-line-strong"
-                style={{ height: `${Math.max(2, (mShape.targetShare[index] / max) * 100)}%` }}
-                title={`tape ${share(mShape.targetShare[index])} · ${mShape.target[index]} fills`}
-              />
+        {liveShare.map((live, index) => {
+          const total = totals[index] ?? 0
+          return (
+            <div key={index} title={`M${index}: ${attainable[index] ?? 0} fillable · ${phantom[index] ?? 0} phantom`}>
+              <div className="flex h-16 flex-col justify-end">
+                {total > 0 ? (
+                  <>
+                    <div
+                      className="rounded-t-[3px] bg-danger/70"
+                      style={{ height: `${Math.max(2, ((phantom[index] ?? 0) / max) * 100)}%` }}
+                    />
+                    <div
+                      className="bg-accent"
+                      style={{ height: `${Math.max(2, ((attainable[index] ?? 0) / max) * 100)}%` }}
+                    />
+                  </>
+                ) : (
+                  <div className="rounded-t-[3px] bg-line-strong" style={{ height: '2%' }} />
+                )}
+              </div>
+              <p className="mt-1 text-center text-[11px] text-faint">
+                M{index} <span className="text-fg">{share(live)}</span> of fills
+              </p>
             </div>
-            <p className="mt-1 text-center text-[11px] text-faint">
-              M{index} <span className="text-fg">{share(live)}</span> / {share(mShape.targetShare[index])}
-            </p>
-          </div>
-        ))}
+          )
+        })}
       </div>
       <p className="mt-2 text-[11.5px] text-faint">
-        {(mShape.distance * 100).toFixed(1)}% total-variation distance from the tape.{' '}
-        {mShape.distance > 0.2
-          ? `M${worst.index} carries ${
-              worst.gap > 0 ? 'more' : 'fewer'
-            } fills than the tape (${share(mShape.liveShare[worst.index])} vs ${share(mShape.targetShare[worst.index])}).`
-          : 'Shape is inside the band.'}
+        {audited === 0
+          ? 'No audited fills yet — the queue check runs once a window’s tape is read.'
+          : `Bars show the ${audited} audited maker fills: ${attainableTotal} had selling behind the queue ahead, ${
+              audited - attainableTotal
+            } never could.${worst.rate > 0 ? ` M${worst.index} is the weakest minute (${share(worst.rate)} phantom).` : ''}`}
       </p>
     </div>
   )

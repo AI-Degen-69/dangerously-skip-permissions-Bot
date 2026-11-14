@@ -105,13 +105,6 @@ export function AbTest() {
   const baseline = data?.baseline
   const candidate = data?.candidate
   const candidateLabel = candidate?.name ?? control.data?.strategy?.name ?? 'Candidate'
-  // Hydrogen v1.0 has no wired strategy config yet: with no real run recorded
-  // (zero observed windows) the launch button stays disabled instead of
-  // firing a start request the backend will refuse.
-  const hydrogenNotWired =
-    /hydrogen/i.test(candidate?.name ?? '') &&
-    (candidate?.observedWindows ?? 0) === 0 &&
-    !isCandidateRunning
   const tw = tweakCards(candidate ?? null)
   const baselineLabel = baseline?.name ?? 'Baseline'
   const stats = data?.statistics
@@ -207,20 +200,11 @@ export function AbTest() {
                 size="sm"
                 onClick={handleStart}
                 loading={startCandidate.isPending}
-                disabled={hydrogenNotWired}
-                title={hydrogenNotWired
-                  ? 'Hydrogen v1.0 strategy config is not wired yet — starting a run is disabled.'
-                  : 'Start the candidate run under the wired strategy config'}
-                className="disabled:border disabled:border-accent/40 disabled:bg-accent/15 disabled:text-accent"
+                title="Start the candidate run under the wired strategy config"
               >
                 <Play className="size-3.5 fill-current" />
                 Launch Candidate Run (B)
               </Button>
-            )}
-            {hydrogenNotWired && !isCandidateRunning && (
-              <span className="max-w-[220px] text-right text-[11px] leading-snug text-muted">
-                Hydrogen v1.0 config not wired yet — launch disabled
-              </span>
             )}
           </div>
         }
@@ -261,7 +245,7 @@ export function AbTest() {
               </p>
               <p className="text-[12.5px] text-muted">
                 {stats.muCritical != null ? (
-                  <>Rejection boundary <Var>{`\\mu_{crit} = $${stats.muCritical.toFixed(4)}`}</Var><span className="text-faint"> — Hydrogen v1.0's mean active-window PnL must cross this to reject H0</span></>
+                  <>Rejection boundary <Var>{`\\mu_{crit} = $${stats.muCritical.toFixed(4)}`}</Var><span className="text-faint"> — {candidateLabel}&apos;s mean active-window PnL must cross this to reject H0</span></>
                 ) : (
                   <>Rejection boundary <Var>{'\\mu_{crit} pending'}</Var><span className="text-faint"> — computed once both arms have active samples</span></>
                 )}
@@ -334,7 +318,7 @@ export function AbTest() {
               <AlertCircle className="size-3.5" /> Null Hypothesis (<Var>H_0</Var>)
             </span>
             <p className="mt-1.5 text-[13px] font-medium leading-relaxed text-fg">
-              <Rich text={hypotheses?.nullHypothesis ?? 'H₀: μ_Hydrogen_v1.0 ≤ μ_DSP_v2.6 (and μ_Hydrogen_v1.0 ≤ 0) — dip-first pair-locking produces no statistically significant improvement in mean active-window PnL over DSP v2.6.'} />
+              <Rich text={hypotheses?.nullHypothesis ?? 'H₀: μ_Hydrogen_v1.1 ≤ μ_Hydrogen_v1.0 (and ≤ 0) — Hydrogen v1.1 produces no statistically significant improvement in mean active-window PnL over Hydrogen v1.0.'} />
             </p>
             <p className="mt-1 text-[11.5px] leading-relaxed text-muted">
               Any observed difference in window PnL is attributed to random microstructure variance or market drift.
@@ -346,7 +330,7 @@ export function AbTest() {
               <Sparkles className="size-3.5" /> Alternative Hypothesis (<Var>H_1</Var>)
             </span>
             <p className="mt-1.5 text-[13px] font-medium leading-relaxed text-fg">
-              <Rich text={hypotheses?.altHypothesis ?? 'H₁: μ_Hydrogen_v1.0 > μ_DSP_v2.6 and μ_Hydrogen_v1.0 > 0 — Hydrogen v1.0 achieves a statistically significant positive expected return per active window and outperforms DSP v2.6 at α = 0.05.'} />
+              <Rich text={hypotheses?.altHypothesis ?? 'H₁: μ_Hydrogen_v1.1 > μ_Hydrogen_v1.0 and > 0 — Hydrogen v1.1 achieves a statistically significant positive expected return per active window and outperforms Hydrogen v1.0 at α = 0.05.'} />
             </p>
             <p className="mt-1 text-[11.5px] leading-relaxed text-muted">
               <Rich text={hypotheses?.decisionRule ?? 'Reject H0 only when t >= t_crit(df) (p <= 0.05) AND the candidate reaches N = 120 active windows, 60 paired windows, and 35+ sub-$1.00 pairs.'} />
@@ -466,7 +450,7 @@ export function AbTest() {
                 <span className="inline-flex items-center gap-1 rounded-[6px] bg-accent/15 px-2 py-0.5 font-mono text-[11px] font-bold text-accent">
                   STRATEGY B · CANDIDATE
                 </span>
-                <h3 className="mt-1 text-[16px] font-semibold text-fg">{candidate?.name ?? 'Hydrogen v1.0'}</h3>
+                <h3 className="mt-1 text-[16px] font-semibold text-fg">{candidate?.name ?? 'Hydrogen v1.1'}</h3>
                 <p className="text-[12px] text-muted">{candidate?.description}</p>
               </div>
               <Badge tone={isCandidateRunning ? 'success' : 'accent'}>
@@ -719,7 +703,7 @@ export function AbTest() {
             <FlaskConical className="size-8 text-faint" />
             <p className="mt-2 text-[14px] font-medium text-fg">No candidate samples gathered yet</p>
             <p className="mt-1 text-[12px] text-muted">
-              Click "Launch Candidate Run (B)" above to start the live paper trading loop under the Hydrogen v1.0 configuration (not wired yet -- backend/UI refactor only).
+              Click "Launch Candidate Run (B)" above to start the live paper trading loop under the Hydrogen v1.1 configuration.
             </p>
           </div>
         )}

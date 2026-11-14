@@ -1,8 +1,8 @@
 """A/B Testing & Statistical Hypothesis Validation Module.
 
-Compares the frozen, measured DSP v2.6 baseline run
-(DEFAULT_BASELINE_ID, `run_20261113_080232_paper_dsp_v2_6`) against the
-Hydrogen v1.0 candidate (`hydrogen-v1.0`).
+Compares the frozen, measured Hydrogen v1.0 baseline run
+(DEFAULT_BASELINE_ID, `run_20261113_183248_paper_hydrogen_v1_0`) against the
+Hydrogen v1.1 candidate (`hydrogen-v1.1`).
 
 The statistical sample is ACTIVE traded windows only (`fills > 0`): zero-fill
 windows never inflate N or dilute variance. Welch's one-tailed two-sample
@@ -21,10 +21,10 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNS_DIR = ROOT / "bot" / "runs"
-DEFAULT_BASELINE_ID = "run_20261113_080232_paper_dsp_v2_6"
-DEFAULT_CANDIDATE_ID = "hydrogen-v1.0"
-CANDIDATE_DISPLAY_NAME = "Hydrogen v1.0"
-BASELINE_DISPLAY_NAME = "DSP v2.6"
+DEFAULT_BASELINE_ID = "run_20261113_183248_paper_hydrogen_v1_0"
+DEFAULT_CANDIDATE_ID = "hydrogen-v1.1"
+CANDIDATE_DISPLAY_NAME = "Hydrogen v1.1"
+BASELINE_DISPLAY_NAME = "Hydrogen v1.0"
 AB_STATE_PATH = ROOT / "bot" / "ab_test_state.json"
 
 TARGET_SAMPLE_SIZE = 120  # Active traded windows (fills > 0) for Welch's t-test (80% power, alpha 0.05)
@@ -320,13 +320,15 @@ def _run_strategy_id(run_id: str | None) -> str:
                     return str(strat_id)
         except Exception:
             pass
-    # The Hydrogen candidate has no run dir yet: its state id is the strategy
-    # id itself, so map it straight through to the Hydrogen identity.
-    if run_id is None or "hydrogen" in str(run_id).lower():
+    if run_id is None:
         return DEFAULT_CANDIDATE_ID
-    # No run (or no meta): the next start would run the Hydrogen v1.0 candidate;
-    # a dangling historical run id falls back to the DSP v2.6 baseline strategy.
-    return "dangerously-skip-permissions-v2.6"
+    if "hydrogen_v1_0" in str(run_id).lower() or "hydrogen-v1.0" in str(run_id).lower():
+        return "hydrogen-v1.0"
+    if "hydrogen_v1_1" in str(run_id).lower() or "hydrogen-v1.1" in str(run_id).lower():
+        return "hydrogen-v1.1"
+    if "hydrogen" in str(run_id).lower():
+        return DEFAULT_CANDIDATE_ID
+    return "hydrogen-v1.0"
 
 
 def _run_entry(run_id: str | None) -> dict[str, Any]:
@@ -359,25 +361,30 @@ def _version_tag(strategy_id: str) -> str:
 
 def _hypothesis_text(candidate_id: str | None, *, null: bool,
                      baseline_id: str | None = None) -> str:
-    """Formal Hydrogen v1.0 vs DSP v2.6 hypothesis over active-window PnL."""
+    """Formal Hydrogen v1.1 vs Hydrogen v1.0 hypothesis over active-window PnL."""
     strat_id = _run_strategy_id(candidate_id)
     base_strat_id = _run_strategy_id(baseline_id or DEFAULT_BASELINE_ID)
-    cand_label = "Hydrogen_v1.0" if "hydrogen" in str(strat_id).lower() else f"μ_{_version_tag(strat_id)}"
-    if "hydrogen" not in str(strat_id).lower():
-        cand_label = f"μ_{_version_tag(strat_id)}"
-    else:
+
+    if "hydrogen-v1.1" in str(strat_id).lower() or "v1_1" in str(strat_id).lower() or "v1.1" in str(strat_id).lower():
+        cand_label = "Hydrogen_v1.1"
+    elif "hydrogen-v1.0" in str(strat_id).lower() or "v1_0" in str(strat_id).lower() or "v1.0" in str(strat_id).lower():
         cand_label = "Hydrogen_v1.0"
-    if "v2.6" in str(base_strat_id) or "v2_6" in str(base_strat_id):
+    elif "hydrogen" in str(strat_id).lower():
+        cand_label = f"Hydrogen_{_version_tag(strat_id)}"
+    else:
+        cand_label = f"{_version_tag(strat_id)}"
+
+    if "hydrogen-v1.0" in str(base_strat_id).lower() or "v1_0" in str(base_strat_id).lower() or "v1.0" in str(base_strat_id).lower():
+        base_label = "Hydrogen_v1.0"
+    elif "hydrogen-v1.1" in str(base_strat_id).lower() or "v1_1" in str(base_strat_id).lower() or "v1.1" in str(base_strat_id).lower():
+        base_label = "Hydrogen_v1.1"
+    elif "hydrogen" in str(base_strat_id).lower():
+        base_label = f"Hydrogen_{_version_tag(base_strat_id)}"
+    elif "v2.6" in str(base_strat_id) or "v2_6" in str(base_strat_id):
         base_label = "DSP_v2.6"
     else:
-        base_label = f"μ_{_version_tag(base_strat_id)}"
-        if not base_label.startswith("μ_"):
-            base_label = f"μ_{base_label}"
-        else:
-            base_label = base_label.replace("μ_μ_", "μ_")
-        # Normalize to the DSP_vX_Y shape when we only have a bare tag.
-        if base_label in ("μ_v2.6",):
-            base_label = "DSP_v2.6"
+        base_label = f"{_version_tag(base_strat_id)}"
+
     try:
         from bot import constants as C
         reg = C.STRATEGY_SETUPS.get(strat_id, {})
@@ -386,13 +393,17 @@ def _hypothesis_text(candidate_id: str | None, *, null: bool,
         blurb = ""
     if not blurb:
         blurb = "dip-first pair-locking parameters"
+
+    cand_display = cand_label.replace("_", " ")
+    base_display = base_label.replace("_", " ")
+
     if null:
-        return (f"H₀: μ_{cand_label} ≤ μ_{base_label} (and μ_{cand_label} ≤ 0) — "
-                f"Hydrogen v1.0's {blurb} produce no statistically significant "
-                f"improvement in mean active-window PnL over DSP v2.6.")
-    return (f"H₁: μ_{cand_label} > μ_{base_label} and μ_{cand_label} > 0 — "
-            f"Hydrogen v1.0 achieves a statistically significant positive expected "
-            f"return per active window and outperforms DSP v2.6 at α = 0.05 (one-tailed).")
+        return (f"H₀: μ_{cand_label} ≤ μ_{base_label} (and ≤ 0) — "
+                f"{cand_display}'s {blurb} produce no statistically significant "
+                f"improvement in mean active-window PnL over {base_display}.")
+    return (f"H₁: μ_{cand_label} > μ_{base_label} and > 0 — "
+            f"{cand_display} achieves a statistically significant positive expected "
+            f"return per active window and outperforms {base_display} at α = 0.05 (one-tailed).")
 
 
 def _run_info(run_id: str | None) -> dict[str, Any]:
@@ -625,7 +636,8 @@ def start_candidate_test(candidate_id: str | None = None,
 
     # 3. Generate run ID and register candidate
     if "hydrogen" in str(candidate_id).lower():
-        run_id = f"run_{time.strftime('%Y%m%d_%H%M%S')}_paper_hydrogen_v1_0"
+        tag = _version_tag(candidate_id).replace(".", "_")
+        run_id = f"run_{time.strftime('%Y%m%d_%H%M%S')}_paper_hydrogen_{tag}"
     else:
         run_id = f"run_{time.strftime('%Y%m%d_%H%M%S')}_paper_dsp_{_version_tag(candidate_id).replace('.', '_')}"
     ab_state = {

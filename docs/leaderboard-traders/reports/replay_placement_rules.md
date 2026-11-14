@@ -155,8 +155,9 @@ over paired windows (n).
 | G hump-L2-1¢ | hump L2 spacing 0.01 | 233 (216/17) | 10.62% | 2194 | 0.866 (15) | −210.66 |
 | H hump-L2-3¢ | hump L2 spacing 0.03 | 151 (137/14) | 4.91% | 3076 | 0.7842 (15) | −160.73 |
 
-Raw outputs: `scratch/cand2_{A…H}_*.json` (final code) alongside the
-superseded mixed-code `scratch/cand_{A…H}_*.json` (kept, not used).
+Raw outputs: `scratch/cand2_{A…H}_*.json` (final code). The earlier
+mixed-code `scratch/cand_{A…H}_*.json` set was removed during cleanup — it
+was superseded before the table was built and never used.
 
 ## 3. Per-candidate notes (the four placement questions, answered)
 

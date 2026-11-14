@@ -363,6 +363,46 @@ STRATEGY_SETUPS = {
             "maxDepthShares": 0.0,
         },
     },
+    "hydrogen-v1.1": {
+        "id": "hydrogen-v1.1",
+        "symbol": "H2 Hydrogen-v1.1",
+        "name": "Hydrogen v1.1",
+        "entry": {
+            "startAfterOpenSec": 15,
+            "stopBeforeCloseSec": 30,
+            "sweepBeforeCloseSec": 12,
+            "clipSharesDefault": 10.0,
+            "maxShares": 25.0,
+            "maxClipShares": 25.0,
+            "minFillPrice": 0.07,
+            "maxFillPrice": 0.48,
+            "maxLeg1Price": 0.48,
+            "leg1MaxPrice": 0.48,
+            "leg2MaxPrice": 0.75,
+            "benchmarkPairCost": 0.960,
+            "targetPairCost": 0.960,
+            "maxPairCost": 0.985,
+            "maxShareLead": 100.0,
+            "maxUnhedgedShares": 100.0,
+            "maxUnhedgedUsd": 45.0,
+            "dipCurve": "hump",
+            "wholeLadderClips": True,
+            "levelsPerSide": 2,
+            "levelSpacing": 0.01,
+            "minSpacingMoveSec": 0.5,
+            "minSpacingStaticSec": 2.5,
+            "staticRequoteSec": 2.5,
+            "includeTakerFee": True,
+            "takerDipEntryMax": 0.36,
+            "unhedgedStepCents": 8.0,
+            "unhedgedProbeShares": 10.0,
+            "lateRescueStartSec": 210,
+            "lateRescueMaxPairCost": 1.02,
+            "rescuePairCostMax": 1.02,
+            "rescueCeilingPrice": 0.985,
+            "maxDepthShares": 0.0,
+        },
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -420,6 +460,11 @@ _SETUP_FEATURES = {
         "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
         "blurb": "hump-sized dips (fat in the middle) with taker dip entry to 42c, leg-2 ceiling 75c, and a late rescue to $1.02 from T+210s",
     },
+    "hydrogen-v1.1": {
+        "sizing": "hump", "preflightGate": False, "patientHedge": True, "takerDip": True,
+        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
+        "blurb": "hump-sized dips with 10sh probe, 8c unhedged step, taker dip entry to 36c, leg-2 ceiling 75c, and late rescue to $1.02 from T+210s",
+    },
 }
 
 
@@ -460,8 +505,13 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
     reachable = min(mx, max(0.0, float(lead) - 1.0))
 
     if sizing == "hump":
-        dip_txt = f"hump clips (30 sh at/below 10c, ~48.7 sh at 40-50c, 30 sh at/above 70c, capped at {mx:g} sh)"
-        sig_size = f"Hump Curve (30-48.7-30 sh, cap {mx:g})"
+        probe = e.get("unhedgedProbeShares")
+        if probe and float(probe) > 0:
+            dip_txt = f"hump clips ({float(probe):g} sh probe / {mx:g} sh pair)"
+            sig_size = f"Hump Curve ({float(probe):g}sh probe / {mx:g}sh pair)"
+        else:
+            dip_txt = f"hump clips (30 sh at/below 10c, ~48.7 sh at 40-50c, 30 sh at/above 70c, capped at {mx:g} sh)"
+            sig_size = f"Hump Curve (30-48.7-30 sh, cap {mx:g})"
     elif sizing == "inverse-curve":
         curve = e.get("dipCurve") or {}
         if not isinstance(curve, dict):

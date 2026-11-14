@@ -245,51 +245,6 @@ function MarketChartPanel({
   const slug = market.slug
   const eventUrl = `https://polymarket.com/event/${slug}?utm_medium=embed&utm_campaign=market&utm_content=spread-hunter`
 
-  // 1. Microprice Lean
-  let leanVal = market.lean
-  let leanConf = 0.5
-  if (leanVal == null) {
-    const upMid =
-      market.quotes.Up.ask != null && market.quotes.Up.bid != null
-        ? (market.quotes.Up.ask + market.quotes.Up.bid) / 2
-        : (market.quotes.Up.ask ?? market.quotes.Up.bid ?? 0.5)
-    const downMid =
-      market.quotes.Down.ask != null && market.quotes.Down.bid != null
-        ? (market.quotes.Down.ask + market.quotes.Down.bid) / 2
-        : (market.quotes.Down.ask ?? market.quotes.Down.bid ?? 0.5)
-    const edge = (upMid - downMid) / 2.0
-    const raw = edge * 4.0
-    leanVal = Math.max(-1.0, Math.min(1.0, raw))
-    const spreadDist = Math.abs(upMid + downMid - 1.0)
-    leanConf = Math.max(0, Math.min(1.0, 1.0 - spreadDist * 5.0))
-  }
-
-  // 2. Window Fills
-  const fillsCount =
-    Number(market.verdict?.detail?.fills) ||
-    (positions.length > 0 ? (hasUp ? 1 : 0) + (hasDown ? 1 : 0) : 0)
-
-  // 3. CLOB Spread & Depth
-  const upSpread =
-    market.quotes.Up.ask != null && market.quotes.Up.bid != null
-      ? market.quotes.Up.ask - market.quotes.Up.bid
-      : null
-  const downSpread =
-    market.quotes.Down.ask != null && market.quotes.Down.bid != null
-      ? market.quotes.Down.ask - market.quotes.Down.bid
-      : null
-  const clobSpread =
-    upSpread != null && downSpread != null
-      ? Math.min(upSpread, downSpread)
-      : (upSpread ?? downSpread)
-
-  const upDepth = ws?.up_book ? ws.up_book.bid_depth + ws.up_book.ask_depth : 0
-  const downDepth = ws?.down_book ? ws.down_book.bid_depth + ws.down_book.ask_depth : 0
-  const depthHint =
-    upDepth > 0 || downDepth > 0
-      ? `depth $${(upDepth / 1000).toFixed(1)}k / $${(downDepth / 1000).toFixed(1)}k`
-      : 'best bid/ask'
-
   return (
     <Card aria-label={`Live odds for ${slug}`} className={cx('flex flex-col p-5', wide && 'lg:col-span-2')}>
       <div className="flex items-center justify-between gap-2">
@@ -374,50 +329,7 @@ function MarketChartPanel({
         ))}
       </div>
 
-      <dl className="mt-3 grid grid-cols-1 gap-x-4 gap-y-2.5 rounded-tile border border-line/50 bg-surface-2/30 p-3 sm:grid-cols-3">
-        <Field
-          label="Microprice Lean"
-          value={
-            leanVal == null || Math.abs(leanVal) < 0.02
-              ? 'Neutral'
-              : `${leanVal > 0 ? `+${leanVal.toFixed(2)}` : leanVal.toFixed(2)} ${leanVal > 0 ? 'Up' : 'Down'}`
-          }
-          hint={`${Math.round(leanConf * 100)}% conf · OB`}
-        />
-        <Field
-          label="Window Fills"
-          value={`${fillsCount} fills`}
-          hint={elapsedSec >= 240 ? 'M4 snipe' : 'tape med: 45'}
-        />
-        <Field
-          label="CLOB Spread & Depth"
-          value={clobSpread != null ? `${(clobSpread * 100).toFixed(1)}¢` : '—'}
-          hint={depthHint}
-        />
-      </dl>
     </Card>
-  )
-}
-
-function Field({
-  label,
-  value,
-  hint,
-  valueClassName,
-}: {
-  label: string
-  value: React.ReactNode
-  hint?: React.ReactNode
-  valueClassName?: string
-}) {
-  return (
-    <div className="min-w-0">
-      <dt className="truncate text-[10px] font-medium uppercase tracking-wide text-faint">{label}</dt>
-      <dd className={cx('mt-0.5 truncate text-[12.5px] font-semibold tabular-nums', valueClassName ?? 'text-fg')}>
-        {value}
-        {hint && <span className="ml-1.5 text-[10.5px] font-normal text-faint">{hint}</span>}
-      </dd>
-    </div>
   )
 }
 

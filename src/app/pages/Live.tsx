@@ -24,7 +24,7 @@ import {
 } from '../lib/bot'
 import { STRATEGY_PRESETS } from '../botDefaults'
 import { cx } from '../lib/cx'
-import { relativeTime } from '../lib/format'
+import { pairCostTone, relativeTime } from '../lib/format'
 
 const cents = (value: number | null | undefined) =>
   value === null || value === undefined ? '—' : `${Math.round(value * 100)}¢`
@@ -371,30 +371,74 @@ function EventRow({ event }: { event: BotEvent }) {
 
 function RestingOrdersStrip({ orders }: { orders: OpenOrderView[] }) {
   if (orders.length === 0) return null
+  const up = orders.find((order) => order.side === 'Up')
+  const down = orders.find((order) => order.side === 'Down')
+  // What the pair would cost if both resting bids filled.
+  const pairPx = up && down ? up.price + down.price : null
+
   return (
     <Card className="mt-3 p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <h2 className="text-[14px] font-semibold">Resting orders</h2>
         <p className="text-[12px] text-muted">Not fills yet — each one needs a seller to hit it.</p>
       </div>
-      <ul className="mt-1 divide-y divide-line">
-        {orders.map((order) => (
-          <li key={order.side} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 text-[12.5px]">
-            <Badge tone={order.side === 'Up' ? 'success' : 'danger'}>{order.side}</Badge>
-            <span className="font-mono tabular-nums">
+      <div className="mt-2 flex w-full items-stretch gap-2 select-none">
+        <RestingSide order={up} />
+        <div
+          className="flex w-16 shrink-0 -my-0.5 items-center justify-center rounded-lg border border-line bg-surface-2"
+          title="UP resting bid + DN resting bid"
+        >
+          <span className={cx('font-mono text-lg font-extrabold leading-none tabular-nums', pairCostTone(pairPx, 0.985))}>
+            {pairPx != null ? `${Math.round(pairPx * 100)}¢` : '—'}
+          </span>
+        </div>
+        <RestingSide order={down} mirrored />
+      </div>
+    </Card>
+  )
+}
+
+function RestingSide({ order, mirrored = false }: { order?: OpenOrderView; mirrored?: boolean }) {
+  // Mirrored for the right-hand (DN) panel, so UP sits left and DN right like the live/held rows.
+  const restingSec = order ? Math.max(0, Math.round((Date.now() - order.placedAtMs) / 1000)) : 0
+  return (
+    <div
+      className={cx(
+        'relative flex min-w-0 flex-1 items-center gap-3 overflow-hidden rounded-xl border border-line bg-surface-1 px-3 py-2',
+        !order && 'opacity-60',
+      )}
+    >
+      <div className={cx('flex shrink-0 items-center gap-2', mirrored && 'order-last justify-end')}>
+        {!mirrored && (
+          <Badge tone="success" className="px-2 py-0.5 text-[11px] font-semibold tracking-wide">
+            UP ↗
+          </Badge>
+        )}
+        <span className="text-[10px] font-medium uppercase tracking-wider text-faint">Resting</span>
+        {mirrored && (
+          <Badge tone="danger" className="px-2 py-0.5 text-[11px] font-semibold tracking-wide">
+            DN ↘
+          </Badge>
+        )}
+      </div>
+      <div className={cx('flex min-w-0 flex-1 flex-col gap-0.5', mirrored ? 'items-start' : 'items-end')}>
+        {order ? (
+          <>
+            <span className="font-mono text-[13px] font-semibold tabular-nums">
               {order.shares.toFixed(1)} sh @ {cents(order.price)}
             </span>
-            <span className="text-muted">
-              {order.queueAhead > 0 ? `${order.queueAhead.toFixed(0)} sh ahead` : 'front of queue'}
+            <span className="text-[11.5px] text-muted">
+              {order.queueAhead > 0 ? `${order.queueAhead.toFixed(0)} sh ahead` : 'front of queue'} · resting {restingSec}s
+              <span className="text-faint">
+                {' · '}M{order.minute} {order.subReason}
+              </span>
             </span>
-            <span className="text-muted">resting {Math.max(0, Math.round((Date.now() - order.placedAtMs) / 1000))}s</span>
-            <span className="ml-auto text-faint">
-              M{order.minute} · {order.subReason}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </Card>
+          </>
+        ) : (
+          <span className="text-[12px] text-faint">No resting order</span>
+        )}
+      </div>
+    </div>
   )
 }
 

@@ -278,14 +278,18 @@ export interface BotControl {
   tape?: TapeStatus
 }
 
-export interface PerfGate {
+/** One cell of the execution-health matrix: a label, the number, its parts. */
+export interface PerfCell {
   key: string
   label: string
   value: string
-  target: string
-  status: 'pass' | 'warn' | 'fail' | 'sample'
-  judged: boolean
-  detail: string
+  /** `stat` cells are plain measurements with no target to judge against. */
+  status: 'pass' | 'warn' | 'fail' | 'stat'
+  /** Layer above the rest: the number the other cells are built from. */
+  big?: boolean
+  /** How many grid columns the cell spans. */
+  span?: number
+  sub: { label: string; value: string; tone?: string }[]
 }
 
 export interface PerfWindow {
@@ -300,6 +304,8 @@ export interface PerfWindow {
   pending: boolean
   redeemed: boolean
   bothSides: boolean
+  /** Lock-in cost of a both-sided window (avg Up + avg Down); null otherwise. */
+  pairCost: number | null
   upFills: number
   downFills: number
   zeroPriceFills: number
@@ -308,6 +314,9 @@ export interface PerfWindow {
   /** Taker fills - paper mode has no real book, so these cannot be checked. */
   takerFills?: number
   mShape: number[]
+  /** Per-minute queue verdicts for audited maker fills. */
+  mAttainable: number[]
+  mPhantom: number[]
   /** Taker fees already charged inside costUsd. */
   feesUsd?: number
   /** Taker fees on the maker fills, the pool a maker rebate is drawn from. */
@@ -423,25 +432,14 @@ export interface BotPerf {
       shareRate: number
     }
   }
-  targets: {
-    windows: number
-    medianFills: number
-    meanFills: number
-    medianCostUsd: number
-    meanCostUsd: number
-    bothSides: number
-  }
-  gate: PerfGate[]
+  cells: PerfCell[]
   mShape: {
     live: number[]
-    target: number[]
     liveShare: number[]
-    targetShare: number[]
-    distance: number
-    /** The same minute mix over the verified fills only. */
-    verifiedLive?: number[]
-    verifiedShare?: number[]
-    verifiedDistance?: number
+    /** Per-minute audited maker fills a real bid could have got. */
+    attainable: number[]
+    /** Per-minute audited maker fills the queue ahead never cleared. */
+    phantom: number[]
   }
   redeem: { count: number; payoutUsd: number }
   health: {

@@ -219,9 +219,13 @@ def evaluate_microstructure_ladder(
     leg1_max_price: float | None = None,
     leg2_max_price: float | None = None,
     taker_dip_max: float | None = None,
+    taker_hedge_max_pair_cost: float | None = None,
+    hedge_max_clip: float | None = None,
     late_rescue_start_sec: float | None = None,
     late_rescue_max_pair_cost: float | None = None,
     elapsed_sec: float | None = None,
+    unhedged_step_cents: float | None = None,
+    unhedged_probe_shares: float | None = None,
     **kwargs,
 ) -> MicrostructureDecision:
     """Decision Engine for Hybrid Arbitrage Pairing & Certainty Sniping.
@@ -275,6 +279,24 @@ def evaluate_microstructure_ladder(
     saw_pair_cap = False
     saw_depth_cap = False
     saw_unhedged_cap = False
+    saw_unhedged_step = False
+
+    def _lowest_held_price(side_key: str) -> float | None:
+        s = inv.get(side_key) or {}
+        if s.get("shares", 0.0) <= 0:
+            return None
+        for k in ("lowest_price", "min_price", "lowest_fill_price", "min_fill_price"):
+            val = s.get(k)
+            if val is not None:
+                try:
+                    return float(val)
+                except (TypeError, ValueError):
+                    pass
+        sh = s.get("shares", 0.0)
+        c = s.get("cost", 0.0)
+        if sh > 0 and c > 0:
+            return float(c / sh)
+        return None
     # DSP family (v2.0, v2.1, v2.2, ...) shares the same recovery-engine rules.
     is_dsp = strategy_id.startswith("dangerously-skip-permissions")
     is_v22 = strategy_id.endswith("v2.2")
@@ -308,6 +330,12 @@ def evaluate_microstructure_ladder(
     _taker_dip = _fnum(taker_dip_max)
     if _taker_dip is None:
         _taker_dip = _fnum(kwargs.get("takerDipEntryMax", kwargs.get("takerDipMax")))
+    _th_cap = _fnum(taker_hedge_max_pair_cost)
+    if _th_cap is None:
+        _th_cap = _fnum(kwargs.get("takerHedgeMaxPairCost", kwargs.get("takerHedgeMaxPair")))
+    _h_clip = _fnum(hedge_max_clip)
+    if _h_clip is None:
+        _h_clip = _fnum(kwargs.get("hedgeMaxClip", kwargs.get("takerHedgeMaxClip")))
     _late_start = _fnum(late_rescue_start_sec)
     if _late_start is None:
         _late_start = _fnum(kwargs.get("lateRescueStartSec"))
@@ -317,6 +345,12 @@ def evaluate_microstructure_ladder(
     _elapsed = _fnum(elapsed_sec)
     if _elapsed is None:
         _elapsed = _fnum(kwargs.get("elapsedSec"))
+    _step_cents = _fnum(unhedged_step_cents)
+    if _step_cents is None:
+        _step_cents = _fnum(kwargs.get("unhedgedStepCents", kwargs.get("unhedged_step_cents")))
+    _probe_sh = _fnum(unhedged_probe_shares)
+    if _probe_sh is None:
+        _probe_sh = _fnum(kwargs.get("unhedgedProbeShares", kwargs.get("unhedged_probe_shares")))
     has_late = _late_start is not None
     in_late = bool(has_late and _elapsed is not None and _elapsed >= _late_start)
     late_cap = _late_max if (has_late and _late_max is not None) else rescue_max_pair_cost
@@ -400,6 +434,40 @@ def evaluate_microstructure_ladder(
             is_v22=is_v22,
             is_v23=is_v23,
         )
+        # Profit-lock taker hedge (opt-in; None = off = exact legacy behavior).
+        # When closing a deficit projects a fee-inclusive pair cost at/below the
+        # cap, the pair is already profitable: cross the ask now instead of
+        # resting at the bid and hoping a seller arrives. hedge_max_clip lets
+        # the taker hedge snap to the full deficit (up to the given shares)
+        # instead of one max_clip rung per fill.
+        if (_th_cap is not None and ask is not None
+                and ask >= min_fill and ask <= effective_ceiling):
+            h_cap = _h_clip if _h_clip is not None else max_clip
+            h_shares = select_ladder_clip(
+                deficit=deficit,
+                price=ask,
+                pair_cost=None,
+                fill_idx=fill_idx,
+                default_clip=default_clip,
+                max_clip=h_cap,
+                whole_ladder=whole_ladder,
+                is_v22=is_v22,
+                is_v23=is_v23,
+            )
+            h_est, _ = compute_fill_usd(h_shares, ask, role="TAKER", include_fee=True)
+            h_proj = _projected_pair_cost(inv, side, h_shares, h_est)
+            if h_proj is not None and h_proj <= _th_cap:
+                return MicrostructureDecision(
+                    action="fill",
+                    outcome=side,
+                    price=round(ask, 4),
+                    shares=h_shares,
+                    role="TAKER",
+                    reason="clip-fill",
+                    sub_reason="taker-hedge-lock",
+                    projected_pair_cost=h_proj,
+                    share_deficit=deficit,
+                )
         # Patient pair, forced close. The hedge rests at the lagging side's bid
         # and books when a seller comes to it. Crossing the ask on the next tick
         # is the one timing the ledger measures as a loss (-0.2c per pair at a
@@ -509,13 +577,15 @@ def evaluate_microstructure_ladder(
         if (deficit <= 0 and _taker_dip is not None and ask is not None
                 and ask >= min_fill and ask <= min(max_fill, leg1_cap)
                 and ask <= _taker_dip):
+            t_clip_cap = min(max_clip, _probe_sh) if (_probe_sh is not None and _probe_sh > 0 and inv[opp]["shares"] <= 0) else max_clip
+            t_def_clip = min(default_clip, t_clip_cap)
             t_shares = select_ladder_clip(
                 deficit=0.0,
                 price=ask,
                 pair_cost=None,
                 fill_idx=fill_idx,
-                default_clip=default_clip,
-                max_clip=max_clip,
+                default_clip=t_def_clip,
+                max_clip=t_clip_cap,
                 whole_ladder=whole_ladder,
                 current_lead=lead,
                 is_v22=is_v22,
@@ -526,17 +596,22 @@ def evaluate_microstructure_ladder(
             t_est, _ = compute_fill_usd(t_shares, ask, role="TAKER", include_fee=True)
             t_proj = _projected_pair_cost(inv, side, t_shares, t_est)
             t_ok = True
-            if lead + t_shares >= lead_cap:
+            if _step_cents is not None and _step_cents > 0 and inv[opp]["shares"] <= 0 and inv[side]["shares"] > 0:
+                low_p = _lowest_held_price(side)
+                if low_p is not None and ask > (low_p - (_step_cents / 100.0) + 1e-6):
+                    saw_unhedged_step = True
+                    t_ok = False
+            if t_ok and (lead + t_shares >= lead_cap):
                 saw_unhedged_cap = True
                 t_ok = False
-            elif max_unhedged_usd > 0:
+            elif t_ok and max_unhedged_usd > 0:
                 t_new_sh = inv[side]["shares"] + t_shares
                 t_new_cost = inv[side]["cost"] + t_est
                 t_lead_after = t_new_sh - inv[opp]["shares"]
                 if t_lead_after > 0 and (t_new_cost / t_new_sh) * t_lead_after > max_unhedged_usd:
                     saw_unhedged_cap = True
                     t_ok = False
-            elif not (t_proj is None or t_proj <= bench_pc):
+            elif t_ok and not (t_proj is None or t_proj <= bench_pc):
                 saw_pair_cap = True
                 t_ok = False
             if t_ok:
@@ -566,18 +641,26 @@ def evaluate_microstructure_ladder(
             continue
         dip_max = 0.45 if is_dsp else C.DIP_LADDER_MAX
         if px <= dip_max:
+            if _step_cents is not None and _step_cents > 0 and inv[opp]["shares"] <= 0 and inv[side]["shares"] > 0:
+                low_p = _lowest_held_price(side)
+                if low_p is not None and px > (low_p - (_step_cents / 100.0) + 1e-6):
+                    saw_unhedged_step = True
+                    continue
+
             # High-Confidence Atomic Arb Detection:
             # If both sides can be filled immediately with sum <= 0.990, flag atomic_arb = True!
             is_atomic = bool(is_confidence and opp_ref is not None and (px + opp_ref <= 0.990))
 
             role = "MAKER" if ((bid is not None and px == bid) or bid is None) else "TAKER"
+            m_clip_cap = min(max_clip, _probe_sh) if (_probe_sh is not None and _probe_sh > 0 and inv[opp]["shares"] <= 0) else max_clip
+            m_def_clip = min(default_clip, m_clip_cap)
             shares = select_ladder_clip(
                 deficit=deficit,
                 price=px,
                 pair_cost=None,
                 fill_idx=fill_idx,
-                default_clip=default_clip,
-                max_clip=max_clip,
+                default_clip=m_def_clip,
+                max_clip=m_clip_cap,
                 whole_ladder=whole_ladder,
                 current_lead=lead,
                 is_v22=is_v22,
@@ -633,13 +716,15 @@ def evaluate_microstructure_ladder(
             # here — it is placed as a resting bid once this leg fills.
             is_atomic = bool(is_confidence and opp_ref is not None and (px + opp_ref <= 0.990))
             role = "MAKER" if ((bid is not None and px == bid) or bid is None) else "TAKER"
+            s_clip_cap = min(max_clip, _probe_sh) if (_probe_sh is not None and _probe_sh > 0 and inv[opp]["shares"] <= 0) else max_clip
+            s_def_clip = min(default_clip, s_clip_cap)
             shares = select_ladder_clip(
                 deficit=0.0,
                 price=px,
                 pair_cost=None,
                 fill_idx=fill_idx,
-                default_clip=default_clip,
-                max_clip=max_clip,
+                default_clip=s_def_clip,
+                max_clip=s_clip_cap,
                 whole_ladder=whole_ladder,
                 is_v22=is_v22,
                 atomic_arb=is_atomic,
@@ -669,6 +754,8 @@ def evaluate_microstructure_ladder(
         return MicrostructureDecision(action="skip", outcome=preferred, reason="dust-quote", sub_reason="below-price-floor")
     if saw_unhedged_cap:
         return MicrostructureDecision(action="skip", outcome=preferred, reason="unhedged-cap-skip", sub_reason="unhedged-cap")
+    if saw_unhedged_step:
+        return MicrostructureDecision(action="skip", outcome=preferred, reason="unhedged-step-skip", sub_reason="unhedged-step-cents")
     if saw_depth_cap:
         return MicrostructureDecision(action="skip", outcome=preferred, reason="no-liquidity", sub_reason="depth-cap")
     if saw_pair_cap:
