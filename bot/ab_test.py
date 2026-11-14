@@ -529,15 +529,18 @@ def get_ab_test_data() -> dict[str, Any]:
     mu_crit: float | None = None
     se_diff_val = 0.0
     significant = False
+    stat_sig = False
 
     if n_a > 1 and n_b > 1:
         mean_diff = round(mu_b - mu_a, 4)
         se_diff_val = math.sqrt((var_a / n_a) + (var_b / n_b))
 
-        # Welch-Satterthwaite degrees of freedom
+        # Welch-Satterthwaite degrees of freedom. Divide by the actual
+        # denominator when it is positive: flooring a tiny-but-valid denom
+        # (e.g. 1e-14 from near-identical samples) collapses df toward zero.
         num = ((var_a / n_a) + (var_b / n_b)) ** 2
         denom = (((var_a / n_a) ** 2) / (n_a - 1)) + (((var_b / n_b) ** 2) / (n_b - 1))
-        df = round(num / max(denom, 1e-9), 1)
+        df = round(num / denom, 1) if denom > 0 else 0.0
 
         t_stat = round(mean_diff / max(se_diff_val, 1e-9), 4) if se_diff_val > 0 else 0.0
         # One-tailed p-value (testing mu_b > mu_a)
@@ -547,6 +550,12 @@ def get_ab_test_data() -> dict[str, Any]:
         t_crit = _t_critical(df, ALPHA)
         # Exact active-window mean the candidate must cross to reject H0.
         mu_crit = round(mu_a + t_crit * se_diff_val, 4) if se_diff_val > 0 else round(mu_a, 4)
+        # Degenerate inputs (e.g. zero variance) yield non-finite cutoffs;
+        # the API type already allows null, and the frontend renders it.
+        if not math.isfinite(t_crit):
+            t_crit = None
+        if not math.isfinite(mu_crit):
+            mu_crit = None
 
         # Pooled SD for Cohen's d
         s_pooled = math.sqrt(((n_a - 1) * var_a + (n_b - 1) * var_b) / max(1, n_a + n_b - 2))
@@ -562,7 +571,21 @@ def get_ab_test_data() -> dict[str, Any]:
             and candidate_stats["pairedWindows"] >= TARGET_PAIRED_WINDOWS
             and candidate_stats["subDollarPairs"] >= TARGET_SUB_DOLLAR_PAIRS
         )
-        significant = bool(t_stat >= t_crit and p_value <= ALPHA and gates_met)
+        # H1 requires mu_B > 0 as well: one-sided one-sample t-test vs zero.
+        se_b = math.sqrt(var_b / n_b) if var_b > 0 and n_b > 0 else 0.0
+        t_crit_1samp = _t_critical(float(n_b - 1), ALPHA)
+        b_positive = bool(
+            se_b > 0
+            and math.isfinite(t_crit_1samp)
+            and (mu_b / se_b) >= t_crit_1samp
+        )
+        stat_sig = bool(
+            t_crit is not None
+            and t_stat >= t_crit
+            and p_value <= ALPHA
+            and b_positive
+        )
+        significant = bool(stat_sig and gates_met)
 
     # Status verdict string
     if n_b < 5:
@@ -574,7 +597,7 @@ def get_ab_test_data() -> dict[str, Any]:
     elif significant:
         verdict = f"Statistically Significant Alpha (Reject H0, p={p_value:.3f})"
         verdict_tone = "success"
-    elif n_a > 1 and n_b > 1 and t_stat >= t_crit and p_value <= ALPHA:
+    elif stat_sig:
         verdict = (f"Significant but Gates Not Met "
                    f"(need {TARGET_SAMPLE_SIZE} active / {TARGET_PAIRED_WINDOWS} paired / "
                    f"{TARGET_SUB_DOLLAR_PAIRS} sub-$1.00)")
@@ -633,7 +656,8 @@ def get_ab_test_data() -> dict[str, Any]:
                 f"{TARGET_SUB_DOLLAR_PAIRS}+ sub-$1.00 pairs; "
                 f"μ_B must cross μ_crit" +
                 (f" (${mu_crit:.4f})" if mu_crit is not None else "") +
-                "."
+                "; and a one-sided one-sample t-test must reject μ_B ≤ 0 " +
+                "(t_B ≥ t_crit(N_B − 1))."
             ),
         },
         "histogram": histogram,

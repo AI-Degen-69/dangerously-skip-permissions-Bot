@@ -1205,9 +1205,11 @@ function ShapeChart({ mShape }: { mShape: BotPerf['mShape'] }) {
   const attainableTotal = attainable.reduce((sum, n) => sum + n, 0)
   const max = Math.max(1, ...totals)
   // Where the queue hurts most, as a share of the fills audited in that minute.
-  const worst = totals
-    .map((total, index) => ({ index, rate: total > 0 ? (phantom[index] ?? 0) / total : 0 }))
-    .reduce((a, b) => (b.rate > a.rate ? b : a))
+  const worst = totals.length > 0
+    ? totals
+        .map((total, index) => ({ index, rate: total > 0 ? (phantom[index] ?? 0) / total : 0 }))
+        .reduce((a, b) => (b.rate > a.rate ? b : a))
+    : { index: -1, rate: 0 }
   return (
     <div className="mt-4 rounded-tile border border-line bg-surface-2/30 p-3.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
