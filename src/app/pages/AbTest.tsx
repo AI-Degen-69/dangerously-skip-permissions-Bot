@@ -486,7 +486,7 @@ export function AbTest() {
                 </p>
                 {baseline?.samples ? (
                   <p className="mt-0.5 font-mono text-[11px] text-muted" title={`Rebates at ${tier.name} tier${includeRebates ? '' : ' (excluded)'}`}>
-                    with rebates {money(baseline.netPnl + armRebate(baseline, tier.rate, includeRebates))}
+                    with rebates {money(baseline.netPnl + armRebate(baseline, tier.rate, includeRebates))} · mean {money((baseline.netPnl + armRebate(baseline, tier.rate, includeRebates)) / baseline.samples, 4)}
                   </p>
                 ) : null}
               </div>
