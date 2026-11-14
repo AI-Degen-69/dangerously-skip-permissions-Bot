@@ -562,7 +562,7 @@ export function Dashboard() {
                         style={{ width: `${winPct}%` }}
                         title={`${stats.winsCount} winning windows`}
                       >
-                        {stats.winsCount}W
+                        {winPct >= 6 ? `${stats.winsCount}W` : ''}
                       </span>
                       {stats.scratchCount > 0 && (
                         <span
@@ -570,7 +570,7 @@ export function Dashboard() {
                           style={{ width: `${scratchPct}%` }}
                           title={`${stats.scratchCount} break-even windows`}
                         >
-                          {stats.scratchCount}T
+                          {scratchPct >= 6 ? `${stats.scratchCount}T` : ''}
                         </span>
                       )}
                       <span
@@ -726,7 +726,7 @@ export function Dashboard() {
                       style={{ width: `${upFillPct}%` }}
                       title={`${stats.upFills} Up fills`}
                     >
-                      {stats.upFills} Up
+                      {upFillPct >= 10 ? `${stats.upFills} Up` : ''}
                     </span>
                     <span className="flex-1 text-right tabular-nums font-semibold text-danger">
                       {stats.downFills} Down
