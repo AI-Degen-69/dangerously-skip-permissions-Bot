@@ -782,6 +782,9 @@ export interface AbTestDistributionStats {
   minPnl: number
   maxPnl: number
   meanPairCost: number
+  /** Rebate bases for the with-rebates view (same inputs as the dashboard). */
+  feesUsd?: number
+  makerFeeBaseUsd?: number
   zeroImbalancePct: number
   pnlList: number[]
   windows: AbTestWindow[]

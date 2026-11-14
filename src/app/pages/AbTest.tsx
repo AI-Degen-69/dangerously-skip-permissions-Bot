@@ -16,6 +16,7 @@ import {
   useStopAbCandidate,
   useBotControl,
 } from '../lib/bot'
+import { MAKER_REBATE_SHARE, useAccountTier, useIncludeRebates } from '../lib/rebates'
 import { Badge, Button, Card, PageHeader, useToast } from '../components/ui'
 import { cx } from '../lib/cx'
 import { tweakCards } from '../strategyCopy'
@@ -25,6 +26,13 @@ const money = (val: number | null | undefined, digits = 2) =>
 
 const pct = (val: number | null | undefined) =>
   val == null ? '—' : `${(val * 100).toFixed(1)}%`
+
+/** Rebate credit for one arm, same inputs as the dashboard (windowRebate summed). */
+const armRebate = (
+  s: { feesUsd?: number | null; makerFeeBaseUsd?: number | null } | null | undefined,
+  rate: number,
+  enabled: boolean,
+) => (enabled ? (s?.feesUsd ?? 0) * rate + MAKER_REBATE_SHARE * (s?.makerFeeBaseUsd ?? 0) : 0)
 
 /** Kill float noise: 36.980000000000004 → 36.98, 135 → 135. */
 const trim2 = (val: number) => Number(val.toFixed(2))
@@ -90,6 +98,8 @@ function Rich({ text }: { text: string }) {
 export function AbTest() {
   const [live, setLive] = useState(true)
   const { data, refetch } = useAbTestData(live)
+  const [tier] = useAccountTier()
+  const [includeRebates] = useIncludeRebates()
   const control = useBotControl(live)
   const startCandidate = useStartAbCandidate()
   const stopCandidate = useStopAbCandidate()
@@ -303,6 +313,9 @@ export function AbTest() {
                   <>Rejection boundary <Var>{'\\mu_{crit} pending'}</Var><span className="text-faint"> — computed once both arms have active samples</span></>
                 )}
               </p>
+              <p className="mt-1 text-[11px] leading-relaxed text-faint">
+                Raw settled-window PnL, all-time, rebates excluded — compare with the dashboard&apos;s &ldquo;Net before rebates&rdquo; tile, not the headline Net P&amp;L (which adds rebates and follows the dashboard&apos;s timeframe and verified-only scope).
+              </p>
             </div>
 
             {/* Target Sample Size Progress Gauge + multi-dimensional target breakdown */}
@@ -471,6 +484,11 @@ export function AbTest() {
                 <p className={cx('mt-0.5 font-mono text-[15px] font-bold', (baseline?.netPnl ?? 0) < 0 ? 'text-danger' : 'text-success')}>
                   {money(baseline?.netPnl)}
                 </p>
+                {baseline?.samples ? (
+                  <p className="mt-0.5 font-mono text-[11px] text-muted" title={`Rebates at ${tier.name} tier${includeRebates ? '' : ' (excluded)'}`}>
+                    with rebates {money(baseline.netPnl + armRebate(baseline, tier.rate, includeRebates))} · mean {money((baseline.netPnl + armRebate(baseline, tier.rate, includeRebates)) / baseline.samples, 4)}
+                  </p>
+                ) : null}
               </div>
             </div>
 
@@ -538,6 +556,11 @@ export function AbTest() {
                 <p className={cx('mt-0.5 font-mono text-[15px] font-bold', (candidate?.netPnl ?? 0) < 0 ? 'text-danger' : (candidate?.samples ?? 0) > 0 ? 'text-success' : 'text-muted')}>
                   {candidate?.samples ? money(candidate.netPnl) : 'Pending'}
                 </p>
+                {candidate?.samples ? (
+                  <p className="mt-0.5 font-mono text-[11px] text-muted" title={`Rebates at ${tier.name} tier${includeRebates ? '' : ' (excluded)'}`}>
+                    with rebates {money(candidate.netPnl + armRebate(candidate, tier.rate, includeRebates))} · mean {money((candidate.netPnl + armRebate(candidate, tier.rate, includeRebates)) / candidate.samples, 4)}
+                  </p>
+                ) : null}
               </div>
             </div>
 
