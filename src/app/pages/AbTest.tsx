@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import {
   AlertCircle,
   BarChart3,
+  Check,
   FlaskConical,
   Play,
   RefreshCw,
@@ -9,6 +10,8 @@ import {
   Sparkles,
   Square,
 } from 'lucide-react'
+import katex from 'katex'
+import 'katex/dist/katex.min.css'
 
 import {
   useAbTestData,
@@ -21,8 +24,10 @@ import { Badge, Button, Card, PageHeader, useToast } from '../components/ui'
 import { cx } from '../lib/cx'
 import { tweakCards } from '../strategyCopy'
 
+const { abs, max, min, ceil, round } = globalThis.Math
+
 const money = (val: number | null | undefined, digits = 2) =>
-  val == null ? '—' : `${val < 0 ? '−' : val > 0 ? '+' : ''}$${Math.abs(val).toFixed(digits)}`
+  val == null ? '—' : `${val < 0 ? '−' : val > 0 ? '+' : ''}$${abs(val).toFixed(digits)}`
 
 const pct = (val: number | null | undefined) =>
   val == null ? '—' : `${(val * 100).toFixed(1)}%`
@@ -37,62 +42,27 @@ const armRebate = (
 /** Kill float noise: 36.980000000000004 → 36.98, 135 → 135. */
 const trim2 = (val: number) => Number(val.toFixed(2))
 
-const TEX: Record<string, string> = {
-  '\\alpha': 'α', '\\beta': 'β', '\\mu': 'μ', '\\sigma': 'σ', '\\ge': '≥', '\\le': '≤',
-  '\\geq': '≥', '\\leq': '≤', '\\ne': '≠', '\\to': '→', '\\cdot': '·', '\\times': '×',
+interface MathProps {
+  tex: string
+  className?: string
 }
 
-/** Unicode subscript digits, so `H_0` renders as H₀ instead of a boxed zero. */
-const SUB_DIGIT: Record<string, string> = {
-  '0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄',
-  '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉',
-}
+/** Clean KaTeX math renderer without regex shrinking or partial bolding. */
+function Math({ tex, className }: MathProps) {
+  const html = useMemo(() => {
+    try {
+      return katex.renderToString(tex, { throwOnError: false })
+    } catch {
+      return tex
+    }
+  }, [tex])
 
-/** Math convention: variables italic, numerals upright. */
-function mathRuns(text: string, key: string): React.ReactNode[] {
-  return text.split(/(\d+(?:[.,]\d+)*)/g).filter(Boolean).map((run, i) =>
-    /^\d/.test(run) ? <span key={`${key}-${i}`} className="not-italic">{run}</span> : run
+  return (
+    <span
+      className={cx('inline-flex items-baseline font-normal', className)}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
   )
-}
-
-/** Render a math-like token: Greek/TeX → Unicode, `x_{sub}`/`x_sub` → subscript. Serif italic math, no chip box. */
-function Var({ children }: { children: string }) {
-  const src = children.replace(/\\[a-zA-Z]+/g, (m) => TEX[m] ?? m)
-  const parts: React.ReactNode[] = []
-  const re = /_(\{[^}]+\}|[A-Za-z0-9._]*[A-Za-z0-9])/g
-  let last = 0
-  let m: RegExpExecArray | null
-  while ((m = re.exec(src))) {
-    if (m.index > last) parts.push(...mathRuns(src.slice(last, m.index), `t${m.index}`))
-    const sub = m[1].replace(/^\{|\}$/g, '')
-    parts.push(
-      /^\d+$/.test(sub)
-        ? <span key={`s${m.index}`} className="not-italic">{sub.replace(/\d/g, (d) => SUB_DIGIT[d])}</span>
-        : <sub key={`s${m.index}`} className={/^[A-Za-z]$/.test(sub) ? undefined : 'not-italic'}>{sub}</sub>
-    )
-    last = m.index + m[0].length
-  }
-  if (last < src.length) parts.push(...mathRuns(src.slice(last), 'tail'))
-  return <span className="mx-px whitespace-nowrap font-serif font-normal italic text-fg">{parts}</span>
-}
-
-// TeX-lite only when a command follows `$`; dollar amounts stay plain text.
-const TOKEN_RE = /(\$\\[a-zA-Z]+[^$]*\$|H[₀₁]|[μσαβ](?:_(?:\{[^}]+\}|[A-Za-z0-9._]*[A-Za-z0-9]))?|\b(?:N|t|p|d|df)(?:_(?:\{[^}]+\}|[A-Za-z0-9]+))?\b(?=[\s,.:;)(=<>≥≤-]|$))/g
-
-/** Inline text with math: `$...$` is TeX-lite; known variables (H₀, μ, α, t, p, N…) are auto-highlighted. */
-function Rich({ text }: { text: string }) {
-  const out: React.ReactNode[] = []
-  let last = 0
-  let m: RegExpExecArray | null
-  const re = new RegExp(TOKEN_RE.source, 'g')
-  while ((m = re.exec(text))) {
-    if (m.index > last) out.push(text.slice(last, m.index))
-    const tok = m[0]
-    out.push(<Var key={m.index}>{tok.startsWith('$') ? tok.slice(1, -1) : tok}</Var>)
-    last = m.index + tok.length
-  }
-  if (last < text.length) out.push(text.slice(last))
-  return <>{out}</>
 }
 
 export function AbTest() {
@@ -137,8 +107,48 @@ export function AbTest() {
   const tw = tweakCards(candidate ?? null)
   const baselineLabel = baseline?.name ?? 'Baseline'
   const stats = data?.statistics
-  const hypotheses = data?.hypotheses
   const histogram = data?.histogram ?? []
+
+  const cleanSub = (name: string | undefined, fallback: string): string => {
+    if (!name) return fallback
+    const m = name.match(/v\d+(\.\d+)*/i)
+    if (m) return m[0].toLowerCase()
+    return fallback
+  }
+  const subB = cleanSub(candidate?.name, 'v1.1')
+  const subA = cleanSub(baseline?.name, 'v1.0')
+
+  const candidateActive = candidate?.activeWindows ?? candidate?.samples ?? 0
+  const baselineActive = baseline?.activeWindows ?? baseline?.samples ?? 0
+  const targetN = stats?.targetSampleSize ?? 120
+  const activePct = targetN > 0 ? (candidateActive / targetN) * 100 : 0
+
+  const candidatePaired = candidate?.pairedWindows ?? 0
+  const baselinePaired = baseline?.pairedWindows ?? 0
+  const targetPaired = stats?.targetPaired ?? 60
+  const pairedPct = targetPaired > 0 ? (candidatePaired / targetPaired) * 100 : 0
+
+  const candidateSubDollar = candidate?.subDollarPairs ?? 0
+  const baselineSubDollar = baseline?.subDollarPairs ?? 0
+  const targetSubDollar = stats?.targetSubDollar ?? 35
+  const subDollarPct = candidatePaired > 0 ? ((candidateSubDollar / candidatePaired) * 100).toFixed(0) : '0'
+  const subDollarProgressPct = targetSubDollar > 0 ? (candidateSubDollar / targetSubDollar) * 100 : 0
+
+  const isPassingMu = Boolean(
+    stats?.muCritical != null &&
+    candidate != null &&
+    (candidate.samples ?? 0) > 0 &&
+    candidate.meanPnl >= stats.muCritical
+  )
+
+  const gate1ActiveMet = candidateActive >= targetN
+  const gate2PairsMet = candidatePaired >= targetPaired && candidateSubDollar >= targetSubDollar
+  const gate3StatsMet = Boolean(
+    stats &&
+    stats.tCritical != null &&
+    stats.tStatistic >= stats.tCritical &&
+    stats.pValue <= stats.alpha
+  )
 
   // Histogram view: normalized % of active windows (default) vs raw counts,
   // so unequal N_A vs N_B stay directly comparable.
@@ -167,11 +177,11 @@ export function AbTest() {
   // the last bin high.
   const histLo = histogram.length > 0 ? histogram[0].range[0] : 0
   const histHi = histogram.length > 0 ? histogram[histogram.length - 1].range[1] : 1
-  const histSpan = Math.max(1, histHi - histLo)
+  const histSpan = max(1, histHi - histLo)
   const valueToXPct = (v: number): number => {
     if (histogram.length === 0) return 0
     const frac = (v - histLo) / histSpan
-    return Math.min(100, Math.max(0, frac * 100))
+    return min(100, max(0, frac * 100))
   }
   // Vertical grid ticks at regular dollar steps ($5, or $10 for wide ranges),
   // always marking $0.
@@ -179,7 +189,7 @@ export function AbTest() {
     if (histogram.length === 0) return [] as number[]
     const step = histSpan > 40 ? 10 : 5
     const ticks: number[] = []
-    for (let t = Math.ceil(histLo / step) * step; t <= histHi; t += step) ticks.push(t)
+    for (let t = ceil(histLo / step) * step; t <= histHi; t += step) ticks.push(t)
     if (!ticks.includes(0) && histLo <= 0 && histHi >= 0) ticks.push(0)
     return ticks.sort((a, b) => a - b)
   }, [histogram, histLo, histHi, histSpan])
@@ -190,20 +200,20 @@ export function AbTest() {
     type RefLine = { key: string; value: number; label: React.ReactNode; title: string; lineClass: string; labelClass: string; dashed: boolean; tier: number }
     const mains: Omit<RefLine, 'tier'>[] = []
     if (baseline != null) {
-      mains.push({ key: 'muA', value: baseline.meanPnl, label: <><Var>μ_A</Var> ${baseline.meanPnl.toFixed(2)}</>, title: `μ_A $${baseline.meanPnl.toFixed(2)}`, lineClass: 'bg-slate-400', labelClass: 'text-muted ring-line', dashed: true })
+      mains.push({ key: 'muA', value: baseline.meanPnl, label: <><Math tex="\mu_A" /> ${baseline.meanPnl.toFixed(2)}</>, title: `μ_A $${baseline.meanPnl.toFixed(2)}`, lineClass: 'bg-slate-400', labelClass: 'text-muted ring-line', dashed: true })
     }
     if (candidate != null && (candidate.samples ?? 0) > 0) {
-      mains.push({ key: 'muB', value: candidate.meanPnl, label: <><Var>μ_B</Var> ${candidate.meanPnl.toFixed(2)}</>, title: `μ_B $${candidate.meanPnl.toFixed(2)}`, lineClass: 'bg-emerald-500', labelClass: 'text-emerald-600 ring-emerald-500/30', dashed: false })
+      mains.push({ key: 'muB', value: candidate.meanPnl, label: <><Math tex="\mu_B" /> ${candidate.meanPnl.toFixed(2)}</>, title: `μ_B $${candidate.meanPnl.toFixed(2)}`, lineClass: 'bg-emerald-500', labelClass: 'text-emerald-600 ring-emerald-500/30', dashed: false })
     }
     if (stats?.muCritical != null) {
-      mains.push({ key: 'mucrit', value: stats.muCritical, label: <><Var>μ_crit</Var> ${stats.muCritical.toFixed(2)}</>, title: `μ_crit $${stats.muCritical.toFixed(2)}`, lineClass: 'bg-danger', labelClass: 'text-danger ring-danger/40', dashed: false })
+      mains.push({ key: 'mucrit', value: stats.muCritical, label: <><Math tex="\mu_{\text{crit}}" /> ${stats.muCritical.toFixed(2)}</>, title: `μ_crit $${stats.muCritical.toFixed(2)}`, lineClass: 'bg-danger', labelClass: 'text-danger ring-danger/40', dashed: false })
     }
     const withX = mains.map((l) => ({ ...l, x: valueToXPct(l.value) })).sort((a, b) => a.x - b.x)
     let tier = 0
     let prevX: number | null = null
     return withX.map((l) => {
-      if (prevX != null && Math.abs(l.x - prevX) < 8) tier = Math.min(2, tier + 1)
-      else if (prevX != null && Math.abs(l.x - prevX) >= 8 && tier > 0) tier = Math.max(0, tier - 1)
+      if (prevX != null && abs(l.x - prevX) < 8) tier = min(2, tier + 1)
+      else if (prevX != null && abs(l.x - prevX) >= 8 && tier > 0) tier = max(0, tier - 1)
       prevX = l.x
       return { ...l, tier }
     })
@@ -211,21 +221,21 @@ export function AbTest() {
   }, [baseline, candidate, stats, histLo, histSpan])
   // Faint spread markers: quartiles P25/P50/P75 and ±1σ (~68%) per arm.
   const spreadLines = useMemo(() => {
-    type Spread = { key: string; value: number; label: string; title: string; arm: 'A' | 'B' }
+    type Spread = { key: string; value: number; label: React.ReactNode; title: string; arm: 'A' | 'B' }
     const out: Spread[] = []
     if (baseline != null && (baseline.samples ?? 0) >= 3) {
-      if (baseline.q25Pnl != null) out.push({ key: 'q25A', value: baseline.q25Pnl, label: 'P25_A', title: `Baseline P25 $${baseline.q25Pnl.toFixed(2)}`, arm: 'A' })
-      if (baseline.medianPnl != null) out.push({ key: 'p50A', value: baseline.medianPnl, label: 'P50_A', title: `Baseline P50 $${Number(baseline.medianPnl).toFixed(2)}`, arm: 'A' })
-      if (baseline.q75Pnl != null) out.push({ key: 'q75A', value: baseline.q75Pnl, label: 'P75_A', title: `Baseline P75 $${baseline.q75Pnl.toFixed(2)}`, arm: 'A' })
-      if (baseline.meanMinusStd != null) out.push({ key: 'm1A', value: baseline.meanMinusStd, label: '−1σ_A', title: `Baseline −1σ $${baseline.meanMinusStd.toFixed(2)}`, arm: 'A' })
-      if (baseline.meanPlusStd != null) out.push({ key: 'p1A', value: baseline.meanPlusStd, label: '+1σ_A', title: `Baseline +1σ $${baseline.meanPlusStd.toFixed(2)}`, arm: 'A' })
+      if (baseline.q25Pnl != null) out.push({ key: 'q25A', value: baseline.q25Pnl, label: <Math tex="P_{25,A}" className="text-[10px]" />, title: `Baseline P25 $${baseline.q25Pnl.toFixed(2)}`, arm: 'A' })
+      if (baseline.medianPnl != null) out.push({ key: 'p50A', value: baseline.medianPnl, label: <Math tex="P_{50,A}" className="text-[10px]" />, title: `Baseline P50 $${Number(baseline.medianPnl).toFixed(2)}`, arm: 'A' })
+      if (baseline.q75Pnl != null) out.push({ key: 'q75A', value: baseline.q75Pnl, label: <Math tex="P_{75,A}" className="text-[10px]" />, title: `Baseline P75 $${baseline.q75Pnl.toFixed(2)}`, arm: 'A' })
+      if (baseline.meanMinusStd != null) out.push({ key: 'm1A', value: baseline.meanMinusStd, label: <Math tex="-1\sigma_A" className="text-[10px]" />, title: `Baseline −1σ $${baseline.meanMinusStd.toFixed(2)}`, arm: 'A' })
+      if (baseline.meanPlusStd != null) out.push({ key: 'p1A', value: baseline.meanPlusStd, label: <Math tex="+1\sigma_A" className="text-[10px]" />, title: `Baseline +1σ $${baseline.meanPlusStd.toFixed(2)}`, arm: 'A' })
     }
     if (candidate != null && (candidate.samples ?? 0) >= 3) {
-      if (candidate.q25Pnl != null) out.push({ key: 'q25B', value: candidate.q25Pnl, label: 'P25_B', title: `Candidate P25 $${candidate.q25Pnl.toFixed(2)}`, arm: 'B' })
-      if (candidate.medianPnl != null) out.push({ key: 'p50B', value: candidate.medianPnl, label: 'P50_B', title: `Candidate P50 $${Number(candidate.medianPnl).toFixed(2)}`, arm: 'B' })
-      if (candidate.q75Pnl != null) out.push({ key: 'q75B', value: candidate.q75Pnl, label: 'P75_B', title: `Candidate P75 $${candidate.q75Pnl.toFixed(2)}`, arm: 'B' })
-      if (candidate.meanMinusStd != null) out.push({ key: 'm1B', value: candidate.meanMinusStd, label: '−1σ_B', title: `Candidate −1σ $${candidate.meanMinusStd.toFixed(2)}`, arm: 'B' })
-      if (candidate.meanPlusStd != null) out.push({ key: 'p1B', value: candidate.meanPlusStd, label: '+1σ_B', title: `Candidate +1σ $${candidate.meanPlusStd.toFixed(2)}`, arm: 'B' })
+      if (candidate.q25Pnl != null) out.push({ key: 'q25B', value: candidate.q25Pnl, label: <Math tex="P_{25,B}" className="text-[10px]" />, title: `Candidate P25 $${candidate.q25Pnl.toFixed(2)}`, arm: 'B' })
+      if (candidate.medianPnl != null) out.push({ key: 'p50B', value: candidate.medianPnl, label: <Math tex="P_{50,B}" className="text-[10px]" />, title: `Candidate P50 $${Number(candidate.medianPnl).toFixed(2)}`, arm: 'B' })
+      if (candidate.q75Pnl != null) out.push({ key: 'q75B', value: candidate.q75Pnl, label: <Math tex="P_{75,B}" className="text-[10px]" />, title: `Candidate P75 $${candidate.q75Pnl.toFixed(2)}`, arm: 'B' })
+      if (candidate.meanMinusStd != null) out.push({ key: 'm1B', value: candidate.meanMinusStd, label: <Math tex="-1\sigma_B" className="text-[10px]" />, title: `Candidate −1σ $${candidate.meanMinusStd.toFixed(2)}`, arm: 'B' })
+      if (candidate.meanPlusStd != null) out.push({ key: 'p1B', value: candidate.meanPlusStd, label: <Math tex="+1\sigma_B" className="text-[10px]" />, title: `Candidate +1σ $${candidate.meanPlusStd.toFixed(2)}`, arm: 'B' })
     }
     return out
   }, [baseline, candidate])
@@ -273,11 +283,12 @@ export function AbTest() {
         }
       />
 
-      {/* 1. Executive Statistical Verdict Banner */}
-      {stats && (
-        <Card className="relative overflow-hidden border border-line bg-gradient-to-r from-surface to-surface-2 p-5 shadow-xs">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="space-y-1">
+      {/* Top Grid: Section 1 (Statistical Test Status) & Section 2 (Sample Size Progress) */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+        {/* Section 1 — Statistical Test Status (Left 2×2 KPI Grid matching SVG layout) */}
+        <Card className="flex flex-col justify-between p-5 lg:col-span-7">
+          <div>
+            <div className="mb-3.5 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <span className="flex size-7 items-center justify-center rounded-[8px] bg-accent/15 text-accent">
                   <FlaskConical className="size-4" />
@@ -285,6 +296,8 @@ export function AbTest() {
                 <span className="font-mono text-[11px] font-bold uppercase tracking-wider text-muted">
                   Statistical Test Status
                 </span>
+              </div>
+              {stats && (
                 <Badge
                   tone={
                     stats.verdictTone === 'success'
@@ -295,112 +308,317 @@ export function AbTest() {
                           ? 'accent'
                           : 'neutral'
                   }
-                  className="font-medium"
+                  className="font-medium text-[11px]"
                 >
-                  {stats.verdict}
+                  {stats.verdict} ({candidateActive} / {targetN} active)
                 </Badge>
-              </div>
-              <p className="text-[14.5px] font-semibold text-fg">
-                Welch's Two-Sample <Var>t</Var>-Test: <Var>{`t = ${stats.tStatistic.toFixed(3)}`}</Var> vs <Var>{`t_{crit} = ${stats.tCritical != null ? stats.tCritical.toFixed(3) : '—'}`}</Var> (one-tailed, <Var>{`\\alpha = ${stats.alpha}`}</Var>)
-              </p>
-              <p className="text-[12.5px] text-muted">
-                Observed <Var>p</Var>-value: <strong className="font-mono text-fg">{stats.pValue.toFixed(4)}</strong> · Degrees of freedom: <strong className="font-mono text-fg">{stats.degreesOfFreedom.toFixed(1)}</strong> · Cohen's <Var>d</Var>: <strong className="font-mono text-fg">{stats.cohenD.toFixed(3)}</strong>
-              </p>
-              <p className="text-[12.5px] text-muted">
-                {stats.muCritical != null ? (
-                  <>Rejection boundary <Var>{`\\mu_{crit} = $${stats.muCritical.toFixed(4)}`}</Var><span className="text-faint"> — {candidateLabel}&apos;s mean active-window PnL must cross this to reject H0</span></>
-                ) : (
-                  <>Rejection boundary <Var>{'\\mu_{crit} pending'}</Var><span className="text-faint"> — computed once both arms have active samples</span></>
-                )}
-              </p>
-              <p className="mt-1 text-[11px] leading-relaxed text-faint">
-                Raw settled-window PnL, all-time, rebates excluded — compare with the dashboard&apos;s &ldquo;Net before rebates&rdquo; tile, not the headline Net P&amp;L (which adds rebates and follows the dashboard&apos;s timeframe and verified-only scope).
-              </p>
+              )}
             </div>
 
-            {/* Target Sample Size Progress Gauge + multi-dimensional target breakdown */}
-            <div className="min-w-[280px] rounded-tile border border-line-strong bg-surface/80 p-3.5">
-              <div className="flex items-center justify-between text-[12px]">
-                <span className="font-medium text-muted">Sample Size Progress (active N)</span>
-                <span className="font-mono font-bold text-fg">
-                  {candidate?.samples ?? 0} / {stats.targetSampleSize} windows
-                </span>
-              </div>
-              <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-surface-2">
+            {/* 4 Stat Tiles (2x2 Grid) */}
+            {stats ? (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {/* Tile 1: Welch t-Statistic vs Critical */}
+                <div className="flex flex-col justify-between rounded-tile border border-line bg-surface-2/60 p-3">
+                  <span className="text-[11px] font-medium text-muted">Welch t-Statistic vs Critical</span>
+                  <div className="mt-1.5 flex items-baseline gap-2">
+                    <span className="font-mono text-[18px] font-bold text-fg">
+                      <Math tex="t" className="mr-0.5 text-[14px]" /> = {stats.tStatistic.toFixed(2)}
+                    </span>
+                    <span
+                      className={cx(
+                        'text-[13px] font-semibold',
+                        stats.tCritical != null && stats.tStatistic >= stats.tCritical ? 'text-success' : 'text-danger',
+                      )}
+                    >
+                      / {stats.tCritical != null ? stats.tCritical.toFixed(2) : '—'}{' '}
+                      <Math tex="t_{\text{crit}}" className="text-[12px]" />
+                    </span>
+                  </div>
+                  <p className="mt-1 font-mono text-[10.5px] text-faint">
+                    df = {stats.degreesOfFreedom.toFixed(1)} · one-tailed{' '}
+                    <Math tex={`\\alpha = ${stats.alpha}`} className="text-[10.5px]" />
+                  </p>
+                </div>
+
+                {/* Tile 2: Observed p-value */}
+                <div className="flex flex-col justify-between rounded-tile border border-line bg-surface-2/60 p-3">
+                  <span className="text-[11px] font-medium text-muted">Observed p-value</span>
+                  <div className="mt-1.5 flex items-baseline gap-2">
+                    <span className="font-mono text-[18px] font-bold text-fg">
+                      <Math tex="p" className="mr-0.5 text-[14px]" /> = {stats.pValue.toFixed(4)}
+                    </span>
+                    <span className="text-[12px] text-muted">
+                      (need <Math tex="\le 0.05" className="text-[12px]" />)
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[10.5px] text-faint">
+                    Cohen&apos;s d = {stats.cohenD.toFixed(3)} (effect size)
+                  </p>
+                </div>
+
+                {/* Tile 3: Candidate Mean (μ_B) vs μ_crit */}
                 <div
-                  className="h-full rounded-full bg-accent transition-all duration-500"
-                  style={{ width: `${candidate?.progressPct ?? 0}%` }}
-                />
+                  className={cx(
+                    'flex flex-col justify-between rounded-tile border p-3',
+                    stats.muCritical != null && (candidate?.samples ?? 0) > 0
+                      ? isPassingMu
+                        ? 'border-success/40 bg-surface-2/60'
+                        : 'border-danger/40 bg-surface-2/60'
+                      : 'border-line bg-surface-2/60',
+                  )}
+                >
+                  <span className="text-[11px] font-medium text-muted">
+                    Candidate Mean (<Math tex="\mu_B" className="text-[11px]" />) vs Target
+                  </span>
+                  <div className="mt-1.5 flex items-baseline gap-2">
+                    <span
+                      className={cx(
+                        'font-mono text-[18px] font-bold',
+                        (candidate?.samples ?? 0) === 0
+                          ? 'text-muted'
+                          : isPassingMu
+                            ? 'text-success'
+                            : 'text-danger',
+                      )}
+                    >
+                      {(candidate?.samples ?? 0) > 0 ? money(candidate?.meanPnl) : 'Pending'}
+                    </span>
+                    <span className="text-[12px] text-muted">vs</span>
+                    {stats.muCritical != null ? (
+                      <span
+                        className={cx(
+                          'font-mono text-[13px] font-bold',
+                          isPassingMu ? 'text-success' : 'text-danger',
+                        )}
+                      >
+                        {money(stats.muCritical)} <Math tex="\mu_{\text{crit}}" className="text-[12px]" />
+                      </span>
+                    ) : (
+                      <span className="font-mono text-[12px] text-faint">
+                        pending <Math tex="\mu_{\text{crit}}" className="text-[11px]" />
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-1 font-mono text-[10.5px] text-faint">
+                    Baseline <Math tex="\mu_A" className="text-[10.5px]" /> = {money(baseline?.meanPnl)} / window
+                  </p>
+                </div>
+
+                {/* Tile 4: Win Rate & Pair Quality */}
+                <div className="flex flex-col justify-between rounded-tile border border-line bg-surface-2/60 p-3">
+                  <span className="text-[11px] font-medium text-muted">Win Rate & Pair Quality</span>
+                  <div className="mt-1.5 flex items-baseline gap-2">
+                    <span className="font-mono text-[18px] font-bold text-fg">
+                      {(candidate?.samples ?? 0) > 0 ? pct(candidate?.winRate) : '—'}
+                    </span>
+                    <span className="font-mono text-[12px] text-muted">
+                      ({candidate?.wins ?? 0}W / {candidate?.losses ?? 0}L)
+                    </span>
+                  </div>
+                  <p
+                    className={cx(
+                      'mt-1 font-mono text-[10.5px]',
+                      candidateSubDollar > 0 ? 'text-success' : 'text-faint',
+                    )}
+                  >
+                    {subDollarPct}% sub-$1.00 pairs ({candidateSubDollar} / {candidatePaired})
+                  </p>
+                </div>
               </div>
-              <div className="mt-1.5 flex items-center justify-between text-[11px] text-faint">
-                <span>Power: 80% (1 − <Var>β</Var>)</span>
-                <span>{candidate?.progressPct ?? 0}% collected</span>
+            ) : (
+              <div className="py-8 text-center text-[12px] text-muted">
+                Statistical test metrics pending sample data...
               </div>
-              <div className="mt-2.5 space-y-1 border-t border-line/60 pt-2 font-mono text-[11px] leading-relaxed">
-                <div className="flex justify-between">
-                  <span className="font-sans text-muted">Observed (loop on, info)</span>
-                  <span className="text-fg">A {baseline?.observedWindows ?? 0} · B {candidate?.observedWindows ?? 0}</span>
+            )}
+          </div>
+
+          <p className="mt-3 text-[10.5px] leading-relaxed text-faint">
+            Raw settled-window PnL before rebates — compare with dashboard &ldquo;Net before rebates&rdquo; tile.
+          </p>
+        </Card>
+
+        {/* Section 2 — Sample Size Progress (Right Panel with 3 Visual Progress Bars) */}
+        <Card className="flex flex-col justify-between p-5 lg:col-span-5">
+          <div>
+            <div className="mb-3.5 flex items-center justify-between gap-2">
+              <span className="font-mono text-[11px] font-bold uppercase tracking-wider text-muted">
+                Sample Gates (B vs Baseline A)
+              </span>
+              <span className="font-mono text-[11px] text-faint">
+                Power: 80% (1 − <Math tex="\beta" className="text-[11px]" />)
+              </span>
+            </div>
+
+            {/* 3 Clean Progress Bars */}
+            <div className="space-y-3.5">
+              {/* Bar 1: Active Windows (fills > 0) */}
+              <div>
+                <div className="mb-1 flex items-center justify-between text-[12px]">
+                  <span className="font-medium text-fg">Active Windows</span>
+                  <span className="font-mono text-[11px] text-muted">
+                    <span className="font-semibold text-fg">B: {candidateActive}</span> / {targetN}
+                    <span className="text-faint"> · </span>
+                    <span>A: {baselineActive}</span>
+                  </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="font-sans text-muted">Active traded N (fills&gt;0)</span>
-                  <span className="text-fg">A {baseline?.activeWindows ?? baseline?.samples ?? 0} · B {candidate?.activeWindows ?? candidate?.samples ?? 0}/{stats.targetSampleSize}</span>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-surface-2">
+                  <div
+                    className={cx(
+                      'h-full rounded-full transition-all duration-500',
+                      activePct >= 100 ? 'bg-success' : 'bg-accent',
+                    )}
+                    style={{ width: `${min(100, activePct)}%` }}
+                  />
                 </div>
-                <div className="flex justify-between">
-                  <span className="font-sans text-muted">Paired (up&amp;down &gt;0)</span>
-                  <span className="text-fg">A {baseline?.pairedWindows ?? 0} · B {candidate?.pairedWindows ?? 0}/{stats.targetPaired ?? 60}</span>
+              </div>
+
+              {/* Bar 2: Paired Windows */}
+              <div>
+                <div className="mb-1 flex items-center justify-between text-[12px]">
+                  <span className="font-medium text-fg">Paired Windows</span>
+                  <span className="font-mono text-[11px] text-muted">
+                    <span className="font-semibold text-fg">B: {candidatePaired}</span> / {targetPaired}
+                    <span className="text-faint"> · </span>
+                    <span>A: {baselinePaired}</span>
+                  </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="font-sans text-muted">Sub-$1.00 pairs</span>
-                  <span className="text-fg">A {baseline?.subDollarPairs ?? 0} · B {candidate?.subDollarPairs ?? 0}/{stats.targetSubDollar ?? 35}+</span>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-surface-2">
+                  <div
+                    className={cx(
+                      'h-full rounded-full transition-all duration-500',
+                      pairedPct >= 100 ? 'bg-success' : 'bg-accent',
+                    )}
+                    style={{ width: `${min(100, pairedPct)}%` }}
+                  />
                 </div>
-                <div className="flex justify-between text-faint">
-                  <span className="font-sans">Pair-cost buckets B</span>
-                  <span>&lt;$0.96 {candidate?.pairCostUnder096 ?? 0} · $0.96–$1.00 {candidate?.pairCost096to100 ?? 0} · &gt;$1.00 {candidate?.pairCostOver100 ?? 0}</span>
+              </div>
+
+              {/* Bar 3: Sub-$1.00 Pairs */}
+              <div>
+                <div className="mb-1 flex items-center justify-between text-[12px]">
+                  <span className="font-medium text-fg">Sub-$1.00 Pairs</span>
+                  <span className="font-mono text-[11px] text-muted">
+                    <span className="font-semibold text-fg">B: {candidateSubDollar}</span> / {targetSubDollar}+
+                    <span className="text-faint"> · </span>
+                    <span>A: {baselineSubDollar}</span>
+                  </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="font-sans text-muted">Profitable / Losing (active)</span>
-                  <span className="text-fg">A {baseline?.wins ?? 0}W/{baseline?.losses ?? 0}L · B {candidate?.wins ?? 0}W/{candidate?.losses ?? 0}L</span>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-surface-2">
+                  <div
+                    className="h-full rounded-full bg-success transition-all duration-500"
+                    style={{ width: `${min(100, subDollarProgressPct)}%` }}
+                  />
                 </div>
-                <div className="flex justify-between text-faint">
-                  <span className="font-sans">Locked shares / pairs merged</span>
-                  <span>B {(candidate?.totalLockedShares ?? 0).toFixed(1)} / {(candidate?.pairsMerged ?? 0).toFixed(1)}</span>
-                </div>
+              </div>
+            </div>
+
+            {/* Compact 2-line summary strip */}
+            <div className="mt-4 space-y-0.5 rounded-tile border border-line bg-surface-2/60 p-2.5 font-mono text-[10.5px] leading-relaxed">
+              <div className="text-muted">
+                Buckets: &lt;$0.96 ({candidate?.pairCostUnder096 ?? 0}) · $0.96–$1.00 ({candidate?.pairCost096to100 ?? 0}) · &gt;$1.00 ({candidate?.pairCostOver100 ?? 0})
+              </div>
+              <div className="text-faint">
+                Observed: B {candidate?.observedWindows ?? 0} / A {baseline?.observedWindows ?? 0} · Merged: {(candidate?.pairsMerged ?? 0).toFixed(1)} pairs
               </div>
             </div>
           </div>
         </Card>
-      )}
+      </div>
 
-      {/* 2. Formal Hypothesis & Scientific Design Specification */}
+      {/* Section 3 — Formal Scientific Hypothesis & Decision Boundary */}
       <Card className="p-5">
         <div className="mb-4 flex items-center gap-2">
           <Scale className="size-4 text-accent" />
-          <h2 className="text-[15px] font-semibold text-fg">Formal Scientific Hypothesis & Decision Boundary</h2>
+          <h2 className="text-[15px] font-semibold text-fg">
+            Formal Scientific Hypothesis &amp; Decision Boundary
+          </h2>
         </div>
 
         <div className="grid gap-3.5 md:grid-cols-2">
-          <div className="rounded-tile border border-line bg-surface-2/40 p-4">
-            <span className="inline-flex items-center gap-1.5 font-mono text-[11px] font-bold uppercase tracking-wider text-danger">
-              <AlertCircle className="size-3.5" /> Null Hypothesis (<Var>H_0</Var>)
-            </span>
-            <p className="mt-1.5 text-[13px] font-medium leading-relaxed text-fg">
-              <Rich text={hypotheses?.nullHypothesis ?? 'H₀: μ_Hydrogen_v1.1 ≤ μ_Hydrogen_v1.0 (and ≤ 0) — Hydrogen v1.1 produces no statistically significant improvement in mean active-window PnL over Hydrogen v1.0.'} />
-            </p>
-            <p className="mt-1 text-[11.5px] leading-relaxed text-muted">
-              Any observed difference in window PnL is attributed to random microstructure variance or market drift.
+          {/* H0 Card */}
+          <div className="flex flex-col justify-between rounded-tile border border-danger/30 bg-surface-2/40 p-4">
+            <div>
+              <span className="inline-flex items-center gap-1.5 font-mono text-[11px] font-bold uppercase tracking-wider text-danger">
+                <AlertCircle className="size-3.5" />
+                <Math tex="H_0" className="text-[11px]" /> · STAY ON {baselineLabel.toUpperCase()}
+              </span>
+              <div className="mt-3">
+                <Math
+                  tex={`H_0: \\mu_{${subB}} \\le \\mu_{${subA}} \\;\\text{or}\\; \\mu_{${subB}} \\le 0`}
+                  className="text-[16px] font-semibold text-fg sm:text-[17px]"
+                />
+              </div>
+            </div>
+            <p className="mt-3 text-[11.5px] leading-relaxed text-muted">
+              Default state if <Math tex="t < t_{\\text{crit}}" className="text-[11.5px]" /> or any sample gate is unmet.
             </p>
           </div>
 
-          <div className="rounded-tile border border-line bg-surface-2/40 p-4">
-            <span className="inline-flex items-center gap-1.5 font-mono text-[11px] font-bold uppercase tracking-wider text-success">
-              <Sparkles className="size-3.5" /> Alternative Hypothesis (<Var>H_1</Var>)
-            </span>
-            <p className="mt-1.5 text-[13px] font-medium leading-relaxed text-fg">
-              <Rich text={hypotheses?.altHypothesis ?? 'H₁: μ_Hydrogen_v1.1 > μ_Hydrogen_v1.0 and > 0 — Hydrogen v1.1 achieves a statistically significant positive expected return per active window and outperforms Hydrogen v1.0 at α = 0.05.'} />
-            </p>
-            <p className="mt-1 text-[11.5px] leading-relaxed text-muted">
-              <Rich text={hypotheses?.decisionRule ?? 'Reject H0 only when t >= t_crit(df) (p <= 0.05) AND the candidate reaches N = 120 active windows, 60 paired windows, and 35+ sub-$1.00 pairs.'} />
-            </p>
+          {/* H1 Card */}
+          <div className="flex flex-col justify-between rounded-tile border border-success/30 bg-surface-2/40 p-4">
+            <div>
+              <span className="inline-flex items-center gap-1.5 font-mono text-[11px] font-bold uppercase tracking-wider text-success">
+                <Sparkles className="size-3.5" />
+                <Math tex="H_1" className="text-[11px]" /> · PROMOTE {candidateLabel.toUpperCase()} (ALL 3 REQUIRED)
+              </span>
+              <div className="mt-3">
+                <Math
+                  tex={`H_1: \\mu_{${subB}} > \\mu_{${subA}} \\;\\text{and}\\; \\mu_{${subB}} > 0`}
+                  className="text-[16px] font-semibold text-fg sm:text-[17px]"
+                />
+              </div>
+            </div>
+
+            {/* 3 Live Checkable Gate Pills */}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {/* Gate 1 */}
+              <span
+                className={cx(
+                  'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11px] transition-colors',
+                  gate1ActiveMet
+                    ? 'border-success/40 bg-success/15 font-semibold text-success'
+                    : 'border-line bg-surface/80 text-muted',
+                )}
+              >
+                {gate1ActiveMet ? <Check className="size-3 text-success" /> : <span className="size-1.5 rounded-full bg-muted/60" />}
+                <span>
+                  Active <Math tex={`N \\ge ${targetN}`} className="text-[11px]" />
+                </span>
+              </span>
+
+              {/* Gate 2 */}
+              <span
+                className={cx(
+                  'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11px] transition-colors',
+                  gate2PairsMet
+                    ? 'border-success/40 bg-success/15 font-semibold text-success'
+                    : 'border-line bg-surface/80 text-muted',
+                )}
+              >
+                {gate2PairsMet ? <Check className="size-3 text-success" /> : <span className="size-1.5 rounded-full bg-muted/60" />}
+                <span>
+                  Paired <Math tex={`\\ge ${targetPaired}`} className="text-[11px]" /> &amp; Sub-$1{' '}
+                  <Math tex={`\\ge ${targetSubDollar}`} className="text-[11px]" />
+                </span>
+              </span>
+
+              {/* Gate 3 */}
+              <span
+                className={cx(
+                  'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11px] transition-colors',
+                  gate3StatsMet
+                    ? 'border-success/40 bg-success/15 font-semibold text-success'
+                    : 'border-line bg-surface/80 text-muted',
+                )}
+              >
+                {gate3StatsMet ? <Check className="size-3 text-success" /> : <span className="size-1.5 rounded-full bg-muted/60" />}
+                <span>
+                  <Math tex="t \\ge t_{\\text{crit}}" className="text-[11px]" /> &amp;{' '}
+                  <Math tex="p \\le 0.05" className="text-[11px]" />
+                </span>
+              </span>
+            </div>
           </div>
         </div>
 
@@ -416,9 +634,7 @@ export function AbTest() {
                 <Badge tone="success" className="text-[10px]">{tw[0].badge}</Badge>
               </div>
               <p className="mt-1 text-[12.5px] font-semibold text-fg">{tw[0].title}</p>
-              <p className="mt-1 text-[11px] text-muted">
-                {tw[0].body}
-              </p>
+              <p className="mt-1 text-[11px] text-muted">{tw[0].body}</p>
             </div>
 
             <div className="rounded-[9px] border border-line bg-surface p-3">
@@ -427,9 +643,7 @@ export function AbTest() {
                 <Badge tone="accent" className="text-[10px]">{tw[1].badge}</Badge>
               </div>
               <p className="mt-1 text-[12.5px] font-semibold text-fg">{tw[1].title}</p>
-              <p className="mt-1 text-[11px] text-muted">
-                {tw[1].body}
-              </p>
+              <p className="mt-1 text-[11px] text-muted">{tw[1].body}</p>
             </div>
 
             <div className="rounded-[9px] border border-line bg-surface p-3">
@@ -438,9 +652,7 @@ export function AbTest() {
                 <Badge tone="info" className="text-[10px]">{tw[2].badge}</Badge>
               </div>
               <p className="mt-1 text-[12.5px] font-semibold text-fg">{tw[2].title}</p>
-              <p className="mt-1 text-[11px] text-muted">
-                {tw[2].body}
-              </p>
+              <p className="mt-1 text-[11px] text-muted">{tw[2].body}</p>
             </div>
           </div>
         </div>
@@ -486,7 +698,7 @@ export function AbTest() {
                 </p>
                 {baseline?.samples ? (
                   <p className="mt-0.5 font-mono text-[11px] text-muted" title={`Rebates at ${tier.name} tier${includeRebates ? '' : ' (excluded)'}`}>
-                    with rebates {money(baseline.netPnl + armRebate(baseline, tier.rate, includeRebates))}
+                    with rebates {money(baseline.netPnl + armRebate(baseline, tier.rate, includeRebates))} · mean {money((baseline.netPnl + armRebate(baseline, tier.rate, includeRebates)) / baseline.samples, 4)}
                   </p>
                 ) : null}
               </div>
@@ -498,7 +710,7 @@ export function AbTest() {
                 <span className="font-mono font-medium text-fg">{baseline?.meanPairCost ? `$${baseline.meanPairCost.toFixed(4)}` : '—'}</span>
               </div>
               <div className="flex justify-between border-b border-line/60 pb-1">
-                <span className="text-muted">Standard Deviation (<Var>s_A</Var>)</span>
+                <span className="text-muted">Standard Deviation (<Math tex="s_A" />)</span>
                 <span className="font-mono font-medium text-fg">{baseline?.stdPnl ? `$${baseline.stdPnl.toFixed(4)}` : '—'}</span>
               </div>
               <div className="flex justify-between border-b border-line/60 pb-1">
@@ -533,7 +745,7 @@ export function AbTest() {
 
             <div className="grid grid-cols-2 gap-2.5 pt-2 sm:grid-cols-4">
               <div className="rounded-[8px] bg-surface-2/60 p-2.5">
-                <span className="text-[11px] text-muted">Samples (<Var>N_B</Var>)</span>
+                <span className="text-[11px] text-muted">Samples (<Math tex="N_B" />)</span>
                 <p className="mt-0.5 font-mono text-[15px] font-bold text-fg">
                   {candidate?.samples ?? 0}
                   <span className="text-[11px] text-faint"> / {stats?.targetSampleSize}</span>
@@ -572,7 +784,7 @@ export function AbTest() {
                 </span>
               </div>
               <div className="flex justify-between border-b border-line/60 pb-1">
-                <span className="text-muted">Standard Deviation (<Var>s_B</Var>)</span>
+                <span className="text-muted">Standard Deviation (<Math tex="s_B" />)</span>
                 <span className="font-mono font-medium text-fg">
                   {candidate?.samples && candidate.stdPnl ? `$${candidate.stdPnl.toFixed(4)}` : 'Pending'}
                 </span>
@@ -667,7 +879,7 @@ export function AbTest() {
               <div key={t} className="pointer-events-none absolute inset-x-0" style={{ bottom: `calc(1.5rem + ${t}% * 0.01 * (100% - 5.5rem))` }}>
                 <div className="border-t border-dashed border-line/70" />
                 <span className="absolute -top-2 left-0 font-mono text-[10px] text-faint">
-                  {normalized ? `${(maxBinPct * (t / 100)).toFixed(1)}%` : `${Math.round(maxBinCount * (t / 100))}`}
+                  {normalized ? `${(maxBinPct * (t / 100)).toFixed(1)}%` : `${round(maxBinCount * (t / 100))}`}
                 </span>
               </div>
             ))}
@@ -726,9 +938,9 @@ export function AbTest() {
                     </div>
                     <div className="flex h-full items-end justify-center gap-[2px] px-px">
                       {/* Baseline A slate stick */}
-                      <div className={cx('w-[3px] min-w-[3px] max-w-[4px] rounded-t-[1px] bg-muted/40', !showA && 'opacity-0')} style={{ height: showA && bin.baselineCount > 0 ? `${Math.max(3, hA)}%` : '0%' }} />
+                      <div className={cx('w-[3px] min-w-[3px] max-w-[4px] rounded-t-[1px] bg-muted/40', !showA && 'opacity-0')} style={{ height: showA && bin.baselineCount > 0 ? `${max(3, hA)}%` : '0%' }} />
                       {/* Candidate B emerald/accent stick */}
-                      <div className={cx('w-[3px] min-w-[3px] max-w-[4px] rounded-t-[1px]', isPositive ? 'bg-success' : 'bg-accent', !showB && 'opacity-0')} style={{ height: showB && bin.candidateCount > 0 ? `${Math.max(3, hB)}%` : '0%' }} />
+                      <div className={cx('w-[3px] min-w-[3px] max-w-[4px] rounded-t-[1px]', isPositive ? 'bg-success' : 'bg-accent', !showB && 'opacity-0')} style={{ height: showB && bin.candidateCount > 0 ? `${max(3, hB)}%` : '0%' }} />
                     </div>
                   </div>
                 )
@@ -760,7 +972,7 @@ export function AbTest() {
                 className="absolute -translate-x-1/2 whitespace-nowrap font-mono"
                 style={{ left: `${valueToXPct(t)}%` }}
               >
-                {t === 0 ? '$0' : `${t > 0 ? '$' : '−$'}${Math.abs(t)}`}
+                {t === 0 ? '$0' : `${t > 0 ? '$' : '−$'}${abs(t)}`}
               </span>
             ))}
           </div>
