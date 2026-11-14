@@ -812,12 +812,25 @@ export function Dashboard() {
 
         <div className="mt-3 divide-y divide-line">
           {(data?.gate ?? []).map((row) => (
-            <div key={row.key} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5">
+            <div
+              key={row.key}
+              className={cx(
+                'flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5',
+                row.big && 'rounded-tile bg-surface-2/30 px-3 py-3',
+              )}
+            >
               <div className="min-w-0 flex-1">
-                <p className="text-[13px]">{row.label}</p>
+                <p className={cx('text-[13px]', row.big && 'font-semibold')}>{row.label}</p>
                 <p className="text-[11.5px] text-faint">{row.detail}</p>
               </div>
-              <span className="tabular-nums text-[13px] font-medium">{row.value}</span>
+              <span
+                className={cx(
+                  'tabular-nums font-medium',
+                  row.big ? 'text-[20px] font-semibold tracking-[-0.02em]' : 'text-[13px]',
+                )}
+              >
+                {row.value}
+              </span>
               {row.status === 'stat' ? (
                 <span className="w-[74px] text-right text-[11.5px] text-faint">stat</span>
               ) : (

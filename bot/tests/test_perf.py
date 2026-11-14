@@ -88,8 +88,11 @@ class PerfTests(unittest.TestCase):
         rows = {row["key"]: row for row in perf["gate"]}
 
         self.assertNotIn("target", rows["paired"])
-        self.assertEqual(rows["paired"]["value"], "1 windows · 90.0¢")
+        self.assertEqual(rows["paired"]["value"], "1 windows · 14 sh")
         self.assertEqual(rows["paired"]["status"], "pass")
+        # 30 Up shares at 50c plus 14 Down shares at 40c; the $0.00 Up fill holds nothing.
+        self.assertEqual(rows["totalShares"]["value"], "44 sh")
+        self.assertTrue(rows["totalShares"]["big"])
         self.assertEqual(rows["bothSides"]["status"], "pass")
         self.assertEqual(rows["zeroPrice"]["status"], "fail")
         self.assertEqual(rows["attainable"]["value"], "50%")

@@ -1125,6 +1125,15 @@ def perf() -> dict:
     single_windows = [w for w in settled if w["singleSide"]]
     single_shares = [w["singleShares"] for w in single_windows]
 
+    # Shares, not fills: a pair is made of the smaller side, so every share
+    # above that minimum is a share nobody paired.
+    up_shares_total = sum(w["upShares"] for w in settled)
+    down_shares_total = sum(w["downShares"] for w in settled)
+    total_shares = up_shares_total + down_shares_total
+    net_side_diff = up_shares_total - down_shares_total
+    unpaired_total = sum(abs(w["upShares"] - w["downShares"]) for w in settled)
+    unpaired_in_two_sided = unpaired_total - sum(single_shares)
+
     gate = [
         {"key": "windows", "label": "Windows traded",
          "value": f"{len(settled)}", "status": "stat",
@@ -1139,19 +1148,27 @@ def perf() -> dict:
              else "The loop only started counting posted and cancelled orders recently, so the "
                   "windows before it have no number to show."
          )},
+        {"key": "totalShares", "label": "Total shares filled", "big": True,
+         "value": f"{total_shares:,.0f} sh",
+         "status": "stat",
+         "detail": (
+             f"Up {up_shares_total:,.0f} · Down {down_shares_total:,.0f} over "
+             f"{up_stats['count'] + down_stats['count']:,} fills. A pair takes the smaller side, "
+             f"so the two sides differ by {abs(net_side_diff):,.0f} sh."
+         )},
         {"key": "fillsUp", "label": "Filled orders · Up",
          "value": f"{up_stats['count']} fills · {up_stats['medianShares']:g} sh · {up_stats['medianPrice'] * 100:.1f}¢",
          "status": "stat",
-         "detail": f"Median {up_stats['medianShares']:g} shares and {up_stats['medianPrice'] * 100:.1f}¢ per Up fill · {up_stats['shares']:,.0f} shares in total."},
+         "detail": "Median shares and price per Up fill."},
         {"key": "fillsDown", "label": "Filled orders · Down",
          "value": f"{down_stats['count']} fills · {down_stats['medianShares']:g} sh · {down_stats['medianPrice'] * 100:.1f}¢",
          "status": "stat",
-         "detail": f"Median {down_stats['medianShares']:g} shares and {down_stats['medianPrice'] * 100:.1f}¢ per Down fill · {down_stats['shares']:,.0f} shares in total."},
+         "detail": "Median shares and price per Down fill."},
         {"key": "paired", "label": "Paired orders",
-         "value": f"{len(paired_windows)} windows · {median_pair_cost * 100:.1f}¢" if paired_windows else "—",
+         "value": f"{len(paired_windows)} windows · {sum(paired_shares):,.0f} sh" if paired_windows else "—",
          "status": pair_status,
          "detail": (
-             f"Windows that took both legs: median {_median(paired_shares):g} paired shares at a "
+             f"Both legs taken: median {_median(paired_shares):g} paired shares at a "
              f"{median_pair_cost * 100:.1f}¢ lock-in · your cap {pair_cap * 100:.1f}¢."
              if paired_windows
              else "No window has taken both legs yet."
@@ -1160,8 +1177,10 @@ def perf() -> dict:
          "value": f"{len(single_windows)} positions · {sum(single_shares):,.0f} sh" if single_windows else "0",
          "status": "stat" if not single_windows else ("warn" if len(single_windows) <= len(settled) * 0.2 else "fail"),
          "detail": (
-             f"Windows that only ever took one leg: {len(single_windows)} open positions holding "
-             f"{sum(single_shares):,.0f} shares (median {_median(single_shares):g} per position)."
+             f"Windows that only ever took one leg: {len(single_windows)} positions holding "
+             f"{sum(single_shares):,.0f} shares (median {_median(single_shares):g} each). With the "
+             f"{unpaired_in_two_sided:,.0f} unmatched shares inside two-sided windows, "
+             f"{unpaired_total:,.0f} shares carry no pair."
              if single_windows
              else "Every window took both legs."
          )},

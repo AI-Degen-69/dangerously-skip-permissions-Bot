@@ -284,6 +284,8 @@ export interface PerfGate {
   value: string
   /** `stat` rows are plain measurements with no target to judge against. */
   status: 'pass' | 'warn' | 'fail' | 'stat'
+  /** Layer above the rest: the number the other rows are built from. */
+  big?: boolean
   detail: string
 }
 
