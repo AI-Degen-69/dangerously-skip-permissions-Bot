@@ -1159,7 +1159,7 @@ def perf() -> dict:
              f"{orders_made}" if counted_orders else "—",
              ([("Cancelled", f"{orders_cancelled}"),
                ("Windows counted", f"{len(counted_orders)} of {len(settled)}")] if counted_orders
-              else [("Cancelled", "—"), ("Counted from", "the next window on")])),
+              else [("Cancelled", "—"), ("Windows counted", f"0 of {len(settled)}")])),
         cell("totalShares", "Total shares filled", f"{total_shares:,.0f} sh",
              [("Up", f"{up_shares_total:,.0f}"), ("Down", f"{down_shares_total:,.0f}"),
               ("Fills", f"{up_stats['count'] + down_stats['count']:,}"),
