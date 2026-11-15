@@ -765,6 +765,9 @@ export interface AbTestDistributionStats {
   pairCostOver100: number
   totalLockedShares: number
   pairsMerged: number
+  pairedPnl: number
+  oneSidedPnl: number
+  oneSidedWindows: number
   wins: number
   losses: number
   scratches: number
