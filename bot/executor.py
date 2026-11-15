@@ -219,6 +219,7 @@ def evaluate_microstructure_ladder(
     leg1_max_price: float | None = None,
     leg2_max_price: float | None = None,
     taker_dip_max: float | None = None,
+    taker_dip_balanced_only: bool = False,
     taker_hedge_max_pair_cost: float | None = None,
     hedge_max_clip: float | None = None,
     late_rescue_start_sec: float | None = None,
@@ -330,6 +331,8 @@ def evaluate_microstructure_ladder(
     _taker_dip = _fnum(taker_dip_max)
     if _taker_dip is None:
         _taker_dip = _fnum(kwargs.get("takerDipEntryMax", kwargs.get("takerDipMax")))
+    _td_balanced_only = bool(taker_dip_balanced_only) or bool(
+        kwargs.get("takerDipBalancedOnly", kwargs.get("taker_dip_balanced_only", False)))
     _th_cap = _fnum(taker_hedge_max_pair_cost)
     if _th_cap is None:
         _th_cap = _fnum(kwargs.get("takerHedgeMaxPairCost", kwargs.get("takerHedgeMaxPair")))
@@ -574,9 +577,15 @@ def evaluate_microstructure_ladder(
         # through to the maker path when the taker candidate fails its gates.
         # No atomic bypass here: a fresh taker dip is never the v2.2 risk-free
         # atomic pair, so the share-lead veto always binds.
+        # hydrogen-v1.2 balanced-or-light-only taker dip: when the book is
+        # imbalanced (lead > 0 means this side is heavy, since deficit <= 0
+        # here), skip the taker cross and fall through to the maker path.
+        # Balanced books and light-side deficit hedges are unaffected (the
+        # light side has deficit > 0 and never enters this block).
         if (deficit <= 0 and _taker_dip is not None and ask is not None
                 and ask >= min_fill and ask <= min(max_fill, leg1_cap)
-                and ask <= _taker_dip):
+                and ask <= _taker_dip
+                and not (_td_balanced_only and lead > 0)):
             t_clip_cap = min(max_clip, _probe_sh) if (_probe_sh is not None and _probe_sh > 0 and inv[opp]["shares"] <= 0) else max_clip
             t_def_clip = min(default_clip, t_clip_cap)
             t_shares = select_ladder_clip(

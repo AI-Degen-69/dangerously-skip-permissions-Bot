@@ -484,6 +484,7 @@ def trade_window(
     leg1_max = entry.get("leg1MaxPrice", entry.get("maxLeg1Price", entry.get("maxFillPrice", C.PRICE_CEILING)))
     leg2_max = entry.get("leg2MaxPrice", None)
     taker_dip_max = entry.get("takerDipEntryMax", None)
+    taker_dip_balanced_only = bool(entry.get("takerDipBalancedOnly", False))
     late_start = entry.get("lateRescueStartSec", None)
     late_max = entry.get("lateRescueMaxPairCost", None)
     unhedged_step_cents = entry.get("unhedgedStepCents", None)
@@ -936,6 +937,7 @@ def trade_window(
                 leg1_max_price=(float(leg1_max) if leg1_max is not None else None),
                 leg2_max_price=(float(leg2_max) if leg2_max is not None else None),
                 taker_dip_max=(float(taker_dip_max) if taker_dip_max is not None else None),
+                taker_dip_balanced_only=taker_dip_balanced_only,
                 late_rescue_start_sec=(float(late_start) if late_start is not None else None),
                 late_rescue_max_pair_cost=(float(late_max) if late_max is not None else None),
                 elapsed_sec=float(now - slot),
