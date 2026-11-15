@@ -32,8 +32,8 @@ if __package__ in (None, ""):  # allow `python bot/verify_run.py`
 
 from bot import constants as C
 from bot.fill_audit import audit_window, load_prints
-from bot.runs import resolve_run_workspace
-from bot.tape_verifier import verify_fills
+from bot.runs import resolve_run_workspace, tape_segments
+from bot.tape_verifier import load_book_for_window, verify_fills
 
 
 def window_epoch(slug: str | None) -> int:
@@ -68,6 +68,10 @@ def main() -> int:
     # Loaded once: the auditor slices it per window, and the run holds ~200k
     # prints, so per-window reloads would dominate the backfill.
     prints = load_prints(tape_dir) if args.audit else None
+    try:
+        from bot.tape_verifier import load_prints_for_window as _window_prints
+    except ImportError:
+        _window_prints = None
     audited: list[dict] = []
     before = {"verified": 0, "partial": 0, "unverified": 0, "unverified-taker": 0, "none": 0}
     after = dict(before)
@@ -96,13 +100,28 @@ def main() -> int:
         for f in fills:
             before[status_of(f)] = before.get(status_of(f), 0) + 1
 
-        verify_fills(
-            fills,
-            tape_dir,
-            window_start_s=float(epoch),
-            window_end_s=float(epoch + C.WINDOW_S),
-            force=True,
-        )
+        # Rotated-tape guard: if this window's prints are gone, re-verifying
+        # would downgrade already-verified fills to unverified on no evidence.
+        # Skip verify_fills (silence is not proof); leave stamps as-is.
+        _has_tape = True
+        window_prints = None
+        if _window_prints is not None:
+            try:
+                window_prints = _window_prints(tape_dir, float(epoch), float(epoch + C.WINDOW_S))
+                _has_tape = bool(window_prints)
+            except OSError:
+                _has_tape = False
+        if _has_tape:
+            verify_fills(
+                fills,
+                tape_dir,
+                window_start_s=float(epoch),
+                window_end_s=float(epoch + C.WINDOW_S),
+                force=True,
+                prints=window_prints,
+            )
+        else:
+            skipped += 1
 
         after_counts = {status_of(f) for f in fills}
         for f in fills:
@@ -111,8 +130,12 @@ def main() -> int:
             changed_windows += 1
 
         if prints is not None:
+            try:
+                _book = load_book_for_window(tape_dir, float(epoch), float(epoch + C.WINDOW_S))
+            except OSError:
+                _book = None
             fidelity = audit_window(
-                fills, prints, float(epoch), record.get("winner"), record.get("condition_id")
+                fills, prints, float(epoch), record.get("winner"), record.get("condition_id"), book=_book
             )
             if fidelity is not None:
                 record["fidelity"] = fidelity

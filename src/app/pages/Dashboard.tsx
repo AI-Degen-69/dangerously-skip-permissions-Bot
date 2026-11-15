@@ -1,12 +1,28 @@
 import {
   Activity,
+  AlertTriangle,
+  ArrowDownRight,
+  ArrowUpRight,
+  Ban,
   BarChart3,
+  CalendarClock,
   CheckCircle2,
+  FileText,
+  Gauge,
+  GitBranch,
+  GitMerge,
   Info,
+  Layers,
   Percent,
+  Receipt,
+  RotateCcw,
   Scale,
+  ShieldCheck,
+  Sparkles,
   Target,
   TrendingUp,
+  Wallet,
+  type LucideIcon,
 } from 'lucide-react'
 import { Link } from 'react-router'
 import { useId, useState } from 'react'
@@ -63,6 +79,37 @@ const CELL_TONE: Record<PerfCell['status'], string> = {
   warn: 'text-warning',
   fail: 'text-danger',
   stat: 'text-fg',
+}
+
+// Balanced 4x3 execution-health layout: activity & volume, fill breakdown &
+// pairing, then coverage & execution quality. Unknown keys sink to the end.
+const EXEC_HEALTH_ORDER = [
+  'windows',
+  'orders',
+  'totalShares',
+  'perWindow',
+  'fillsUp',
+  'fillsDown',
+  'paired',
+  'unpaired',
+  'single',
+  'bothSides',
+  'attainable',
+  'zeroPrice',
+]
+const EXEC_HEALTH_ICONS: Record<string, LucideIcon> = {
+  windows: CalendarClock,
+  orders: FileText,
+  totalShares: Layers,
+  perWindow: Gauge,
+  fillsUp: ArrowUpRight,
+  fillsDown: ArrowDownRight,
+  paired: GitMerge,
+  unpaired: GitBranch,
+  single: AlertTriangle,
+  bothSides: CheckCircle2,
+  attainable: ShieldCheck,
+  zeroPrice: Ban,
 }
 
 // One colour class per element: `text-fg` is emitted after `text-danger` in the
@@ -370,6 +417,7 @@ export function Dashboard() {
       <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat
           label="Taker Fees"
+          icon={<Receipt className="size-3.5" />}
           value={stats.feesUsd > 0 ? `−${usd(stats.feesUsd)}` : usd(0)}
           hint={
             verifiedOnly
@@ -382,6 +430,7 @@ export function Dashboard() {
         />
         <Stat
           label="Taker Rebate"
+          icon={<RotateCcw className="size-3.5" />}
           value={`+${usd(stats.takerRebateUsd)}`}
           hint={`${Math.round(tier.rate * 100)}% of fees · ${tier.name}`}
           tone="success"
@@ -390,6 +439,7 @@ export function Dashboard() {
         />
         <Stat
           label="Maker Rebate"
+          icon={<Sparkles className="size-3.5" />}
           value={`+${usd(stats.makerRebateUsd)}`}
           hint="20% of the fee each maker fill was matched against"
           tone="success"
@@ -398,6 +448,7 @@ export function Dashboard() {
         />
         <Stat
           label="Net before rebates"
+          icon={<Wallet className="size-3.5" />}
           value={`${stats.netBeforeRebateUsd >= 0 ? '+' : ''}${usd(stats.netBeforeRebateUsd)}`}
           hint={
             includeRebates
@@ -809,35 +860,42 @@ export function Dashboard() {
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-          {(data?.cells ?? []).map((cell) => (
-            <div
-              key={cell.key}
-              className={cx(
-                'rounded-tile border border-line bg-surface-2/30 p-3',
-                cell.big && 'col-span-2 bg-surface-2/50',
-              )}
-            >
-              <p className="text-[10px] font-medium uppercase tracking-wide text-faint">{cell.label}</p>
-              <p
-                className={cx(
-                  'mt-0.5 font-semibold tabular-nums tracking-[-0.02em]',
-                  cell.big ? 'text-[26px]' : 'text-[19px]',
-                  CELL_TONE[cell.status] ?? 'text-fg',
-                )}
-              >
-                {cell.value}
-              </p>
-              <dl className="mt-1.5 space-y-0.5">
-                {cell.sub.map((item) => (
-                  <div key={item.label} className="flex items-baseline justify-between gap-2 text-[11.5px]">
-                    <dt className="truncate text-faint">{item.label}</dt>
-                    <dd className={cx('shrink-0 font-medium tabular-nums', item.tone ?? 'text-fg')}>{item.value}</dd>
-                  </div>
-                ))}
-              </dl>
-            </div>
-          ))}
+        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          {[...(data?.cells ?? [])]
+            .sort((a, b) => {
+              const ra = EXEC_HEALTH_ORDER.indexOf(a.key)
+              const rb = EXEC_HEALTH_ORDER.indexOf(b.key)
+              return (
+                (ra === -1 ? EXEC_HEALTH_ORDER.length : ra) - (rb === -1 ? EXEC_HEALTH_ORDER.length : rb)
+              )
+            })
+            .map((cell) => {
+              const Icon = EXEC_HEALTH_ICONS[cell.key]
+              return (
+                <div key={cell.key} className="rounded-tile border border-line bg-surface-2/30 p-3">
+                  <p className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-faint">
+                    {Icon && <Icon className="size-3.5" />}
+                    <span className="whitespace-nowrap">{cell.label}</span>
+                  </p>
+                  <p
+                    className={cx(
+                      'mt-0.5 text-[19px] font-semibold tabular-nums tracking-[-0.02em]',
+                      CELL_TONE[cell.status] ?? 'text-fg',
+                    )}
+                  >
+                    {cell.value}
+                  </p>
+                  <dl className="mt-1.5 space-y-0.5">
+                    {cell.sub.map((item) => (
+                      <div key={item.label} className="flex items-baseline justify-between gap-2 text-[11.5px]">
+                        <dt className="truncate text-faint">{item.label}</dt>
+                        <dd className={cx('shrink-0 font-medium tabular-nums', item.tone ?? 'text-fg')}>{item.value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              )
+            })}
           {!data && <Skeleton className="col-span-2 my-4 h-[180px] lg:col-span-4" />}
         </div>
 
@@ -956,9 +1014,9 @@ function Stat({
   return (
     <Card className="group relative flex h-[116px] flex-col justify-between p-3.5 transition-colors hover:border-line-strong">
       <div className="flex items-center justify-between gap-1.5">
-        <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-muted">
+        <div className="flex min-w-0 items-center gap-1.5 text-[12.5px] font-medium text-muted">
           {icon && <span className="text-faint [&_svg]:size-3.5">{icon}</span>}
-          <span>{label}</span>
+          <span className="min-w-0 truncate">{label}</span>
           {tip && (
             <span className="group/tip relative inline-flex">
               <span

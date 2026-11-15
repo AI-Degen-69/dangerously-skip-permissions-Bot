@@ -206,5 +206,136 @@ class AuditWindowTest(unittest.TestCase):
         self.assertEqual(got["phantomFills"], 1)
 
 
+class Phase1RealismTest(unittest.TestCase):
+    """Phase 1: effQueue cancel credit, time-to-fill, taker slippage, bands."""
+
+    def _book(self, ts_offset, bids, asks=None, outcome="Down"):
+        return {
+            "ts": START + ts_offset,
+            "outcome": outcome,
+            "bids": bids,
+            "asks": asks or [],
+        }
+
+    def test_cancel_credit_without_sell_reduces_effqueue(self):
+        # Queue 20 ahead, book drops 20 -> 5 with no SELL at L: cancel 15.
+        # Later SELL 10 then covers 5 + 10-share clip.
+        fill = _fill(queueAhead=20, queueAheadAtPlace=20, placedAtMs=int((START + 5) * 1000), offset=5)
+        book = [
+            self._book(6, [[0.42, 20.0]]),
+            self._book(8, [[0.42, 5.0]]),
+        ]
+        prints = [_print(size=15, offset=10)]
+        got = audit_window([fill], prints, START, "Down", book=book)
+        self.assertEqual(got["attainableFills"], 1)
+        self.assertIn("bands", got)
+        self.assertIn("phantomRate", got)
+        self.assertIsNotNone(got["medianTimeToAttainableMs"])
+
+    def test_bid_increase_does_not_push_back(self):
+        # New bids behind us must never raise effQueue: queue 5, book jumps
+        # to 50, then SELL 15 still fills 5 + 10 clip.
+        fill = _fill(queueAhead=5, queueAheadAtPlace=5, placedAtMs=int((START + 5) * 1000), offset=5)
+        book = [self._book(6, [[0.42, 50.0]])]
+        prints = [_print(size=15, offset=10)]
+        got = audit_window([fill], prints, START, "Down", book=book)
+        self.assertEqual(got["attainableFills"], 1)
+
+    def test_sell_plus_snapshot_drop_is_not_double_counted(self):
+        # SELL 10 at L then snapshot drops 10 -> 0: cancel must be 0, not 10.
+        # eff stays 10, so SELL 10 alone is not enough for 10-share clip.
+        fill = _fill(queueAhead=10, queueAheadAtPlace=10, placedAtMs=int((START + 5) * 1000), offset=5)
+        book = [
+            self._book(6, [[0.42, 10.0]]),
+            self._book(8, [[0.42, 0.0]]),
+        ]
+        prints = [_print(size=10, offset=7)]
+        got = audit_window([fill], prints, START, "Down", book=book)
+        self.assertEqual(got["attainableFills"], 0)
+        self.assertEqual(got["phantomFills"], 1)
+
+    def test_time_to_attainable_and_by_minute(self):
+        fill = _fill(queueAhead=0, offset=65)
+        prints = [_print(size=10, offset=70)]
+        got = audit_window([fill], prints, START, "Down")
+        self.assertEqual(got["attainableFills"], 1)
+        self.assertIn("M1", got["byMinute"])
+        self.assertEqual(got["byMinute"]["M1"]["attainable"], 1)
+        self.assertIn("bands", got)
+        self.assertEqual(got["bands"]["paper"]["fills"], 1)
+
+    def test_taker_slippage_bands(self):
+        # shares > 50% of askSize -> +1c in the attainable band only.
+        taker = _fill(role="TAKER", price=0.50, shares=10.0, askSize=12.0, offset=5)
+        got = audit_window([taker], [_print(size=1, offset=6)], START, "Down")
+        self.assertEqual(got["attainableFills"], 0)
+        # Taker is always attainable; slipped cost = 10 * 0.51 = 5.10.
+        self.assertAlmostEqual(got["attainableCostUsd"], 5.10, places=2)
+        self.assertAlmostEqual(got["bands"]["attainable"]["costUsd"], 5.10, places=2)
+        # shares > askSize -> +2c.
+        taker2 = _fill(role="TAKER", price=0.50, shares=10.0, askSize=5.0, offset=5)
+        got2 = audit_window([taker2], [_print(size=1, offset=6)], START, "Down")
+        self.assertAlmostEqual(got2["attainableCostUsd"], 5.20, places=2)
+
+    def test_backward_compat_no_book_no_metadata(self):
+        got = audit_window([_fill()], [_print(size=20)], START, "Down", book=None)
+        self.assertEqual(got["attainableFills"], 1)
+        self.assertEqual(got["bands"]["paper"]["fills"], 1)
+        self.assertEqual(got["phantomRate"], 0.0)
+
+
+class SharedVolumeTest(unittest.TestCase):
+    """One SELL share fills one order only, including book-aware rescues."""
+
+    def _book(self, ts_offset, bids, outcome="Down", asset_id=None):
+        row = {"ts": START + ts_offset, "outcome": outcome, "bids": bids, "asks": []}
+        if asset_id is not None:
+            row["asset_id"] = asset_id
+        return row
+
+    def test_shared_sell_not_double_spent(self):
+        # Two 10-share fills behind queue 20, one later 10-share SELL: the
+        # static check rejects both, and cancel credit (depth 20 -> 0) can
+        # only rescue one. The rescued row is stamped so rows and totals
+        # share one verdict.
+        fills = [
+            _fill(queueAhead=20, queueAheadAtPlace=20, placedAtMs=int((START + 5) * 1000), offset=5),
+            _fill(queueAhead=20, queueAheadAtPlace=20, placedAtMs=int((START + 5) * 1000), offset=6),
+        ]
+        prints = [_print(size=10, offset=10)]
+        book = [self._book(6, [[0.42, 20.0]]), self._book(8, [[0.42, 0.0]])]
+        got = audit_window(fills, prints, START, "Down", book=book)
+        self.assertEqual(got["attainableFills"], 1)
+        self.assertEqual(got["phantomFills"], 1)
+        rescued = [f for f in fills if (f.get("detail") or {}).get("attainable")]
+        self.assertEqual(len(rescued), 1)
+
+    def test_next_market_book_rows_ignored(self):
+        # A foreign-market snapshot must not grant cancel credit, even when
+        # it shows our level empty. Prints name our token; the foreign row
+        # must be scoped out, leaving the static verdict (phantom here).
+        fill = _fill(queueAhead=20, queueAheadAtPlace=20, placedAtMs=int((START + 5) * 1000), offset=5)
+        prints = [_print(size=15, offset=10)]
+        prints[0]["asset_id"] = "up_token_1"
+        book = [
+            {"ts": START + 6, "outcome": "Down", "asset_id": "up_token_1", "bids": [[0.42, 20.0]], "asks": []},
+            {"ts": START + 8, "outcome": "Down", "asset_id": "down_token_9", "bids": [[0.42, 5.0]], "asks": []},
+        ]
+        got = audit_window([fill], prints, START, "Down", book=book)
+        self.assertEqual(got["attainableFills"], 0)
+        self.assertEqual(got["phantomFills"], 1)
+
+    def test_uncovered_limit_grants_no_credit(self):
+        # Only top-5 levels are recorded: our 0.42 limit is below every
+        # recorded rung, so depth is unknown and no credit applies. A SELL
+        # of 10 against queue 20 + a 10-share clip stays phantom.
+        fill = _fill(queueAhead=20, queueAheadAtPlace=20, placedAtMs=int((START + 5) * 1000), offset=5)
+        book = [self._book(8, [[0.45, 50.0]])]
+        prints = [_print(size=10, offset=10)]
+        got = audit_window([fill], prints, START, "Down", book=book)
+        self.assertEqual(got["attainableFills"], 0)
+        self.assertEqual(got["phantomFills"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

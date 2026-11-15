@@ -281,6 +281,21 @@ class TestLoadPrints(unittest.TestCase):
         import shutil
         shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_empty_window_prints_means_rotated_guard_skips(self):
+        # Rotated-tape guard: an empty window slice must skip verify_fills so
+        # an already-verified fill is never downgraded on no evidence.
+        tmp = Path(tempfile.mkdtemp())
+        tape = tmp / "tape"
+        tape.mkdir()
+        (tape / "prints.jsonl").write_text(
+            json.dumps({"ts": 9999, "slug_outcome": "Down", "price": 0.4, "size": 10}) + "\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(load_prints_for_window(tape, 100, 200), [])
+
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()

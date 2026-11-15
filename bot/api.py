@@ -1963,6 +1963,7 @@ class Handler(BaseHTTPRequestHandler):
                 # sizing the new one; unrelated entry keys are preserved.
                 entry_cfg.pop("dipCurve", None)
                 entry_cfg.pop("maxUnhedgedUsd", None)
+                entry_cfg.pop("takerDipBalancedOnly", None)
                 entry_cfg.update(setup["entry"])
                 tmp_cfg = CONFIG_PATH.with_suffix(".tmp")
                 tmp_cfg.write_text(json.dumps(cfg, indent=2))

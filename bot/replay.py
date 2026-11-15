@@ -364,6 +364,7 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
     except (TypeError, ValueError):
         leg2_max = None
     taker_dip_max = entry.get("takerDipEntryMax", entry.get("takerDipMax", None))
+    taker_dip_balanced_only = bool(entry.get("takerDipBalancedOnly", False))
     try:
         taker_dip_max = float(taker_dip_max) if taker_dip_max is not None else None
     except (TypeError, ValueError):
@@ -612,6 +613,7 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
             rescue_max_pair_cost=rescue_max,
             leg1_max_price=leg1_max, leg2_max_price=leg2_max,
             taker_dip_max=taker_dip_max,
+            taker_dip_balanced_only=taker_dip_balanced_only,
             taker_hedge_max_pair_cost=taker_hedge_cap,
             hedge_max_clip=hedge_clip,
             late_rescue_start_sec=late_start,
