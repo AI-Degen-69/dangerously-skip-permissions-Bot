@@ -369,8 +369,9 @@ export function AbTest() {
       await startCandidate.mutateAsync()
       toast('Candidate Run Started — A/B Test candidate engine is now active and gathering samples.')
       refetch()
-    } catch (err: any) {
-      toast('Failed to Start Candidate' + ': ' + (err?.message || 'Error starting candidate run'), 'danger')
+    } catch (err: unknown) {
+      const detail = err instanceof Error ? err.message : 'Error starting candidate run'
+      toast('Failed to Start Candidate' + ': ' + detail, 'danger')
     }
   }
 
@@ -379,8 +380,9 @@ export function AbTest() {
       await stopCandidate.mutateAsync()
       toast('Candidate Run Stopped — Testing paused. Sample data is safely preserved.')
       refetch()
-    } catch (err: any) {
-      toast('Failed to Stop' + ': ' + (err?.message || 'Error stopping candidate run'), 'danger')
+    } catch (err: unknown) {
+      const detail = err instanceof Error ? err.message : 'Error stopping candidate run'
+      toast('Failed to Stop' + ': ' + detail, 'danger')
     }
   }
 
