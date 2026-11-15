@@ -445,8 +445,8 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
                       "subReason": sub_reason, "feeUsd": fee_usd,
                       "queueAhead": queue_ahead, "deficit": deficit})
 
-    def offer_print(outcome, side, px, size, ts):
-        orders = resting.get(outcome) or []
+    def offer_print(target_outcome, print_outcome, side, px, size, ts):
+        orders = resting.get(target_outcome) or []
         # Best (highest) bid is hit first, and one print's size is spent
         # across rungs as it is consumed (mirror of fill_audit._spend): the
         # same shares cannot fill every level.
@@ -454,24 +454,24 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
         for order in list(orders):
             if remaining <= 0:
                 break
-            hit = match_maker_print(order, {"outcome": outcome, "side": side,
+            hit = match_maker_print(order, {"outcome": print_outcome, "side": side,
                                             "price": px, "size": remaining})
             if hit is not None:
                 if unhedged_step_cents > 0:
-                    opp_side = "Down" if outcome == "Up" else "Up"
-                    if inv[opp_side]["shares"] == 0 and inv[outcome]["shares"] > 0:
-                        held_pxs = [f["price"] for f in fills if f["outcome"] == outcome]
+                    opp_side = "Down" if target_outcome == "Up" else "Up"
+                    if inv[opp_side]["shares"] == 0 and inv[target_outcome]["shares"] > 0:
+                        held_pxs = [f["price"] for f in fills if f["outcome"] == target_outcome]
                         min_held = min(held_pxs) if held_pxs else 1.0
                         if order["price"] > min_held - (unhedged_step_cents / 100.0) + 1e-9:
                             continue
                 consumed = ((hit["queueAhead"] - float(order.get("queue_ahead") or 0.0))
                             + hit["fills"])
                 remaining = max(0.0, remaining - consumed)
-                book_fill(outcome, order["price"], hit["fills"], "MAKER",
+                book_fill(target_outcome, order["price"], hit["fills"], "MAKER",
                           _minute(ts), order["sub_reason"], hit["queueAhead"],
                           order["deficit"], ts)
                 if os.environ.get("REPLAY_TRACE"):
-                    print(f"TRACE fill {ts:.1f} {outcome} {order['price']} x{hit['fills']:.2f} qpaid={hit['queueAhead']:.1f}", flush=True)
+                    print(f"TRACE fill {ts:.1f} {target_outcome} {order['price']} x{hit['fills']:.2f} qpaid={hit['queueAhead']:.1f}", flush=True)
             if order["shares_left"] <= 0:
                 try:
                     orders.remove(order)
@@ -504,13 +504,22 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
                 max_allowed = min_held - (unhedged_step_cents / 100.0) + 1e-9
                 desired = [d for d in desired if d <= max_allowed]
         keep = []
+        has_higher_hedge = False
         for order in resting[outcome]:
-            if any(abs(order["price"] - d) < 1e-9 for d in desired):
+            is_higher_hedge = (
+                (deficit > 0 or float(order.get("deficit") or 0.0) > 0)
+                and float(order["price"]) > px + 1e-9
+            )
+            if any(abs(order["price"] - d) < 1e-9 for d in desired) or is_higher_hedge:
                 keep.append(order)
+                if is_higher_hedge:
+                    has_higher_hedge = True
         resting[outcome] = keep
         have = {round(o["price"], 4) for o in keep}
         for d in desired:
             if d in have:
+                continue
+            if has_higher_hedge and d < px + 1e-9:
                 continue
             if d < min_fill or d <= 0:
                 continue
@@ -572,7 +581,10 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
         if payload[0] == "print":
             _, outcome, px, size, side = payload
             if outcome in resting and resting[outcome]:
-                offer_print(outcome, side, px, size, ts)
+                offer_print(outcome, outcome, side, px, size, ts)
+            opp_outcome = "Down" if outcome == "Up" else "Up"
+            if opp_outcome in resting and resting[opp_outcome] and str(side).upper() in ("BUY", "BID", "BUYS"):
+                offer_print(opp_outcome, outcome, side, px, size, ts)
             continue
         _, outcome, bids, asks = payload
         if outcome not in state:

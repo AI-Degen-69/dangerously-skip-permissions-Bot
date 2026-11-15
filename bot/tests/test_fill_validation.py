@@ -1,7 +1,13 @@
 import unittest
 from bot import constants as C
 from bot.executor import evaluate_microstructure_ladder
-from bot.fill_model import bucket_for_price, confirm_maker_buy, label_taker_fill, match_maker_print
+from bot.fill_model import (
+    bucket_for_price,
+    confirm_maker_buy,
+    label_taker_fill,
+    match_maker_book_cross,
+    match_maker_print,
+)
 from bot.ws import LiveBookStreamer
 
 
@@ -214,6 +220,57 @@ class MakerPrintMatchTests(unittest.TestCase):
 
     def test_no_size_no_fill(self):
         self.assertIsNone(match_maker_print(self._order(), self._print(size=0)))
+
+    def test_complementary_buy_print_fills_resting_bid(self):
+        # Resting Up bid @ 0.68 matches Down BUY <= 0.32 (1 - 0.68)
+        order = self._order(side="Up", price=0.68, shares_left=10.0, queue_ahead=0.0)
+        hit = match_maker_print(order, {"outcome": "Down", "side": "BUY", "price": 0.32, "size": 10.0})
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit["fills"], 10.0)
+        self.assertEqual(order["shares_left"], 0.0)
+
+        order2 = self._order(side="Up", price=0.68, shares_left=10.0, queue_ahead=0.0)
+        hit2 = match_maker_print(order2, {"outcome": "Down", "side": "BUY", "price": 0.28, "size": 6.0})
+        self.assertIsNotNone(hit2)
+        self.assertEqual(hit2["fills"], 6.0)
+        self.assertEqual(order2["shares_left"], 4.0)
+
+        # Down BUY @ 0.35 (> 0.32) or Down SELL @ 0.32 does NOT fill Up bid @ 0.68
+        self.assertIsNone(match_maker_print(self._order(side="Up", price=0.68),
+                                            {"outcome": "Down", "side": "BUY", "price": 0.35, "size": 20.0}))
+        self.assertIsNone(match_maker_print(self._order(side="Up", price=0.68),
+                                            {"outcome": "Down", "side": "SELL", "price": 0.32, "size": 20.0}))
+
+
+class MakerBookCrossTests(unittest.TestCase):
+    def test_book_cross_fills_when_ask_crosses_or_bid_clears(self):
+        # Not crossed: bid=0.68, ask=0.70
+        order = {"side": "Up", "price": 0.68, "shares_left": 10.0, "queue_ahead": 10.0}
+        self.assertIsNone(match_maker_book_cross(dict(order), {"bid": 0.68, "ask": 0.70}))
+        self.assertIsNone(match_maker_book_cross(dict(order), {"bid": None, "ask": None}))
+        self.assertIsNone(match_maker_book_cross(dict(order), {"bid": 0.0, "ask": 0.0}))
+
+        # Crossed ask (< limit): fills full order
+        o1 = dict(order)
+        hit1 = match_maker_book_cross(o1, {"bid": 0.66, "ask": 0.67})
+        self.assertIsNotNone(hit1)
+        self.assertEqual(hit1["fills"], 10.0)
+        self.assertEqual(o1["shares_left"], 0.0)
+
+        # Bid dropped below limit (level cleared): fills full order even if ask bounced
+        o2 = dict(order)
+        hit2 = match_maker_book_cross(o2, {"bid": 0.64, "ask": 0.69})
+        self.assertIsNotNone(hit2)
+        self.assertEqual(hit2["fills"], 10.0)
+        self.assertEqual(o2["shares_left"], 0.0)
+
+    def test_book_cross_respects_ask_size_at_touch(self):
+        order = {"side": "Up", "price": 0.68, "shares_left": 10.0, "queue_ahead": 5.0}
+        hit = match_maker_book_cross(order, {"bid": 0.68, "ask": 0.68, "askSize": 12.0})
+        self.assertIsNotNone(hit)
+        self.assertAlmostEqual(hit["fills"], 7.0)
+        self.assertAlmostEqual(order["shares_left"], 3.0)
+        self.assertAlmostEqual(order["queue_ahead"], 0.0)
 
 
 class SetupCopyTests(unittest.TestCase):

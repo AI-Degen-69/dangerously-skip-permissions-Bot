@@ -21,6 +21,8 @@ export const LABELS: Record<string, string> = {
   'paper-fill': 'Paper fill',
 
   // Holds & Pacing
+  'order-placed': 'Resting maker bid placed',
+  'order-cancel': 'Resting maker bid cancelled',
   'minute-quota-reached': 'Minute quota filled — pacing entries',
   'target-fills-reached': 'Target window fills reached',
   'spacing-guard': 'Spacing guard — orderbook replenishment',
@@ -141,6 +143,16 @@ export const REASON_METRICS: Record<string, MetricSpec[]> = {
     { key: 'price', label: 'price', unit: 'price' },
     { key: 'shares', label: 'shares' },
     { key: 'fills', label: 'fill #' },
+  ],
+  'order-placed': [
+    { key: 'minute' },
+    { key: 'price', label: 'bid', unit: 'price' },
+    { key: 'shares', label: 'shares' },
+  ],
+  'order-cancel': [
+    { key: 'minute' },
+    { key: 'price', label: 'bid', unit: 'price' },
+    { key: 'shares', label: 'shares' },
   ],
   'minute-quota-reached': [
     { key: 'minute' },
