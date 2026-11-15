@@ -2,7 +2,7 @@
 
 Compares the frozen, measured Hydrogen v1.0 baseline run
 (DEFAULT_BASELINE_ID, `run_20261113_183248_paper_hydrogen_v1_0`) against the
-Hydrogen v1.1 candidate (`hydrogen-v1.1`).
+Hydrogen v1.2 candidate (`hydrogen-v1.2`).
 
 The statistical sample is ACTIVE traded windows only (`fills > 0`): zero-fill
 windows never inflate N or dilute variance. Welch's one-tailed two-sample
@@ -25,8 +25,8 @@ from bot.fill_audit import role_of
 ROOT = Path(__file__).resolve().parent.parent
 RUNS_DIR = ROOT / "bot" / "runs"
 DEFAULT_BASELINE_ID = "run_20261113_183248_paper_hydrogen_v1_0"
-DEFAULT_CANDIDATE_ID = "hydrogen-v1.1"
-CANDIDATE_DISPLAY_NAME = "Hydrogen v1.1"
+DEFAULT_CANDIDATE_ID = "hydrogen-v1.2"
+CANDIDATE_DISPLAY_NAME = "Hydrogen v1.2"
 BASELINE_DISPLAY_NAME = "Hydrogen v1.0"
 AB_STATE_PATH = ROOT / "bot" / "ab_test_state.json"
 
@@ -217,6 +217,9 @@ def _empty_stats(observed: int = 0) -> dict[str, Any]:
         "pairCostOver100": 0,
         "totalLockedShares": 0.0,
         "pairsMerged": 0.0,
+        "pairedPnl": 0.0,
+        "oneSidedPnl": 0.0,
+        "oneSidedWindows": 0,
         "wins": 0,
         "losses": 0,
         "scratches": 0,
@@ -290,6 +293,11 @@ def _compute_distribution_stats(records: list[dict[str, Any]],
     pairs_merged = round(sum(min(r.get("upShares", 0.0) or 0.0,
                                 r.get("downShares", 0.0) or 0.0) for r in paired), 1)
     locked_shares = round(pairs_merged * 2.0, 1)
+    paired_pnl = round(sum(r["net"] for r in paired), 2)
+    one_sided = [r for r in active
+                 if not ((r.get("upShares", 0.0) or 0.0) > 0 and (r.get("downShares", 0.0) or 0.0) > 0)]
+    one_sided_windows = len(one_sided)
+    one_sided_pnl = round(sum(r["net"] for r in one_sided), 2)
 
     return {
         "samples": n,
@@ -302,6 +310,9 @@ def _compute_distribution_stats(records: list[dict[str, Any]],
         "pairCostOver100": over100,
         "totalLockedShares": locked_shares,
         "pairsMerged": pairs_merged,
+        "pairedPnl": paired_pnl,
+        "oneSidedPnl": one_sided_pnl,
+        "oneSidedWindows": one_sided_windows,
         "wins": wins,
         "losses": losses,
         "scratches": scratches,
@@ -402,6 +413,8 @@ def _run_strategy_id(run_id: str | None) -> str:
         return "hydrogen-v1.0"
     if "hydrogen_v1_1" in str(run_id).lower() or "hydrogen-v1.1" in str(run_id).lower():
         return "hydrogen-v1.1"
+    if "hydrogen_v1_2" in str(run_id).lower() or "hydrogen-v1.2" in str(run_id).lower():
+        return "hydrogen-v1.2"
     if "hydrogen" in str(run_id).lower():
         return DEFAULT_CANDIDATE_ID
     return "hydrogen-v1.0"
@@ -437,11 +450,13 @@ def _version_tag(strategy_id: str) -> str:
 
 def _hypothesis_text(candidate_id: str | None, *, null: bool,
                      baseline_id: str | None = None) -> str:
-    """Formal Hydrogen v1.1 vs Hydrogen v1.0 hypothesis over active-window PnL."""
+    """Formal Hydrogen v1.2 vs Hydrogen v1.0 hypothesis over active-window PnL."""
     strat_id = _run_strategy_id(candidate_id)
     base_strat_id = _run_strategy_id(baseline_id or DEFAULT_BASELINE_ID)
 
-    if "hydrogen-v1.1" in str(strat_id).lower() or "v1_1" in str(strat_id).lower() or "v1.1" in str(strat_id).lower():
+    if "hydrogen-v1.2" in str(strat_id).lower() or "v1_2" in str(strat_id).lower() or "v1.2" in str(strat_id).lower():
+        cand_label = "Hydrogen_v1.2"
+    elif "hydrogen-v1.1" in str(strat_id).lower() or "v1_1" in str(strat_id).lower() or "v1.1" in str(strat_id).lower():
         cand_label = "Hydrogen_v1.1"
     elif "hydrogen-v1.0" in str(strat_id).lower() or "v1_0" in str(strat_id).lower() or "v1.0" in str(strat_id).lower():
         cand_label = "Hydrogen_v1.0"
@@ -516,21 +531,27 @@ def get_ab_test_data() -> dict[str, Any]:
     baseline_id = state.get("baselineRunId", DEFAULT_BASELINE_ID)
     candidate_id = state.get("candidateRunId")
 
-    # If candidateRunId is not set, check active_run.json
+    # Prefer the live active run when the persisted candidate is stale:
+    # if ab_test_state.json points to a strategy that no longer matches
+    # DEFAULT_CANDIDATE_ID but active_run.json points to one that does,
+    # follow active_run.json so the dashboard stays in sync with the loop.
     active_meta_path = RUNS_DIR / "active_run.json"
-    if not candidate_id and active_meta_path.exists():
-        try:
+    try:
+        if active_meta_path.exists():
             ar = json.loads(active_meta_path.read_text(encoding="utf-8"))
             act_id = ar.get("activeRunId")
             if act_id and act_id != baseline_id:
-                meta_p = RUNS_DIR / act_id / "run_meta.json"
-                if meta_p.exists():
-                    m = json.loads(meta_p.read_text(encoding="utf-8"))
-                    strat_id = m.get("configSnapshot", {}).get("strategy", {}).get("id", "")
-                    if "dangerously-skip-permissions" in strat_id or "hydrogen" in str(strat_id).lower():
-                        candidate_id = act_id
-        except Exception:
-            pass
+                if not candidate_id:
+                    meta_p = RUNS_DIR / act_id / "run_meta.json"
+                    if meta_p.exists():
+                        m = json.loads(meta_p.read_text(encoding="utf-8"))
+                        strat_id = m.get("configSnapshot", {}).get("strategy", {}).get("id", "")
+                        if "dangerously-skip-permissions" in strat_id or "hydrogen" in str(strat_id).lower():
+                            candidate_id = act_id
+                elif _run_strategy_id(candidate_id) != DEFAULT_CANDIDATE_ID and _run_strategy_id(act_id) == DEFAULT_CANDIDATE_ID:
+                    candidate_id = act_id
+    except Exception:
+        pass
 
     baseline_recs = _load_run_windows(baseline_id)
     baseline_stats = _compute_distribution_stats(
