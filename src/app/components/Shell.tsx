@@ -1,15 +1,45 @@
-import { Activity, BookOpen, FlaskConical, LayoutDashboard, Menu as MenuIcon, Moon, Settings, SlidersHorizontal, Sun, X } from 'lucide-react'
+import {
+  Activity,
+  BookOpen,
+  FlaskConical,
+  LayoutDashboard,
+  Moon,
+  Search,
+  SlidersHorizontal,
+  Sun,
+  TrendingUp,
+} from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router'
 
-import { useMe } from '../lib/api'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Kbd } from '@/components/ui/kbd'
+import { Separator } from '@/components/ui/separator'
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarTrigger,
+} from '@/components/ui/sidebar'
+import { cn } from '@/lib/utils'
 import { useBotControl } from '../lib/bot'
-import { cx } from '../lib/cx'
-import { Avatar } from './ui'
+import { CommandPalette } from './CommandPalette'
+import { StatusDot } from './StatusDot'
 
 const links = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
-  { to: '/live', label: 'Live bot', icon: Activity },
+  { to: '/live', label: 'Live Bot', icon: Activity },
   { to: '/ab-test', label: 'A/B Testing', icon: FlaskConical },
   { to: '/config', label: 'Configuration', icon: SlidersHorizontal },
   { to: '/strategy', label: 'Strategy', icon: BookOpen },
@@ -23,19 +53,18 @@ function getInitialTheme(): 'dark' | 'light' {
 }
 
 export function Shell() {
-  const { data: me } = useMe()
   const control = useBotControl()
+  const botRunning = Boolean(control.data?.running)
+  const isRealMode = control.data?.mode === 'live'
+  const executionModeLabel = isRealMode ? 'Real' : 'Paper'
   const strat = control.data?.strategy
-  const stratSymbol = strat?.symbol ?? '🎯 HAPCS-v1'
-  const stratEmoji = Array.from(stratSymbol)[0] ?? '🎯'
-  const [mobileOpen, setMobileOpen] = useState(false)
+  const stratSymbol = strat?.symbol ?? 'HAPCS-v1'
   const [theme, setTheme] = useState<'dark' | 'light'>(getInitialTheme)
+  const [cmdOpen, setCmdOpen] = useState(false)
   const location = useLocation()
 
-  useEffect(() => setMobileOpen(false), [location.pathname])
-
   useEffect(() => {
-    document.title = strat ? `Up/Down desk — ${strat.symbol} ${strat.name}` : 'Up/Down desk — BTC paper bot'
+    document.title = strat ? `Up/Down Desk — ${strat.symbol} ${strat.name}` : 'Up/Down Desk — Trading Bot'
   }, [strat?.id, strat?.symbol, strat?.name])
 
   useEffect(() => {
@@ -48,115 +77,175 @@ export function Shell() {
     localStorage.setItem('bot-theme', theme)
   }, [theme])
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() === 'k' && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault()
+        setCmdOpen((prev) => !prev)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
   const toggleTheme = () => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))
 
-  const sidebar = (
-    <div className="flex h-full flex-col px-3 py-3">
-      <div className="flex h-10 items-center gap-2.5 px-2">
-        <span className="grid size-7 place-items-center rounded-[9px] bg-accent text-white shadow-xs" title={strat?.name ?? stratSymbol}>
-          <span className="text-[13px] font-bold leading-none">{stratEmoji}</span>
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            <p className="truncate text-[13.5px] font-semibold tracking-tight">Up/Down desk</p>
-            <span className="inline-flex items-center rounded-pill bg-accent-soft px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-accent">
-              {stratSymbol}
-            </span>
-          </div>
-          <p className="truncate font-mono text-[10.5px] text-faint">{strat?.name ?? 'Hybrid Arb'} · Port 5173→8789</p>
-        </div>
-      </div>
-
-      <nav className="mt-4 flex flex-col gap-0.5">
-        {links.map(({ to, label, icon: Icon, end }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={end}
-            className={({ isActive }) =>
-              cx(
-                'flex h-9 items-center gap-2.5 rounded-control px-2.5 text-[13.5px] font-medium transition-colors',
-                isActive ? 'bg-surface text-fg shadow-card' : 'text-muted hover:bg-raised/60 hover:text-fg',
-              )
-            }
-          >
-            <Icon className="size-4" />
-            {label}
-          </NavLink>
-        ))}
-      </nav>
-
-      <div className="mt-auto flex flex-col gap-0.5">
-        <NavLink
-          to="/settings"
-          className={({ isActive }) =>
-            cx(
-              'flex h-9 items-center gap-2.5 rounded-control px-2.5 text-[13.5px] font-medium transition-colors',
-              isActive ? 'bg-surface text-fg shadow-card' : 'text-muted hover:bg-raised/60 hover:text-fg',
-            )
-          }
-        >
-          <Settings className="size-4" />
-          Settings
-        </NavLink>
-        <button
-          type="button"
-          onClick={toggleTheme}
-          className="flex h-9 w-full items-center justify-between rounded-control px-2.5 text-[12.5px] font-medium text-muted transition-colors hover:bg-raised/60 hover:text-fg"
-          aria-label="Toggle theme"
-        >
-          <span className="flex items-center gap-2">
-            {theme === 'dark' ? <Moon className="size-4" /> : <Sun className="size-4" />}
-            <span>{theme === 'dark' ? 'Dark theme' : 'Light theme'}</span>
-          </span>
-          <span className="text-[11px] font-mono uppercase text-faint">{theme}</span>
-        </button>
-        {me && (
-          <span className="mt-1 flex items-center gap-2.5 rounded-control px-2 py-2">
-            <Avatar name={me.user.name ?? me.user.email ?? 'You'} hue={210} src={me.user.picture} size={28} />
-            <span className="min-w-0">
-              <span className="block truncate text-[13px] font-medium">{me.user.name ?? 'Signed in'}</span>
-              {me.user.email && <span className="block truncate text-[11.5px] text-faint">{me.user.email}</span>}
-            </span>
-          </span>
-        )}
-        <p className="px-2 pt-1 text-[11px] leading-relaxed text-faint">
-          Paper only — the loop never holds keys or funding.
-        </p>
-      </div>
-    </div>
-  )
-
   return (
-    <div className="flex h-full">
-      <aside className="hidden w-[236px] shrink-0 border-r border-line bg-bg lg:block">{sidebar}</aside>
+    <SidebarProvider className="h-svh overflow-hidden">
+      <Sidebar variant="inset" collapsible="icon">
+        <SidebarHeader>
+          <div className="flex items-center gap-2.5 py-1 group-data-[collapsible=icon]:justify-center">
+            <span
+              className="grid size-8 shrink-0 place-items-center rounded-xl bg-primary/15 text-primary ring-1 ring-primary/30 shadow-xs"
+              title={`Up/Down Desk · ${stratSymbol}`}
+            >
+              <TrendingUp className="size-4" />
+            </span>
+            <div className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
+              <p className="truncate font-heading text-[14px] leading-tight font-semibold tracking-tight text-sidebar-foreground">
+                Up/Down Desk
+              </p>
+              <p
+                className="mt-0.5 truncate font-mono text-[11px] leading-tight text-muted-foreground"
+                title={strat?.name ? `${stratSymbol} · ${strat.name}` : stratSymbol}
+              >
+                {stratSymbol}
+              </p>
+            </div>
+            <SidebarTrigger className="hidden shrink-0 group-data-[collapsible=icon]:hidden md:inline-flex" />
+          </div>
 
-      <div className="fixed inset-x-0 top-0 z-30 flex h-12 items-center justify-between border-b border-line bg-bg/90 px-3 backdrop-blur lg:hidden">
-        <button type="button" aria-label="Open menu" onClick={() => setMobileOpen(true)} className="grid size-9 place-items-center rounded-control">
-          <MenuIcon className="size-5" />
-        </button>
-        <span className="text-[14px] font-semibold">Up/Down desk</span>
-        <button type="button" onClick={toggleTheme} className="grid size-9 place-items-center rounded-control text-muted" aria-label="Toggle theme">
-          {theme === 'dark' ? <Moon className="size-4" /> : <Sun className="size-4" />}
-        </button>
-      </div>
-      {mobileOpen && (
-        <div className="fixed inset-0 z-40 lg:hidden">
-          <button type="button" aria-label="Close menu" className="absolute inset-0 cursor-pointer bg-fg/20" onClick={() => setMobileOpen(false)} />
-          <aside className="absolute inset-y-0 left-0 w-[280px] bg-bg shadow-dialog">
-            <button type="button" aria-label="Close menu" onClick={() => setMobileOpen(false)} className="absolute right-3 top-3 grid size-9 place-items-center rounded-control">
-              <X className="size-5" />
-            </button>
-            {sidebar}
-          </aside>
-        </div>
-      )}
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                type="button"
+                tooltip="Jump to… (⌘K)"
+                onClick={() => setCmdOpen(true)}
+                className="border border-sidebar-border bg-background/70 text-muted-foreground hover:text-sidebar-accent-foreground"
+              >
+                <Search />
+                <span>Jump to…</span>
+                <Kbd className="ml-auto group-data-[collapsible=icon]:hidden">⌘K</Kbd>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarHeader>
 
-      <main className="min-w-0 flex-1 pt-12 lg:p-2 lg:pl-0 lg:pt-2">
-        <div className="scrollbar-thin h-full overflow-y-auto bg-surface lg:rounded-card lg:border lg:border-line">
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupLabel>Desk</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {links.map(({ to, label, icon: Icon, end }) => {
+                  const active = end
+                    ? location.pathname === to
+                    : location.pathname === to || location.pathname.startsWith(`${to}/`)
+                  const isLiveLink = to === '/live'
+                  const liveStatusLabel = `${executionModeLabel} · ${botRunning ? 'Bot running' : 'Bot stopped'}`
+                  return (
+                    <SidebarMenuItem key={to}>
+                      <SidebarMenuButton
+                        isActive={active}
+                        tooltip={isLiveLink ? `${label} · ${liveStatusLabel}` : label}
+                        render={<NavLink to={to} end={end} />}
+                        className={isLiveLink ? 'pr-20' : undefined}
+                      >
+                        <Icon />
+                        <span>{label}</span>
+                      </SidebarMenuButton>
+                      {isLiveLink && (
+                        <div className="pointer-events-none absolute top-1/2 right-2 flex -translate-y-1/2 items-center gap-1.5 group-data-[collapsible=icon]:top-1 group-data-[collapsible=icon]:right-1 group-data-[collapsible=icon]:translate-y-0">
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              'h-4 px-1.5 font-mono text-[9.5px] font-semibold tracking-wider uppercase group-data-[collapsible=icon]:hidden',
+                              isRealMode
+                                ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                                : 'border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+                            )}
+                          >
+                            {executionModeLabel}
+                          </Badge>
+                          <StatusDot
+                            tone={botRunning ? 'live' : 'stopped'}
+                            size="sm"
+                            label={liveStatusLabel}
+                          />
+                        </div>
+                      )}
+                    </SidebarMenuItem>
+                  )
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
+
+        <SidebarFooter>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                type="button"
+                tooltip={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+                onClick={toggleTheme}
+              >
+                {theme === 'dark' ? <Moon /> : <Sun />}
+                <span>{theme === 'dark' ? 'Dark theme' : 'Light theme'}</span>
+                <Badge
+                  variant="outline"
+                  className="ml-auto font-mono text-[10px] uppercase group-data-[collapsible=icon]:hidden"
+                >
+                  {theme}
+                </Badge>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarFooter>
+
+        <SidebarRail />
+      </Sidebar>
+
+      <SidebarInset className="min-w-0 overflow-hidden">
+        <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border bg-background/95 px-3 backdrop-blur md:hidden">
+          <div className="flex min-w-0 items-center gap-2">
+            <SidebarTrigger />
+            <Separator orientation="vertical" className="h-4" />
+            <span className="truncate font-heading text-sm font-semibold">Up/Down Desk</span>
+            <Badge variant="secondary" className="font-mono text-[10px] uppercase">
+              {stratSymbol}
+            </Badge>
+          </div>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setCmdOpen(true)}
+              aria-label="Open command palette"
+            >
+              <Search />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={toggleTheme}
+              aria-label="Toggle theme"
+            >
+              {theme === 'dark' ? <Moon /> : <Sun />}
+            </Button>
+          </div>
+        </header>
+
+        <div className="scrollbar-thin flex-1 overflow-y-auto bg-surface md:rounded-2xl md:border md:border-border">
           <Outlet />
         </div>
-      </main>
-    </div>
+      </SidebarInset>
+
+      <CommandPalette
+        open={cmdOpen}
+        onClose={() => setCmdOpen(false)}
+        onToggleTheme={toggleTheme}
+        theme={theme}
+      />
+    </SidebarProvider>
   )
 }

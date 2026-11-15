@@ -1,10 +1,19 @@
 import { useMemo, useState, type ReactNode } from 'react'
-import { Coins, Filter, RotateCcw, Scale, ShieldAlert, Zap } from 'lucide-react'
+import { Coins, Filter, Info, RotateCcw, Scale, ShieldAlert, SlidersHorizontal, Zap } from 'lucide-react'
 
-import { Badge, Button, Card, Field, Input, PageHeader, Skeleton, useToast } from '../components/ui'
+import { PageHeader, useToast } from '../components/ui'
+import { StatusDot } from '../components/StatusDot'
 import { useBotConfig, useBotControl, useSaveBotConfig, useStrategySetups, mergeStrategySetups, type BotConfigView, type StrategySetup } from '../lib/bot'
-import { cx } from '../lib/cx'
 import { DEFAULT_CONFIG, EDITABLE, STRATEGY_PRESETS } from '../botDefaults'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui/field'
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Spinner } from '@/components/ui/spinner'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 
 type Draft = Record<string, number>
 
@@ -27,23 +36,6 @@ const errorFor = (path: string, value: number): string | undefined => {
   return range && !inRange(path, value) ? rangeError(range) : undefined
 }
 
-function ResetFieldButton({ onReset, label, className }: { onReset: () => void; label: string; className?: string }) {
-  return (
-    <button
-      type="button"
-      onClick={onReset}
-      aria-label={`Reset ${label} to default`}
-      title="Reset to default"
-      className={cx(
-        'grid h-9 w-9 shrink-0 place-items-center border border-l-0 border-line-strong bg-surface-2 text-faint transition-colors hover:bg-raised hover:text-fg',
-        className ?? 'rounded-r-control',
-      )}
-    >
-      <RotateCcw className="size-4" aria-hidden="true" />
-    </button>
-  )
-}
-
 function EdgeTip({
   title,
   gist,
@@ -63,29 +55,29 @@ function EdgeTip({
 }) {
   return (
     <span className="block">
-      <span className="block text-[12px] font-semibold">{title}</span>
-      <span className="mt-1 block text-[11.5px] leading-snug text-surface/85">{gist}</span>
-      <span className="mt-2 block space-y-1.5 border-t border-surface/15 pt-2 text-[11px] leading-snug text-surface/85">
+      <span className="block text-[12px] font-semibold text-popover-foreground">{title}</span>
+      <span className="mt-1 block text-[11.5px] leading-snug text-muted-foreground">{gist}</span>
+      <span className="mt-2 block space-y-1.5 border-t border-border/60 pt-2 text-[11px] leading-snug text-muted-foreground">
         <span className="flex gap-2">
-          <span className="w-10 shrink-0 font-mono font-semibold text-surface">{lowLabel}</span>
+          <span className="w-10 shrink-0 font-mono font-semibold text-popover-foreground">{lowLabel}</span>
           <span>{lowText}</span>
         </span>
         <span className="flex gap-2">
-          <span className="w-10 shrink-0 font-mono font-semibold text-surface">{highLabel}</span>
+          <span className="w-10 shrink-0 font-mono font-semibold text-popover-foreground">{highLabel}</span>
           <span>{highText}</span>
         </span>
       </span>
-      <span className="mt-2 block border-t border-surface/15 pt-2 text-[10.5px] leading-snug text-surface/60">{foot}</span>
+      <span className="mt-2 block border-t border-border/60 pt-2 text-[10.5px] leading-snug text-muted-foreground/80">{foot}</span>
     </span>
   )
 }
 
 const TONES = {
-  success: 'bg-success-soft text-success',
-  info: 'bg-info-soft text-info',
-  accent: 'bg-accent-soft text-accent',
-  warning: 'bg-warning-soft text-warning',
-  danger: 'bg-danger-soft text-danger',
+  success: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+  info: 'bg-sky-500/10 text-sky-600 dark:text-sky-400',
+  accent: 'bg-primary/10 text-primary',
+  warning: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+  danger: 'bg-rose-500/10 text-rose-600 dark:text-rose-400',
 } as const
 type Tone = keyof typeof TONES
 
@@ -353,23 +345,32 @@ export function Config() {
   return (
     <div className="mx-auto max-w-[1000px] p-5 sm:p-8">
       <PageHeader
-        title="Configuration"
-        subtitle={activeSetup ? `Every knob the ${activeSetup.symbol} loop reads. A running loop picks changes up on its next window.` : 'Every knob the loop reads. A running loop picks changes up on its next window.'}
+        icon={<SlidersHorizontal className="size-5" />}
+        title={activeSetup ? `Configuration · ${activeSetup.symbol}` : 'Configuration'}
         actions={
           <div className="flex items-center gap-2">
             {control.data && (
-              <Badge tone={control.data.running ? 'success' : 'neutral'} dot>
+              <Badge
+                variant="outline"
+                className={cn(
+                  'gap-1.5',
+                  control.data.running
+                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                    : 'text-muted-foreground',
+                )}
+              >
+                <StatusDot tone={control.data.running ? 'live' : 'stopped'} size="xs" />
                 {control.data.running ? 'Running' : 'Stopped'}
               </Badge>
             )}
             <Button
-              variant="primary"
+              variant="default"
               size="sm"
               onClick={onSave}
-              loading={save.isPending}
-              disabled={!dirty || !values || hasErrors}
+              disabled={!dirty || !values || hasErrors || save.isPending}
               title={hasErrors ? 'Fix the highlighted fields first' : undefined}
             >
+              {save.isPending && <Spinner data-icon="inline-start" />}
               Save changes
             </Button>
           </div>
@@ -377,22 +378,35 @@ export function Config() {
       />
 
       {query.isLoading || !config || !values ? (
-        <Skeleton className="mt-6 h-[420px] rounded-card" />
+        <Skeleton className="mt-6 h-[420px] rounded-3xl" />
       ) : (
         <>
-          <Card className="mt-4 flex flex-wrap items-center gap-3 border-accent/30 bg-accent-soft/10 p-5">
-            <span className="grid size-9 shrink-0 place-items-center rounded-tile bg-accent-soft text-accent">
+          <Card className="mt-4 flex flex-row flex-wrap items-center gap-3 border-primary/30 bg-primary/5 p-5">
+            <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
               <Zap className="size-4.5" aria-hidden="true" />
             </span>
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <h2 className="text-[14px] font-semibold text-fg">{activeSetup ? `${activeSetup.symbol} Strategy Status` : 'Strategy Status'}</h2>
-                {activeSetup && <Badge tone="accent">{activeSetup.name}</Badge>}
-                <Badge tone="success">0% Maker Fee</Badge>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="font-heading text-sm font-semibold text-foreground">
+                  {activeSetup ? `${activeSetup.symbol} Strategy Status` : 'Strategy Status'}
+                </h2>
+                {activeSetup && (
+                  <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">
+                    {activeSetup.name}
+                  </Badge>
+                )}
+                <Badge
+                  variant="outline"
+                  className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                >
+                  0% Maker Fee
+                </Badge>
               </div>
-              <p className="mt-1 text-[12.5px] leading-relaxed text-muted">
-                {activeSetup ? `${activeSetup.signature} — ${activeSetup.description}` : 'Direction-agnostic volatility harvester.'}
-              </p>
+              {activeSetup?.signature && (
+                <p className="mt-1 text-[12px] text-muted-foreground">
+                  {activeSetup.signature}
+                </p>
+              )}
             </div>
           </Card>
 
@@ -400,36 +414,69 @@ export function Config() {
             {GROUPS.filter((g) => g.fields.length > 0).map((group) => {
               const Icon = group.icon
               return (
-                <Card key={group.title} className={cx('p-5', group.fields.length > 4 && 'lg:col-span-2')}>
+                <Card key={group.title} className={cn('gap-0 p-5', group.fields.length > 4 && 'lg:col-span-2')}>
                   <div className="flex items-center gap-3">
-                    <span className={cx('grid size-9 shrink-0 place-items-center rounded-tile', TONES[group.tone])}>
-                      <Icon className="size-4.5" aria-hidden="true" />
+                    <span className={cn('grid size-8 shrink-0 place-items-center rounded-xl', TONES[group.tone])}>
+                      <Icon className="size-4" aria-hidden="true" />
                     </span>
-                    <div className="min-w-0">
-                      <h2 className="text-[14px] font-semibold">{group.title}</h2>
-                      {group.note && <p className="mt-0.5 text-[12px] leading-snug text-muted">{group.note}</p>}
-                    </div>
+                    <h2 className="font-heading text-[15px] font-semibold text-foreground">{group.title}</h2>
                   </div>
                   <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     {group.fields.map((field) => {
                       const value = values[field.path] ?? 0
                       const fieldError = errorFor(field.path, value)
                       return (
-                        <Field key={field.path} label={field.label} hint={field.hint} tip={field.tip} error={fieldError}>
-                          <span className="flex min-w-0 items-stretch">
-                            <Input
+                        <Field key={field.path} data-invalid={fieldError !== undefined || undefined} className="gap-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <FieldLabel htmlFor={field.path} className="text-xs font-medium text-muted-foreground">
+                              {field.label}
+                            </FieldLabel>
+                            {field.tip && (
+                              <Tooltip>
+                                <TooltipTrigger
+                                  render={
+                                    <button
+                                      type="button"
+                                      aria-label={`About ${field.label}`}
+                                      className="inline-flex text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:text-foreground"
+                                    />
+                                  }
+                                >
+                                  <Info className="size-3.5" aria-hidden="true" />
+                                </TooltipTrigger>
+                                <TooltipContent side="top" className="w-72 max-w-xs flex-col items-start p-3 text-left">
+                                  {field.tip}
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
+                          </div>
+                          <InputGroup>
+                            <InputGroupInput
+                              id={field.path}
                               type="number"
                               step={field.step ?? 0.01}
                               value={value}
                               onChange={(event) => set(field.path, event.target.value)}
-                              invalid={fieldError !== undefined}
-                              className="rounded-r-none border-r-0 tabular-nums"
+                              aria-invalid={fieldError !== undefined || undefined}
+                              className="font-mono tabular-nums"
                             />
-                            <ResetFieldButton
-                              label={field.label}
-                              onReset={() => set(field.path, String(defaultValues[field.path] ?? 0))}
-                            />
-                          </span>
+                            <InputGroupAddon align="inline-end">
+                              <InputGroupButton
+                                variant="ghost"
+                                size="icon-xs"
+                                aria-label={`Reset ${field.label} to default`}
+                                title="Reset to default"
+                                onClick={() => set(field.path, String(defaultValues[field.path] ?? 0))}
+                              >
+                                <RotateCcw className="size-3.5" aria-hidden="true" />
+                              </InputGroupButton>
+                            </InputGroupAddon>
+                          </InputGroup>
+                          {fieldError ? (
+                            <FieldError className="text-xs">{fieldError}</FieldError>
+                          ) : field.hint ? (
+                            <FieldDescription className="text-xs">{field.hint}</FieldDescription>
+                          ) : null}
                         </Field>
                       )
                     })}
@@ -440,15 +487,13 @@ export function Config() {
           </div>
 
           {hasErrors && (
-            <p role="alert" className="mt-3 text-[12px] font-medium text-danger">
+            <p role="alert" className="mt-3 text-[12px] font-medium text-destructive">
               Some fields are out of range — Save is disabled until they are fixed.
             </p>
           )}
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-            <p className="text-[12.5px] text-faint">
-              Saved to <span className="font-mono">bot/config.json</span>. Paper only — changes apply on the next window.
-            </p>
+            <span className="font-mono text-xs text-muted-foreground">bot/config.json</span>
             <div className="flex items-center gap-2">
               <Button
                 variant="ghost"
@@ -456,16 +501,16 @@ export function Config() {
                 onClick={() => setDraft(null)}
                 disabled={!dirty}
               >
-                <RotateCcw /> Discard
+                <RotateCcw data-icon="inline-start" /> Discard
               </Button>
               <Button
-                variant="primary"
+                variant="default"
                 size="sm"
                 onClick={onSave}
-                loading={save.isPending}
-                disabled={!dirty || hasErrors}
+                disabled={!dirty || hasErrors || save.isPending}
                 title={hasErrors ? 'Fix the highlighted fields first' : undefined}
               >
+                {save.isPending && <Spinner data-icon="inline-start" />}
                 Save changes
               </Button>
             </div>

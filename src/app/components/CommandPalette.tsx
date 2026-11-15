@@ -1,97 +1,174 @@
-import { AnimatePresence, motion } from 'motion/react'
-import { Activity, BookOpen, FlaskConical, LayoutDashboard, Search, Settings, SlidersHorizontal } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import {
+  Activity,
+  BookOpen,
+  FlaskConical,
+  LayoutDashboard,
+  Moon,
+  SlidersHorizontal,
+  Sun,
+  SunMoon,
+} from 'lucide-react'
 import { useNavigate } from 'react-router'
 
-import { cx } from '../lib/cx'
+import { Badge } from '@/components/ui/badge'
+import {
+  Command,
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+  CommandShortcut,
+} from '@/components/ui/command'
+import { cn } from '@/lib/utils'
+import { useBotControl } from '../lib/bot'
+import { StatusDot } from './StatusDot'
 
-type Item = { key: string; label: string; to: string; icon: React.ReactNode }
+type NavItem = {
+  key: string
+  label: string
+  to: string
+  shortcut: string
+  keywords: string[]
+  icon: React.ReactNode
+}
 
-const shortcuts: Item[] = [
-  { key: 's-dashboard', label: 'Go to Dashboard', to: '/', icon: <LayoutDashboard className="size-4 text-muted" /> },
-  { key: 's-live', label: 'Go to Live bot', to: '/live', icon: <Activity className="size-4 text-muted" /> },
-  { key: 's-ab-test', label: 'Go to A/B Testing Lab', to: '/ab-test', icon: <FlaskConical className="size-4 text-muted" /> },
-  { key: 's-config', label: 'Go to Configuration', to: '/config', icon: <SlidersHorizontal className="size-4 text-muted" /> },
-  { key: 's-strategy', label: 'Go to Strategy', to: '/strategy', icon: <BookOpen className="size-4 text-muted" /> },
-  { key: 's-settings', label: 'Go to Settings', to: '/settings', icon: <Settings className="size-4 text-muted" /> },
+const navItems: NavItem[] = [
+  {
+    key: 'dashboard',
+    label: 'Go to Dashboard',
+    to: '/',
+    shortcut: 'G D',
+    keywords: ['home', 'overview', 'pnl'],
+    icon: <LayoutDashboard />,
+  },
+  {
+    key: 'live',
+    label: 'Go to Live Bot',
+    to: '/live',
+    shortcut: 'G L',
+    keywords: ['trading', 'windows', 'orders', 'fills'],
+    icon: <Activity />,
+  },
+  {
+    key: 'ab-test',
+    label: 'Go to A/B Testing Lab',
+    to: '/ab-test',
+    shortcut: 'G A',
+    keywords: ['experiment', 'comparison', 'variants'],
+    icon: <FlaskConical />,
+  },
+  {
+    key: 'config',
+    label: 'Go to Configuration',
+    to: '/config',
+    shortcut: 'G C',
+    keywords: ['parameters', 'risk', 'thresholds'],
+    icon: <SlidersHorizontal />,
+  },
+  {
+    key: 'strategy',
+    label: 'Go to Strategy',
+    to: '/strategy',
+    shortcut: 'G R',
+    keywords: ['rules', 'hapcs', 'docs'],
+    icon: <BookOpen />,
+  },
 ]
 
-export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [q, setQ] = useState('')
-  const [active, setActive] = useState(0)
+export function CommandPalette({
+  open,
+  onClose,
+  onToggleTheme,
+  theme,
+}: {
+  open: boolean
+  onClose: () => void
+  onToggleTheme?: () => void
+  theme?: 'dark' | 'light'
+}) {
   const navigate = useNavigate()
+  const control = useBotControl()
+  const botRunning = Boolean(control.data?.running)
+  const isRealMode = control.data?.mode === 'live'
+  const executionModeLabel = isRealMode ? 'Real' : 'Paper'
 
-  useEffect(() => {
-    if (open) {
-      setQ('')
-      setActive(0)
-    }
-  }, [open])
-
-  const list = shortcuts.filter((s) => s.label.toLowerCase().includes(q.trim().toLowerCase()))
-
-  useEffect(() => setActive(0), [q])
-
-  function go(item: Item) {
+  function handleSelectRoute(to: string) {
     onClose()
-    navigate(item.to)
+    navigate(to)
   }
 
+  function handleToggleTheme() {
+    onClose()
+    onToggleTheme?.()
+  }
+
+  const themeIcon = theme === 'dark' ? <Sun /> : theme === 'light' ? <Moon /> : <SunMoon />
+  const themeLabel =
+    theme === 'dark' ? 'Switch to light theme' : theme === 'light' ? 'Switch to dark theme' : 'Toggle color theme'
+
   return (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          className="fixed inset-0 z-50 flex items-start justify-center bg-fg/25 px-4 pt-[12vh] backdrop-blur-[2px]"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.15 }}
-          onMouseDown={(e) => e.target === e.currentTarget && onClose()}
-        >
-          <motion.div
-            role="dialog"
-            aria-label="Go to"
-            className="w-full max-w-[560px] overflow-hidden rounded-dialog bg-surface shadow-dialog"
-            initial={{ opacity: 0, y: -8, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.98 }}
-            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <div className="flex h-12 items-center gap-3 border-b border-line px-4">
-              <Search className="size-4 text-faint" />
-              <input
-                autoFocus
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'ArrowDown') (e.preventDefault(), setActive((a) => Math.min(a + 1, list.length - 1)))
-                  if (e.key === 'ArrowUp') (e.preventDefault(), setActive((a) => Math.max(a - 1, 0)))
-                  if (e.key === 'Enter' && list[active]) go(list[active])
-                  if (e.key === 'Escape') onClose()
-                }}
-                placeholder="Go to…"
-                className="h-full flex-1 bg-transparent text-[14px] outline-none placeholder:text-faint"
-              />
-            </div>
-            <ul className="max-h-[50vh] overflow-y-auto p-1.5">
-              {list.length === 0 && <li className="px-3 py-8 text-center text-[13.5px] text-muted">Nothing matches “{q}”</li>}
-              {list.map((item, i) => (
-                <li key={item.key}>
-                  <button
-                    type="button"
-                    onMouseEnter={() => setActive(i)}
-                    onClick={() => go(item)}
-                    className={cx('flex h-10 w-full items-center gap-3 rounded-control px-2.5 text-left', i === active && 'bg-surface-2')}
-                  >
-                    {item.icon}
-                    <span className="min-w-0 flex-1 truncate text-[13.5px]">{item.label}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+    <CommandDialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose()
+      }}
+      title="Command Palette"
+      description="Jump to a desk view or run an action."
+    >
+      <Command>
+        <CommandInput placeholder="Jump to a page or command..." />
+        <CommandList>
+          <CommandEmpty>No matching pages or commands.</CommandEmpty>
+          <CommandGroup heading="Navigation">
+            {navItems.map((item) => (
+              <CommandItem
+                key={item.key}
+                value={item.label}
+                keywords={item.keywords}
+                onSelect={() => handleSelectRoute(item.to)}
+              >
+                {item.icon}
+                <span>{item.label}</span>
+                {item.key === 'live' && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        'h-4 px-1.5 font-mono text-[9.5px] font-semibold tracking-wider uppercase',
+                        isRealMode
+                          ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                          : 'border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+                      )}
+                    >
+                      {executionModeLabel}
+                    </Badge>
+                    <StatusDot
+                      tone={botRunning ? 'live' : 'stopped'}
+                      size="xs"
+                      label={`${executionModeLabel} · ${botRunning ? 'Bot running' : 'Bot stopped'}`}
+                    />
+                  </span>
+                )}
+                <CommandShortcut>{item.shortcut}</CommandShortcut>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+          {onToggleTheme && (
+            <>
+              <CommandSeparator />
+              <CommandGroup heading="Preferences">
+                <CommandItem value={themeLabel} keywords={['theme', 'dark', 'light', 'mode']} onSelect={handleToggleTheme}>
+                  {themeIcon}
+                  <span>{themeLabel}</span>
+                </CommandItem>
+              </CommandGroup>
+            </>
+          )}
+        </CommandList>
+      </Command>
+    </CommandDialog>
   )
 }

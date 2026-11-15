@@ -1,14 +1,20 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import {
   AlertCircle,
+  Award,
   BarChart3,
   Check,
+  Clock,
+  Filter,
   FlaskConical,
+  Layers,
   Play,
   RefreshCw,
   Scale,
   Sparkles,
   Square,
+  Target,
+  TrendingUp,
 } from 'lucide-react'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
@@ -21,9 +27,58 @@ import {
   useBotControl,
 } from '../lib/bot'
 import { MAKER_REBATE_SHARE, useAccountTier, useIncludeRebates } from '../lib/rebates'
-import { Badge, Button, Card, PageHeader, useToast } from '../components/ui'
+import { PageHeader, useToast } from '../components/ui'
+import { StatusDot, type StatusDotTone } from '../components/StatusDot'
 import { cx } from '../lib/cx'
 import { tweakCards } from '../strategyCopy'
+import { Badge as ShadcnBadge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
+import { Spinner } from '@/components/ui/spinner'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { cn } from '@/lib/utils'
+
+type BadgeTone = 'neutral' | 'accent' | 'info' | 'success' | 'warning' | 'danger'
+
+const BADGE_TONES: Record<BadgeTone, string> = {
+  neutral: 'border-border bg-muted/50 text-muted-foreground',
+  accent: 'border-primary/30 bg-primary/10 text-primary',
+  info: 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400',
+  success: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+  warning: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+  danger: 'border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400',
+}
+
+const BADGE_DOT_TONES: Record<BadgeTone, StatusDotTone> = {
+  neutral: 'stopped',
+  accent: 'stopped',
+  info: 'stopped',
+  success: 'live',
+  warning: 'warning',
+  danger: 'danger',
+}
+
+function Badge({
+  tone = 'neutral',
+  dot,
+  live = false,
+  className,
+  children,
+}: {
+  tone?: BadgeTone
+  dot?: boolean
+  live?: boolean
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <ShadcnBadge variant="outline" className={cn('gap-1.5', BADGE_TONES[tone], className)}>
+      {dot && <StatusDot tone={BADGE_DOT_TONES[tone]} blink={live} size="xs" />}
+      {children}
+    </ShadcnBadge>
+  )
+}
 
 const { abs, max, min, ceil, round } = globalThis.Math
 
@@ -141,16 +196,26 @@ function Scorecard({
     <Card className={cx('grid grid-rows-subgrid row-span-5 gap-y-3 p-5', highlight && 'border-emerald-500/40 shadow-xs')}>
       <div className="contents">
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2.5">
             <span
               className={cx(
-                'inline-flex items-center gap-1 rounded-[6px] px-2 py-0.5 font-mono text-[11px] font-bold',
-                highlight ? 'bg-emerald-500/15 text-emerald-600' : 'bg-surface-2 text-muted',
+                'grid size-8 shrink-0 place-items-center rounded-xl',
+                highlight ? 'bg-emerald-500/15 text-emerald-500' : 'bg-muted text-muted-foreground',
               )}
             >
-              {kicker}
+              {highlight ? <FlaskConical className="size-4" /> : <Layers className="size-4" />}
             </span>
-            <h3 className="mt-1 truncate text-[16px] font-semibold text-fg">{label}</h3>
+            <div className="min-w-0">
+              <span
+                className={cx(
+                  'inline-flex items-center gap-1 rounded-[6px] px-1.5 py-0.5 font-mono text-[10px] font-bold',
+                  highlight ? 'bg-emerald-500/15 text-emerald-600' : 'bg-surface-2 text-muted',
+                )}
+              >
+                {kicker}
+              </span>
+              <h3 className="mt-0.5 truncate font-heading text-[15px] font-semibold text-foreground">{label}</h3>
+            </div>
           </div>
           {badge}
         </div>
@@ -499,41 +564,47 @@ export function AbTest() {
   }, [baseline, candidate])
 
   return (
-    <div className="space-y-6 pb-12">
+    <div className="mx-auto max-w-[1200px] space-y-6 p-5 pb-12 sm:p-8">
       <PageHeader
-        title="A/B Hypothesis Lab & Statistical Gate"
-        subtitle={`Rigorous empirical testing of ${baselineLabel} vs ${candidateLabel} at 95% confidence.`}
+        icon={<FlaskConical className="size-5" />}
+        title="A/B Hypothesis Lab"
         actions={
           <div className="flex items-center gap-2.5">
             <Button
-              variant="secondary"
+              variant="outline"
               size="sm"
               onClick={() => refetch()}
-              className="gap-1.5"
             >
-              <RefreshCw className="size-3.5" />
+              <RefreshCw data-icon="inline-start" className="size-3.5" />
               Refresh Data
             </Button>
             {isCandidateRunning ? (
               <Button
-                variant="danger"
+                variant="destructive"
                 size="sm"
                 onClick={handleStop}
-                loading={stopCandidate.isPending}
-                className="gap-1.5"
+                disabled={stopCandidate.isPending}
               >
-                <Square className="size-3.5 fill-current" />
+                {stopCandidate.isPending ? (
+                  <Spinner data-icon="inline-start" />
+                ) : (
+                  <Square data-icon="inline-start" className="size-3.5 fill-current" />
+                )}
                 Stop Candidate Run
               </Button>
             ) : (
               <Button
-                variant="primary"
+                variant="default"
                 size="sm"
                 onClick={handleStart}
-                loading={startCandidate.isPending}
+                disabled={startCandidate.isPending}
                 title="Start the candidate run under the wired strategy config"
               >
-                <Play className="size-3.5 fill-current" />
+                {startCandidate.isPending ? (
+                  <Spinner data-icon="inline-start" />
+                ) : (
+                  <Play data-icon="inline-start" className="size-3.5 fill-current" />
+                )}
                 Launch Candidate Run (B)
               </Button>
             )}
@@ -544,16 +615,16 @@ export function AbTest() {
       {/* Top Grid: Section 1 (Statistical Test Status) & Section 2 (Sample Size Progress) */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         {/* Section 1 — Statistical Test Status (Left 2×2 KPI Grid matching SVG layout) */}
-        <Card className="flex flex-col justify-between p-5 lg:col-span-7">
+        <Card className="flex flex-col justify-between gap-0 p-5 lg:col-span-7">
           <div>
             <div className="mb-3.5 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <span className="flex size-7 items-center justify-center rounded-[8px] bg-accent/15 text-accent">
+              <div className="flex items-center gap-2.5">
+                <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
                   <FlaskConical className="size-4" />
                 </span>
-                <span className="font-mono text-[11px] font-bold uppercase tracking-wider text-muted">
+                <h2 className="font-heading text-[15px] font-semibold text-foreground">
                   Statistical Test Status
-                </span>
+                </h2>
               </div>
               {stats && (
                 <Badge
@@ -568,7 +639,9 @@ export function AbTest() {
                   }
                   className="font-medium text-[11px]"
                 >
-                  {stats.verdict} ({candidateActive} / {targetN} active)
+                  {stats.verdict.includes('(')
+                    ? stats.verdict
+                    : `${stats.verdict} (${candidateActive}/${targetN} active)`}
                 </Badge>
               )}
             </div>
@@ -578,7 +651,10 @@ export function AbTest() {
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {/* Tile 1: Welch t-Statistic vs Critical */}
                 <div className="flex flex-col justify-between rounded-tile border border-line bg-surface-2/60 p-3">
-                  <span className="text-[11px] font-medium text-muted">Welch t-Statistic vs Critical</span>
+                  <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted">
+                    <Scale className="size-3 text-primary" />
+                    Welch t-Statistic vs Critical
+                  </span>
                   <div className="mt-1.5 flex items-baseline gap-2">
                     <span className="font-mono text-[18px] font-bold text-fg">
                       <Math tex={String.raw`t = ${stats.tStatistic.toFixed(2)}`} className="mr-0.5 text-[14px]" />
@@ -605,7 +681,10 @@ export function AbTest() {
 
                 {/* Tile 2: Observed p-value */}
                 <div className="flex flex-col justify-between rounded-tile border border-line bg-surface-2/60 p-3">
-                  <span className="text-[11px] font-medium text-muted">Observed p-value</span>
+                  <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted">
+                    <Target className="size-3 text-info" />
+                    Observed p-value
+                  </span>
                   <div className="mt-1.5 flex items-baseline gap-2">
                     <span className="font-mono text-[18px] font-bold text-fg">
                       <Math tex={String.raw`p = ${stats.pValue.toFixed(4)}`} className="mr-0.5 text-[14px]" />
@@ -630,8 +709,11 @@ export function AbTest() {
                       : 'border-line bg-surface-2/60',
                   )}
                 >
-                  <span className="text-[11px] font-medium text-muted">
-                    Candidate Mean (<Math tex={String.raw`\mu_B`} className="text-[11px]" />) vs Target
+                  <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted">
+                    <TrendingUp className="size-3 text-emerald-500" />
+                    <span>
+                      Candidate Mean (<Math tex={String.raw`\mu_B`} className="text-[11px]" />) vs Target
+                    </span>
                   </span>
                   <div className="mt-1.5 flex items-baseline gap-2">
                     <span
@@ -669,7 +751,10 @@ export function AbTest() {
 
                 {/* Tile 4: Win Rate & Pair Quality */}
                 <div className="flex flex-col justify-between rounded-tile border border-line bg-surface-2/60 p-3">
-                  <span className="text-[11px] font-medium text-muted">Win Rate & Pair Quality</span>
+                  <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted">
+                    <Award className="size-3 text-amber-500" />
+                    Win Rate &amp; Pair Quality
+                  </span>
                   <div className="mt-1.5 flex items-baseline gap-2">
                     <span className="font-mono text-[18px] font-bold text-fg">
                       {(candidate?.samples ?? 0) > 0 ? pct(candidate?.winRate) : '—'}
@@ -694,19 +779,20 @@ export function AbTest() {
               </div>
             )}
           </div>
-
-          <p className="mt-3 text-[10.5px] leading-relaxed text-faint">
-            Raw settled-window PnL before rebates — compare with dashboard &ldquo;Net before rebates&rdquo; tile.
-          </p>
         </Card>
 
         {/* Section 2 — Sample Size Progress (Right Panel with 3 Visual Progress Bars) */}
-        <Card className="flex flex-col justify-between p-5 lg:col-span-5">
+        <Card className="flex flex-col justify-between gap-0 p-5 lg:col-span-5">
           <div>
             <div className="mb-3.5 flex items-center justify-between gap-2">
-              <span className="font-mono text-[11px] font-bold uppercase tracking-wider text-muted">
-                Sample Gates (B vs Baseline A)
-              </span>
+              <div className="flex items-center gap-2.5">
+                <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+                  <Filter className="size-4" />
+                </span>
+                <h2 className="font-heading text-[15px] font-semibold text-foreground">
+                  Sample Gates (B vs A)
+                </h2>
+              </div>
               <span className="font-mono text-[11px] text-faint">
                 Power: 80% (<Math tex={String.raw`1 - \beta`} className="text-[11px]" />)
               </span>
@@ -789,11 +875,13 @@ export function AbTest() {
       </div>
 
       {/* Section 3 — Formal Scientific Hypothesis & Decision Boundary */}
-      <Card className="p-5">
-        <div className="mb-4 flex items-center gap-2">
-          <Scale className="size-4 text-accent" />
-          <h2 className="text-[15px] font-semibold text-fg">
-            Formal Scientific Hypothesis &amp; Decision Boundary
+      <Card className="gap-0 p-5">
+        <div className="mb-4 flex items-center gap-2.5">
+          <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+            <Scale className="size-4" />
+          </span>
+          <h2 className="font-heading text-[15px] font-semibold text-foreground">
+            Hypothesis &amp; Decision Boundary
           </h2>
         </div>
 
@@ -886,8 +974,9 @@ export function AbTest() {
 
         {/* The 3 Tested Tweaks Breakdown */}
         <div className="mt-4 border-t border-line pt-4">
-          <p className="text-[12px] font-bold uppercase tracking-wider text-muted">
-            The 3 Core Improvements in Candidate Strategy B ({candidateLabel})
+          <p className="flex items-center gap-1.5 text-[12px] font-semibold text-foreground">
+            <Sparkles className="size-3.5 text-primary" />
+            Core Candidate Tweaks ({candidateLabel})
           </p>
           <div className="mt-2.5 grid gap-3 sm:grid-cols-3">
             <div className="rounded-[9px] border border-line bg-surface p-3">
@@ -940,7 +1029,11 @@ export function AbTest() {
           kicker="STRATEGY B - CANDIDATE"
           tag="s_B"
           nTag="N_B"
-          badge={<Badge tone={isCandidateRunning ? 'success' : 'accent'}>{isCandidateRunning ? 'Live Sampling' : 'Ready'}</Badge>}
+          badge={
+            <Badge tone={isCandidateRunning ? 'success' : 'neutral'} dot live={isCandidateRunning}>
+              {isCandidateRunning ? 'Live Sampling' : 'Ready'}
+            </Badge>
+          }
           highlight
           rebates={tier}
           includeRebates={includeRebates}
@@ -949,13 +1042,13 @@ export function AbTest() {
       </div>
 
       {/* 4. Comparative PnL Distribution Histogram */}
-      <Card className="p-5">
+      <Card className="gap-0 p-5">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <BarChart3 className="size-4 text-accent" />
-              <h3 className="text-[15px] font-semibold text-fg">Comparative PnL Frequency Histogram</h3>
-            </div>
+          <div className="flex items-center gap-2.5">
+            <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+              <BarChart3 className="size-4" />
+            </span>
+            <h2 className="font-heading text-[15px] font-semibold text-foreground">PnL Distribution Histogram</h2>
           </div>
 
           <div className="flex items-center gap-4 text-[11.5px]">
@@ -986,7 +1079,7 @@ export function AbTest() {
               title={live ? 'Pause live updates (freezes the chart for inspection)' : 'Resume live updates (10s poll)'}
               className={cx('flex items-center gap-1.5 rounded-pill border border-line px-2.5 py-1 transition-all hover:bg-surface-2', !live && 'opacity-60')}
             >
-              <span className={cx('size-2 rounded-full', live ? 'bg-success' : 'bg-muted')} />
+              <StatusDot tone={live ? 'live' : 'stopped'} size="sm" />
               <span className={cx(!live && 'line-through')}>{live ? 'Live' : 'Paused'}</span>
             </button>
             <div className="flex items-center overflow-hidden rounded-pill border border-line text-[11px]" role="group" aria-label="Histogram scale">
@@ -1163,68 +1256,72 @@ export function AbTest() {
       </Card>
 
       {/* 5. Live Settled Window Stream (Recent Candidate Samples) */}
-      <Card className="p-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-[15px] font-semibold text-fg">Recent Candidate Window Samples</h3>
-            <p className="text-[12px] text-muted">
-              Live sample stream recorded under Strategy B ({candidate?.windows?.length ?? 0} settled records shown).
-            </p>
+      <Card className="gap-0 p-5">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5">
+            <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+              <Clock className="size-4" />
+            </span>
+            <h2 className="font-heading text-[15px] font-semibold text-foreground">Recent Candidate Samples</h2>
           </div>
-          <Badge tone="neutral">Auto-updating (10s poll)</Badge>
+          <Badge tone="neutral">{candidate?.windows?.length ?? 0} windows</Badge>
         </div>
 
         {candidate?.windows && candidate.windows.length > 0 ? (
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full text-left text-[12.5px]">
-              <thead>
-                <tr className="border-b border-line font-mono text-[11px] text-faint">
-                  <th className="pb-2">Window</th>
-                  <th className="pb-2">Winner</th>
-                  <th className="pb-2 text-right">Shares (Up / Down)</th>
-                  <th className="pb-2 text-right">Pair Cost</th>
-                  <th className="pb-2 text-right">Total Cost</th>
-                  <th className="pb-2 text-right">Payout</th>
-                  <th className="pb-2 text-right">Net PnL</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-line/40 font-mono">
+          <div className="mt-4 [&_[data-slot=table-container]]:max-h-[380px] [&_[data-slot=table-container]]:overflow-y-auto [&_[data-slot=table-container]]:scrollbar-thin">
+            <Table className="text-left text-[12.5px]">
+              <TableHeader className="sticky top-0 z-10 bg-card font-mono text-[11px] text-muted-foreground">
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="h-8 pb-2 text-muted-foreground">Window</TableHead>
+                  <TableHead className="h-8 pb-2 text-muted-foreground">Winner</TableHead>
+                  <TableHead className="h-8 pb-2 text-right text-muted-foreground">Shares (Up / Down)</TableHead>
+                  <TableHead className="h-8 pb-2 text-right text-muted-foreground">Pair Cost</TableHead>
+                  <TableHead className="h-8 pb-2 text-right text-muted-foreground">Total Cost</TableHead>
+                  <TableHead className="h-8 pb-2 text-right text-muted-foreground">Payout</TableHead>
+                  <TableHead className="h-8 pb-2 text-right text-muted-foreground">Net PnL</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody className="font-mono">
                 {candidate.windows.slice().reverse().map((w) => (
-                  <tr key={w.slug} className="hover:bg-surface-2/30">
-                    <td className="py-2.5 font-medium text-fg">{w.slug}</td>
-                    <td className="py-2.5">
-                      <span className={w.winner === 'Up' ? 'text-success' : 'text-danger'}>
+                  <TableRow key={w.slug}>
+                    <TableCell className="py-2.5 font-medium text-foreground">{w.slug}</TableCell>
+                    <TableCell className="py-2.5">
+                      <span className={w.winner === 'Up' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>
                         {w.winner ?? '—'}
                       </span>
-                    </td>
-                    <td className="py-2.5 text-right text-muted">
-                      {trim2(w.upShares)} / {trim2(w.downShares)} {w.imbalance > 0 && <span className="text-warning">(!{trim2(w.imbalance)})</span>}
-                    </td>
-                    <td className="py-2.5 text-right font-medium">
-                      <span className={w.pairCost && w.pairCost <= 0.995 ? 'text-success' : 'text-danger'}>
+                    </TableCell>
+                    <TableCell className="py-2.5 text-right tabular-nums text-muted-foreground">
+                      {trim2(w.upShares)} / {trim2(w.downShares)} {w.imbalance > 0 && <span className="text-amber-600 dark:text-amber-400">(!{trim2(w.imbalance)})</span>}
+                    </TableCell>
+                    <TableCell className="py-2.5 text-right font-medium tabular-nums">
+                      <span className={w.pairCost && w.pairCost <= 0.995 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>
                         {w.pairCost ? `$${w.pairCost.toFixed(4)}` : '—'}
                       </span>
-                    </td>
-                    <td className="py-2.5 text-right text-muted">${w.cost.toFixed(2)}</td>
-                    <td className="py-2.5 text-right text-muted">${w.payout.toFixed(2)}</td>
-                    <td className="py-2.5 text-right font-bold">
-                      <span className={w.net > 0 ? 'text-success' : w.net < 0 ? 'text-danger' : 'text-muted'}>
+                    </TableCell>
+                    <TableCell className="py-2.5 text-right tabular-nums text-muted-foreground">${w.cost.toFixed(2)}</TableCell>
+                    <TableCell className="py-2.5 text-right tabular-nums text-muted-foreground">${w.payout.toFixed(2)}</TableCell>
+                    <TableCell className="py-2.5 text-right font-bold tabular-nums">
+                      <span className={w.net > 0 ? 'text-emerald-600 dark:text-emerald-400' : w.net < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-muted-foreground'}>
                         {money(w.net)}
                       </span>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         ) : (
-          <div className="mt-6 flex flex-col items-center justify-center rounded-tile border border-dashed border-line py-10 text-center">
-            <FlaskConical className="size-8 text-faint" />
-            <p className="mt-2 text-[14px] font-medium text-fg">No candidate samples gathered yet</p>
-            <p className="mt-1 text-[12px] text-muted">
-              Click "Launch Candidate Run (B)" above to start the live paper trading loop under the {candidateLabel} configuration.
-            </p>
-          </div>
+          <Empty className="mt-6 border border-dashed border-border py-10">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <FlaskConical />
+              </EmptyMedia>
+              <EmptyTitle>No candidate samples gathered yet</EmptyTitle>
+              <EmptyDescription>
+                Click &ldquo;Launch Candidate Run (B)&rdquo; above to start the live paper trading loop under the {candidateLabel} configuration.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         )}
       </Card>
     </div>

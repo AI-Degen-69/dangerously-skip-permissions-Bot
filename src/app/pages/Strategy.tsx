@@ -15,12 +15,59 @@ import {
   TrendingUp,
   Zap,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 
-import { Badge, Button, Card, PageHeader } from '../components/ui'
+import { PageHeader } from '../components/ui'
+import { StatusDot, type StatusDotTone } from '../components/StatusDot'
 import { BOT_ORIGIN, useBotControl, useStrategySetups, mergeStrategySetups, type StrategySetup } from '../lib/bot'
 import { STRATEGY_PRESETS } from '../botDefaults'
+import { Badge as ShadcnBadge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { cn } from '@/lib/utils'
+
+type BadgeTone = 'neutral' | 'accent' | 'info' | 'success' | 'warning' | 'danger'
+
+const BADGE_TONES: Record<BadgeTone, string> = {
+  neutral: 'border-border bg-muted/50 text-muted-foreground',
+  accent: 'border-primary/30 bg-primary/10 text-primary',
+  info: 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400',
+  success: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+  warning: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+  danger: 'border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400',
+}
+
+const BADGE_DOT_TONES: Record<BadgeTone, StatusDotTone> = {
+  neutral: 'stopped',
+  accent: 'stopped',
+  info: 'stopped',
+  success: 'live',
+  warning: 'warning',
+  danger: 'danger',
+}
+
+function Badge({
+  tone = 'neutral',
+  dot,
+  live = false,
+  className,
+  children,
+}: {
+  tone?: BadgeTone
+  dot?: boolean
+  live?: boolean
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <ShadcnBadge variant="outline" className={cn('gap-1.5', BADGE_TONES[tone], className)}>
+      {dot && <StatusDot tone={BADGE_DOT_TONES[tone]} blink={live} size="xs" />}
+      {children}
+    </ShadcnBadge>
+  )
+}
 
 // ----------------------------------------------------------------------
 // This page documents whatever setup bot/config.json currently selects.
@@ -299,6 +346,7 @@ const TOC_IDS = TOC.flatMap((item) => [item.id, ...item.children.map((child) => 
 
 export function Strategy() {
   const control = useBotControl()
+  const botRunning = Boolean(control.data?.running && !control.data?.isViewOnly)
   const setupsQuery = useStrategySetups()
   const allSetups = mergeStrategySetups(setupsQuery.data?.setups, STRATEGY_PRESETS as unknown as Record<string, StrategySetup>)
   const pickedId = control.data?.strategy?.id ?? setupsQuery.data?.activeSetupId
@@ -345,92 +393,38 @@ export function Strategy() {
   return (
     <div className="mx-auto max-w-[1180px] p-5 sm:p-8">
       <PageHeader
+        icon={<BookOpen className="size-5" />}
         title={picked ? `Strategy · ${picked.symbol}` : 'Strategy'}
-        subtitle={
-          picked
-            ? `${picked.name} — ${picked.signature}`
-            : loading
-              ? 'Reading the active setup from the bot API…'
-              : 'The bot API did not report an active setup.'
-        }
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <Badge tone="accent" className="font-mono font-semibold">
-              {picked ? `${picked.symbol} · Active` : loading ? 'Reading setup…' : 'Setup unknown'}
-            </Badge>
-            <Badge tone="info" className="font-mono text-[11px]">
-              API {BOT_ORIGIN}
-            </Badge>
-            <Link
-              to="/config"
-              className="inline-flex h-8 items-center gap-1.5 rounded-tile border border-line-strong bg-surface px-3 text-[13px] font-medium shadow-[0_1px_1px_rgb(20_20_24/0.04)] hover:bg-surface-2"
+            <Badge
+              tone={picked ? (botRunning ? 'success' : 'neutral') : 'neutral'}
+              dot={Boolean(picked)}
+              live={botRunning}
+              className="font-mono font-semibold"
             >
-              <SlidersHorizontal className="size-3.5" /> Tune thresholds
-            </Link>
+              {picked ? `${picked.symbol} · ${botRunning ? 'Running' : 'Stopped'}` : loading ? 'Reading setup…' : 'Setup unknown'}
+            </Badge>
+            <Button variant="outline" size="sm" nativeButton={false} render={<Link to="/config" />}>
+              <SlidersHorizontal data-icon="inline-start" className="size-3.5" />
+              Tune thresholds
+            </Button>
           </div>
         }
       />
 
-      {picked && entry && (
-        <Card className="mt-5 border-accent/40 p-5">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge tone="success">Currently picked: {picked.symbol}</Badge>
-            <span className="text-[14px] font-semibold text-fg">{picked.name}</span>
-            <Badge tone="neutral" className="font-mono text-[11px]">
-              {picked.id}
-            </Badge>
-          </div>
-          <p className="mt-1 font-mono text-[11.5px] text-muted">{picked.signature}</p>
-          <p className="mt-2 text-[12.5px] leading-relaxed text-muted">{picked.description}</p>
-          <div className="mt-3 flex flex-wrap gap-2 font-mono text-[11.5px]">
-            <span className="rounded-[8px] border border-line bg-surface px-2 py-1">
-              Band {cents(entry.minFillPrice)}–{cents(entry.maxFillPrice)}
-            </span>
-            <span className="rounded-[8px] border border-line bg-surface px-2 py-1">
-              {entry.dipCurve
-                ? `Curve ${entry.dipCurve.sharesLo}→${entry.dipCurve.sharesHi} sh`
-                : `Clip ${entry.clipSharesDefault} / max ${entry.maxShares} sh`}
-            </span>
-            <span className="rounded-[8px] border border-line bg-surface px-2 py-1">
-              {gapUsd > 0 ? `Gap cap $${gapUsd.toFixed(2)}` : `Gap veto ≥${entry.maxShareLead} sh`}
-            </span>
-            <span className="rounded-[8px] border border-line bg-surface px-2 py-1">
-              Pair cap ${Number(entry.maxPairCost).toFixed(3)}
-            </span>
-            <span className="rounded-[8px] border border-line bg-surface px-2 py-1">
-              Cutoff {entry.stopBeforeCloseSec}s
-            </span>
-          </div>
-          {others.length > 0 && (
-            <details className="mt-4 border-t border-line pt-3">
-              <summary className="cursor-pointer text-[12.5px] font-medium text-muted hover:text-fg">
-                {others.length} other setup{others.length === 1 ? '' : 's'} in the registry — not active
-              </summary>
-              <ul className="mt-2 space-y-1">
-                {others.map((s) => (
-                  <li key={s.id} className="flex flex-wrap items-baseline gap-2 text-[12px] text-faint">
-                    <span className="font-mono text-[11.5px] text-muted">{s.symbol}</span>
-                    <span>{s.name}</span>
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
-        </Card>
-      )}
-
       {/* Top Executive Banner */}
       {picked && entry && (
-        <Card className="mt-5 border-accent/40 bg-accent-soft/15 p-6">
+        <Card className="mt-5 gap-0 border-primary/40 bg-primary/5 p-6">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge tone="accent">{picked.symbol}</Badge>
+            <Badge tone="neutral" className="font-mono text-[11px]">{picked.id}</Badge>
             <Badge tone="info">Dip band {cents(entry.minFillPrice)}–{cents(entry.maxFillPrice)}</Badge>
             <Badge tone="success">Fresh gate ≤ {usd(entry.targetPairCost)}</Badge>
             {gapUsd > 0 && <Badge tone="warning">Gap cap {usd(gapUsd, 2)}</Badge>}
             <Badge tone="neutral">Hold to redeem (no sells)</Badge>
           </div>
 
-          <h2 className="mt-4 text-[17px] font-bold text-fg">
+          <h2 className="mt-4 font-heading text-lg font-bold text-foreground">
             How it works: buying $1.00 of guaranteed payout for under $1.00
           </h2>
           <p className="mt-2 text-[14px] leading-relaxed text-muted">
@@ -487,6 +481,22 @@ export function Strategy() {
               <p className="text-[11.5px] text-muted">sweep until T−{HARD_CUTOFF_S}s, then hold to redeem</p>
             </div>
           </div>
+
+          {others.length > 0 && (
+            <details className="mt-4 border-t border-border pt-3">
+              <summary className="cursor-pointer text-[12.5px] font-medium text-muted-foreground hover:text-foreground">
+                {others.length} other setup{others.length === 1 ? '' : 's'} in the registry — not active
+              </summary>
+              <ul className="mt-2 space-y-1">
+                {others.map((s) => (
+                  <li key={s.id} className="flex flex-wrap items-baseline gap-2 text-[12px] text-muted-foreground/80">
+                    <span className="font-mono text-[11.5px] text-muted-foreground">{s.symbol}</span>
+                    <span>{s.name}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
         </Card>
       )}
 
@@ -500,13 +510,13 @@ export function Strategy() {
               return (
                 <Button
                   key={item.id}
-                  variant={isActive ? 'primary' : 'secondary'}
-                  size="md"
+                  variant={isActive ? 'default' : 'outline'}
+                  size="default"
                   onClick={() => jumpTo(item.id)}
                   className="min-w-[165px] flex-1 whitespace-nowrap"
                   aria-current={isActive ? 'true' : undefined}
                 >
-                  <Icon />
+                  <Icon data-icon="inline-start" />
                   {item.short}
                 </Button>
               )
@@ -519,13 +529,15 @@ export function Strategy() {
               SECTION 1: WHAT THE ACTIVE ENGINE DOES
              ================================================================ */}
           <section id="strategy-active" aria-label="What the active engine does" className="scroll-mt-16 space-y-6">
-            <Card id="core-thesis" className="scroll-mt-16 p-6">
+            <Card id="core-thesis" className="scroll-mt-16 gap-0 p-6">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-[16px] font-semibold text-fg">
+                <div className="flex items-center gap-2.5">
+                  <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+                    <Zap className="size-4" />
+                  </span>
+                  <h3 className="font-heading text-base font-semibold text-foreground">
                     1. What {picked?.symbol ?? 'the active setup'} actually does
                   </h3>
-                  <p className="text-[13px] text-muted">Market-neutral volatility harvest, one 5-minute BTC Up/Down window at a time</p>
                 </div>
                 <Badge tone="success">Pairs under $1.00</Badge>
               </div>
@@ -634,40 +646,46 @@ export function Strategy() {
               SECTION 2: ACTIVE PARAMETERS & GATES
              ================================================================ */}
           <section id="strategy-spec" aria-label="Active parameters" className="scroll-mt-16 space-y-6">
-            <Card id="spec-table" className="scroll-mt-16 p-6">
+            <Card id="spec-table" className="scroll-mt-16 gap-0 p-6">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-[16px] font-semibold text-fg">
+                <div className="flex items-center gap-2.5">
+                  <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+                    <Sigma className="size-4" />
+                  </span>
+                  <h3 className="font-heading text-base font-semibold text-foreground">
                     2. Active parameters &amp; gates (<code className="font-mono text-[14px]">bot/config.json</code>)
                   </h3>
-                  <p className="text-[13px] text-muted">
-                    The entry block the engine re-reads at the start of every window — not a historical reconstruction
-                  </p>
                 </div>
                 <Badge tone="neutral">{picked?.symbol ?? 'No setup'} · live values</Badge>
               </div>
 
-              <div className="mt-4 overflow-x-auto">
-                <table className="w-full min-w-[680px] text-left text-[12.5px]">
-                  <thead className="border-b border-line text-[11px] font-semibold uppercase tracking-wider text-faint">
-                    <tr>
-                      <th className="py-2 px-2.5">Parameter</th>
-                      <th className="py-2 px-2.5">Active value</th>
-                      <th className="py-2 px-2.5">What it means</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-line">
+              <div className="mt-4">
+                <Table className="min-w-[680px] text-left text-[12.5px]">
+                  <TableHeader className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="py-2 px-2.5 text-muted-foreground">Parameter</TableHead>
+                      <TableHead className="py-2 px-2.5 text-muted-foreground">Active value</TableHead>
+                      <TableHead className="py-2 px-2.5 text-muted-foreground">What it means</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {rows.map((r) => (
-                      <tr key={r.key} className="hover:bg-surface-2/40">
-                        <td className="py-2.5 px-2.5 font-mono text-[12px] font-semibold text-fg">{r.key}</td>
-                        <td className="py-2.5 px-2.5 font-mono text-[12px] text-accent">{r.value}</td>
-                        <td className="py-2.5 px-2.5 text-[12px] leading-relaxed text-muted">{r.note}</td>
-                      </tr>
+                      <TableRow key={r.key}>
+                        <TableCell className="py-2.5 px-2.5 font-mono text-[12px] font-semibold text-foreground">
+                          {r.key}
+                        </TableCell>
+                        <TableCell className="whitespace-normal py-2.5 px-2.5 font-mono text-[12px] text-primary">
+                          {r.value}
+                        </TableCell>
+                        <TableCell className="whitespace-normal py-2.5 px-2.5 text-[12px] leading-relaxed text-muted-foreground">
+                          {r.note}
+                        </TableCell>
+                      </TableRow>
                     ))}
-                  </tbody>
-                </table>
+                  </TableBody>
+                </Table>
               </div>
-              <p className="mt-3 text-[11.5px] text-faint">
+              <p className="mt-3 text-[11.5px] text-muted-foreground">
                 Source of truth: <code className="font-mono">bot/config.json</code>, mirrored in{' '}
                 <code className="font-mono">bot/constants.py</code> and enforced by{' '}
                 <code className="font-mono">bot/executor.py</code>. Change a value on the Config page and this table
@@ -681,13 +699,15 @@ export function Strategy() {
               SECTION 3: WINDOW LIFECYCLE & WIRING
              ================================================================ */}
           <section id="strategy-lifecycle" aria-label="Window lifecycle" className="scroll-mt-16 space-y-6">
-            <Card id="window-lifecycle" className="scroll-mt-16 p-6">
+            <Card id="window-lifecycle" className="scroll-mt-16 gap-0 p-6">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-[16px] font-semibold text-fg">
-                    3. Window lifecycle (fills from T+0s, T−{entry?.stopBeforeCloseSec ?? 75}s cutoff)
+                <div className="flex items-center gap-2.5">
+                  <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+                    <Cpu className="size-4" />
+                  </span>
+                  <h3 className="font-heading text-base font-semibold text-foreground">
+                    3. Window lifecycle (T+0s → T−{entry?.stopBeforeCloseSec ?? 75}s)
                   </h3>
-                  <p className="text-[13px] text-muted">How one 300-second market is traded end to end</p>
                 </div>
                 <Badge tone="accent">Single-window lock</Badge>
               </div>
@@ -778,13 +798,13 @@ export function Strategy() {
               SECTION 4: RISKS & GUARDRAILS
              ================================================================ */}
           <section id="strategy-risks" aria-label="Risks and guardrails" className="scroll-mt-16 space-y-6">
-            <Card id="failure-modes" className="scroll-mt-16 p-6">
+            <Card id="failure-modes" className="scroll-mt-16 gap-0 p-6">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-[16px] font-semibold text-fg">4. Risks &amp; what bounds them</h3>
-                  <p className="text-[13px] text-muted">
-                    When {picked?.symbol ?? 'the engine'} loses money on a window, and what stops the loss growing
-                  </p>
+                <div className="flex items-center gap-2.5">
+                  <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-rose-500/10 text-rose-500">
+                    <ShieldAlert className="size-4" />
+                  </span>
+                  <h3 className="font-heading text-base font-semibold text-foreground">4. Risks &amp; what bounds them</h3>
                 </div>
                 <Badge tone="warning">
                   {gapUsd > 0 ? `${usd(gapUsd, 2)} max unhedged cost` : `${entry?.maxShareLead ?? 90} sh max unhedged lead`}
@@ -853,61 +873,62 @@ export function Strategy() {
               SECTION 5: REFERENCE TAPE — NOT LIVE CONFIG
              ================================================================ */}
           <section id="strategy-reference" aria-label="Reference tape" className="scroll-mt-16 space-y-6">
-            <Card id="tape-calibration" className="scroll-mt-16 border-line-strong p-6">
+            <Card id="tape-calibration" className="scroll-mt-16 gap-0 border-border p-6">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-[15.5px] font-semibold text-fg">5. Reference tape: price-regime calibration</h3>
-                  <p className="text-[12.5px] text-muted">
-                    Measured across 10,236 settled fills of the HAPCS-v1 reconstruction tape (Nov 7–8, 2026)
-                  </p>
+                <div className="flex items-center gap-2.5">
+                  <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground">
+                    <BookOpen className="size-4" />
+                  </span>
+                  <h3 className="font-heading text-base font-semibold text-foreground">5. Reference tape: price-regime calibration</h3>
                 </div>
                 <Badge tone="neutral">Evidence, not active config</Badge>
               </div>
 
-              <p className="mt-3 rounded-tile border border-line bg-surface-2/40 p-3 text-[12.5px] leading-relaxed text-muted">
+              <p className="mt-3 rounded-xl border border-border bg-muted/40 p-3 text-[12.5px] leading-relaxed text-muted-foreground">
                 This table is the historical evidence behind the 7¢ price floor and the mid-band skip. It comes from
                 the same wallet (0xc533…69a9) but an earlier Nov 6–8 ledger and a different engine generation
                 (HAPCS-v1), so its names, fills and ROI figures do not describe the setup running now — nothing on
                 this page above reads from it.
               </p>
 
-              <div className="mt-4 overflow-x-auto">
-                <table className="w-full min-w-[680px] text-left text-[12.5px]">
-                  <thead className="border-b border-line text-[11px] font-semibold uppercase tracking-wider text-faint">
-                    <tr>
-                      <th className="py-2 px-2.5">Price band</th>
-                      <th className="py-2 px-2.5">Tape regime</th>
-                      <th className="py-2 px-2.5 text-right">Fills</th>
-                      <th className="py-2 px-2.5 text-right">Price paid</th>
-                      <th className="py-2 px-2.5 text-right">Actual win</th>
-                      <th className="py-2 px-2.5 text-right">ROI / $</th>
-                      <th className="py-2 px-2.5">What it implies</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-line">
+              <div className="mt-4">
+                <Table className="min-w-[680px] text-left text-[12.5px]">
+                  <TableHeader className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="py-2 px-2.5 text-muted-foreground">Price band</TableHead>
+                      <TableHead className="py-2 px-2.5 text-muted-foreground">Tape regime</TableHead>
+                      <TableHead className="py-2 px-2.5 text-right text-muted-foreground">Fills</TableHead>
+                      <TableHead className="py-2 px-2.5 text-right text-muted-foreground">Price paid</TableHead>
+                      <TableHead className="py-2 px-2.5 text-right text-muted-foreground">Actual win</TableHead>
+                      <TableHead className="py-2 px-2.5 text-right text-muted-foreground">ROI / $</TableHead>
+                      <TableHead className="py-2 px-2.5 text-muted-foreground">What it implies</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {CALIBRATION_SUMMARY.map((row) => (
-                      <tr key={row.band} className="hover:bg-surface-2/40">
-                        <td className="py-2.5 px-2.5 font-mono font-semibold text-fg">{row.band}</td>
-                        <td className="py-2.5 px-2.5">
+                      <TableRow key={row.band}>
+                        <TableCell className="py-2.5 px-2.5 font-mono font-semibold text-foreground">{row.band}</TableCell>
+                        <TableCell className="py-2.5 px-2.5">
                           <Badge tone={row.tone}>{row.role}</Badge>
-                        </td>
-                        <td className="py-2.5 px-2.5 text-right font-mono tabular-nums text-muted">{row.fills}</td>
-                        <td className="py-2.5 px-2.5 text-right font-mono tabular-nums text-muted">{row.implied}</td>
-                        <td className="py-2.5 px-2.5 text-right font-mono font-semibold tabular-nums text-fg">
+                        </TableCell>
+                        <TableCell className="py-2.5 px-2.5 text-right font-mono tabular-nums text-muted-foreground">{row.fills}</TableCell>
+                        <TableCell className="py-2.5 px-2.5 text-right font-mono tabular-nums text-muted-foreground">{row.implied}</TableCell>
+                        <TableCell className="py-2.5 px-2.5 text-right font-mono font-semibold tabular-nums text-foreground">
                           {row.actualWin}
-                        </td>
-                        <td
-                          className={`py-2.5 px-2.5 text-right font-mono font-semibold tabular-nums ${
-                            row.roiPct.startsWith('+') ? 'text-success' : 'text-danger'
-                          }`}
+                        </TableCell>
+                        <TableCell
+                          className={cn(
+                            'py-2.5 px-2.5 text-right font-mono font-semibold tabular-nums',
+                            row.roiPct.startsWith('+') ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400',
+                          )}
                         >
                           {row.roiPct}
-                        </td>
-                        <td className="py-2.5 px-2.5 text-[12px] text-muted">{row.verdict}</td>
-                      </tr>
+                        </TableCell>
+                        <TableCell className="whitespace-normal py-2.5 px-2.5 text-[12px] text-muted-foreground">{row.verdict}</TableCell>
+                      </TableRow>
                     ))}
-                  </tbody>
-                </table>
+                  </TableBody>
+                </Table>
               </div>
             </Card>
           </section>
@@ -915,8 +936,8 @@ export function Strategy() {
 
         {/* Sticky Right-Hand Table of Contents */}
         <aside className="hidden lg:block">
-          <nav aria-label="Table of contents" className="sticky top-6 rounded-card border border-line bg-surface-2/30 p-4">
-            <p className="px-2 text-[11px] font-semibold uppercase tracking-wider text-faint">On this page</p>
+          <nav aria-label="Table of contents" className="sticky top-6 rounded-2xl border border-border bg-muted/30 p-4">
+            <p className="px-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">On this page</p>
             <ul className="mt-2 space-y-1.5">
               {TOC.map((item) => {
                 const isActive = activeId === item.id || item.children.some((child) => child.id === activeId)
@@ -929,15 +950,15 @@ export function Strategy() {
                         jumpTo(item.id)
                       }}
                       aria-current={isActive ? 'location' : undefined}
-                      className={`block rounded-tile px-2 py-1.5 text-[12.5px] leading-snug transition-colors ${
+                      className={`block rounded-xl px-2 py-1.5 text-[12.5px] leading-snug transition-colors ${
                         isActive
-                          ? 'bg-surface font-semibold text-accent shadow-sm'
-                          : 'font-medium text-muted hover:bg-surface hover:text-fg'
+                          ? 'bg-background font-semibold text-primary shadow-sm'
+                          : 'font-medium text-muted-foreground hover:bg-background hover:text-foreground'
                       }`}
                     >
                       {item.label}
                     </a>
-                    <ul className="ml-2 mt-0.5 space-y-0.5 border-l border-line pl-3">
+                    <ul className="ml-2 mt-0.5 space-y-0.5 border-l border-border pl-3">
                       {item.children.map((child) => {
                         const childActive = activeId === child.id
                         return (
@@ -949,8 +970,8 @@ export function Strategy() {
                                 jumpTo(child.id)
                               }}
                               aria-current={childActive ? 'location' : undefined}
-                              className={`block rounded-tile px-2 py-1 text-[12px] leading-snug transition-colors ${
-                                childActive ? 'font-semibold text-accent' : 'text-faint hover:text-fg'
+                              className={`block rounded-xl px-2 py-1 text-[12px] leading-snug transition-colors ${
+                                childActive ? 'font-semibold text-primary' : 'text-muted-foreground/80 hover:text-foreground'
                               }`}
                             >
                               {child.label}
@@ -968,11 +989,11 @@ export function Strategy() {
       </div>
         </>
       ) : (
-        <Card className="mt-6 p-6">
-          <p className="text-[14px] font-semibold text-fg">
+        <Card className="mt-6 gap-0 p-6">
+          <p className="text-[14px] font-semibold text-foreground">
             {loading ? 'Reading the active setup…' : 'No active setup reported'}
           </p>
-          <p className="mt-1 text-[12.5px] leading-relaxed text-muted">
+          <p className="mt-1 text-[12.5px] leading-relaxed text-muted-foreground">
             {loading
               ? 'This page documents whatever bot/config.json selects, so it waits for the bot API to answer.'
               : 'The bot API is unreachable, so no setup can be named here. Nothing below is live configuration.'}
@@ -980,16 +1001,16 @@ export function Strategy() {
         </Card>
       )}
 
-      <Card className="mt-6 flex flex-wrap items-center justify-between gap-3 p-5">
+      <Card className="mt-6 flex flex-row flex-wrap items-center justify-between gap-3 p-5">
         <div className="flex items-start gap-3">
-          <span className="grid size-9 shrink-0 place-items-center rounded-tile bg-accent-soft text-accent">
+          <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
             <BookOpen className="size-4.5" />
           </span>
           <div>
-            <p className="text-[13.5px] font-medium text-fg">
+            <p className="text-[13.5px] font-medium text-foreground">
               {picked ? `${picked.symbol} — ${picked.name}` : 'No active setup reported'}
             </p>
-            <p className="text-[12.5px] text-muted">
+            <p className="text-[12.5px] text-muted-foreground">
               {picked ? (
                 <>
                   This page mirrors <code className="font-mono">bot/config.json</code>; the engine re-reads it every
@@ -1002,10 +1023,10 @@ export function Strategy() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <Link to="/live" className="text-[12.5px] font-medium text-accent hover:underline">
+          <Link to="/live" className="text-[12.5px] font-medium text-primary hover:underline">
             Watch live execution →
           </Link>
-          <Link to="/config" className="text-[12.5px] font-medium text-fg hover:underline">
+          <Link to="/config" className="text-[12.5px] font-medium text-foreground hover:underline">
             Tune threshold settings →
           </Link>
         </div>

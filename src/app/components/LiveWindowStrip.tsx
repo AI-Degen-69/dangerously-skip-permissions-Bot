@@ -1,6 +1,6 @@
-import { Badge } from './ui'
-import { pairCostTone } from '../lib/format'
+import { Badge } from '@/components/ui/badge'
 import type { MarketView, WsStatus } from '../lib/bot'
+import { pairCostTone } from '../lib/format'
 
 const cents = (value: number | null | undefined) =>
   value === null || value === undefined ? '-' : `${Math.round(value * 100)}¢`
@@ -12,7 +12,7 @@ const cents3 = (value: number | null | undefined) => {
   return (
     <>
       {Math.floor(c / 10)}
-      <span className="text-[10px] align-sub leading-none opacity-70">{c % 10}</span>¢
+      <span className="align-sub text-[10px] leading-none opacity-70">{c % 10}</span>¢
     </>
   )
 }
@@ -43,32 +43,37 @@ export function LiveWindowStrip({ markets, ws, pairCostCap = 0.985 }: LiveWindow
   return (
     <div className="flex w-full items-center gap-2 select-none">
       {/* UP SIDE */}
-      <div className="relative flex min-w-0 flex-1 items-center justify-between overflow-hidden rounded-xl border border-line bg-surface-1 px-3 py-2 transition-all">
+      <div className="relative flex min-w-0 flex-1 items-center justify-between overflow-hidden rounded-2xl border border-border bg-card/90 px-3 py-2 shadow-2xs transition-all">
         <div className="pointer-events-none absolute -left-10 top-0 h-full w-24 bg-emerald-500/5 blur-xl" />
 
         {/* Outer Left: UP ↗ Badge — fixed width so separator aligns across rows */}
-        <div className="flex shrink-0 w-[84px] items-center gap-2">
-          <Badge tone="success" className="px-2 py-0.5 text-[11px] font-semibold tracking-wide">
+        <div className="flex w-[84px] shrink-0 items-center gap-1.5">
+          <Badge
+            variant="outline"
+            className="border-emerald-500/30 bg-emerald-500/10 px-2 font-mono text-[11px] font-semibold tracking-wide text-emerald-600 dark:text-emerald-400"
+          >
             UP ↗
           </Badge>
-          <span className="text-[10px] font-medium tracking-wider uppercase text-faint">Live</span>
+          <span className="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">Live</span>
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
           {/* Ask — fixed width column */}
           <div className={col}>
             <div className="flex items-baseline justify-end gap-1.5 pr-2">
-              <span className="block text-[9px] font-medium tracking-wider uppercase text-faint">Ask</span>
-              <span className="font-mono text-[13px] font-semibold tabular-nums text-fg">{cents(upAsk)}</span>
+              <span className="block text-[9px] font-medium tracking-wider text-muted-foreground uppercase">Ask</span>
+              <span className="font-mono text-[13px] font-semibold text-foreground tabular-nums">{cents(upAsk)}</span>
             </div>
           </div>
           {/* Separator — anchored at fixed position */}
-          <div className="h-7 w-px bg-line shrink-0" />
+          <div className="h-7 w-px shrink-0 bg-border" />
           {/* Bid — fixed width column */}
           <div className={col}>
             <div className="flex items-baseline justify-end gap-1.5 pr-2">
-              <span className="block text-[9px] font-medium tracking-wider uppercase text-emerald-500/80">Bid</span>
-              <span className="font-mono text-[19px] font-bold leading-none tabular-nums text-emerald-400">
+              <span className="block text-[9px] font-medium tracking-wider text-emerald-600/80 uppercase dark:text-emerald-400/80">
+                Bid
+              </span>
+              <span className="font-mono text-[19px] leading-none font-bold text-emerald-600 tabular-nums dark:text-emerald-400">
                 {cents(upBid)}
               </span>
             </div>
@@ -78,45 +83,52 @@ export function LiveWindowStrip({ markets, ws, pairCostCap = 0.985 }: LiveWindow
 
       {/* CENTER METRIC: LIVE PAIR BID (UP bid + DN bid) */}
       <div
-        className="flex w-16 shrink-0 -my-0.5 self-stretch items-center justify-center rounded-lg border border-line bg-surface-2"
+        className="-my-0.5 flex w-16 shrink-0 items-center justify-center self-stretch rounded-xl border border-border bg-muted/60"
         title="UP bid + DN bid"
       >
         <span
-          className={`font-mono text-xl font-extrabold leading-none tabular-nums ${pairCostTone(pairBid, pairCostCap)}`}
+          className={`font-mono text-xl leading-none font-extrabold tabular-nums ${pairCostTone(pairBid, pairCostCap)}`}
         >
           {cents3(pairBid)}
         </span>
       </div>
 
       {/* DN SIDE (MIRRORED) */}
-      <div className="relative flex min-w-0 flex-1 items-center justify-between overflow-hidden rounded-xl border border-line bg-surface-1 px-3 py-2 transition-all">
+      <div className="relative flex min-w-0 flex-1 items-center justify-between overflow-hidden rounded-2xl border border-border bg-card/90 px-3 py-2 shadow-2xs transition-all">
         <div className="pointer-events-none absolute -right-10 top-0 h-full w-24 bg-rose-500/5 blur-xl" />
 
         <div className="flex shrink-0 items-center gap-2">
           {/* Bid — fixed width column */}
           <div className={col}>
             <div className="flex items-baseline gap-1.5 pl-2">
-              <span className="font-mono text-[19px] font-bold leading-none tabular-nums text-rose-400">
+              <span className="font-mono text-[19px] leading-none font-bold text-rose-600 tabular-nums dark:text-rose-400">
                 {cents(downBid)}
               </span>
-              <span className="block text-[9px] font-medium tracking-wider uppercase text-rose-500/80">Bid</span>
+              <span className="block text-[9px] font-medium tracking-wider text-rose-600/80 uppercase dark:text-rose-400/80">
+                Bid
+              </span>
             </div>
           </div>
           {/* Separator — anchored at fixed position */}
-          <div className="h-7 w-px bg-line shrink-0" />
+          <div className="h-7 w-px shrink-0 bg-border" />
           {/* Ask — fixed width column */}
           <div className={col}>
             <div className="flex items-baseline gap-1.5 pl-2">
-              <span className="font-mono text-[13px] font-semibold tabular-nums text-fg">{cents(downAsk)}</span>
-              <span className="block text-[9px] font-medium tracking-wider uppercase text-faint">Ask</span>
+              <span className="font-mono text-[13px] font-semibold text-foreground tabular-nums">
+                {cents(downAsk)}
+              </span>
+              <span className="block text-[9px] font-medium tracking-wider text-muted-foreground uppercase">Ask</span>
             </div>
           </div>
         </div>
 
         {/* Outer Right: DN ↘ Badge — fixed width so separator aligns across rows */}
-        <div className="flex shrink-0 w-[84px] items-center gap-2 justify-end">
-          <span className="text-[10px] font-medium tracking-wider uppercase text-faint">Live</span>
-          <Badge tone="danger" className="px-2 py-0.5 text-[11px] font-semibold tracking-wide">
+        <div className="flex w-[84px] shrink-0 items-center justify-end gap-1.5">
+          <span className="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">Live</span>
+          <Badge
+            variant="outline"
+            className="border-rose-500/30 bg-rose-500/10 px-2 font-mono text-[11px] font-semibold tracking-wide text-rose-600 dark:text-rose-400"
+          >
             DN ↘
           </Badge>
         </div>
