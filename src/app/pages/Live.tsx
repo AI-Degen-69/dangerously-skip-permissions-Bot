@@ -1,11 +1,12 @@
-import { useMemo, useState } from 'react'
-import { Activity, Radio } from 'lucide-react'
+import { useMemo, useState, type ReactNode } from 'react'
+import { Activity, Clock, ListFilter, Radio, Scale, ShieldCheck, Zap } from 'lucide-react'
 import { Link } from 'react-router'
 
 import { PolymarketLiveChart } from '../components/PolymarketEmbed'
 import { OrdersAndFillsTable } from '../components/OrdersAndFillsTable'
 import { eventMetrics, KIND_TONE, reasonLabel as label } from '../lib/labels'
-import { Badge, Card, EmptyState, PageHeader, Skeleton } from '../components/ui'
+import { PageHeader } from '../components/ui'
+import { StatusDot, type StatusDotTone } from '../components/StatusDot'
 import {
   BOT_ORIGIN,
   useBotControl,
@@ -25,6 +26,65 @@ import {
 import { STRATEGY_PRESETS } from '../botDefaults'
 import { cx } from '../lib/cx'
 import { pairCostTone, relativeTime } from '../lib/format'
+import { Badge as ShadcnBadge } from '@/components/ui/badge'
+import { Card } from '@/components/ui/card'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { cn } from '@/lib/utils'
+
+type BadgeTone = 'neutral' | 'accent' | 'info' | 'success' | 'warning' | 'danger'
+
+const BADGE_TONES: Record<BadgeTone, string> = {
+  neutral: 'border-border bg-muted/50 text-muted-foreground',
+  accent: 'border-primary/30 bg-primary/10 text-primary',
+  info: 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400',
+  success: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+  warning: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+  danger: 'border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400',
+}
+
+const BADGE_DOT_TONES: Record<BadgeTone, StatusDotTone> = {
+  neutral: 'stopped',
+  accent: 'stopped',
+  info: 'stopped',
+  success: 'live',
+  warning: 'warning',
+  danger: 'danger',
+}
+
+function Badge({
+  tone = 'neutral',
+  dot,
+  live = false,
+  className,
+  children,
+}: {
+  tone?: BadgeTone
+  dot?: boolean
+  live?: boolean
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <ShadcnBadge variant="outline" className={cn('gap-1.5', BADGE_TONES[tone], className)}>
+      {dot && <StatusDot tone={BADGE_DOT_TONES[tone]} blink={live} size="xs" />}
+      {children}
+    </ShadcnBadge>
+  )
+}
+
+function EmptyState({ icon, title, description }: { icon: ReactNode; title: string; description?: string }) {
+  return (
+    <Empty className="py-10">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">{icon}</EmptyMedia>
+        <EmptyTitle>{title}</EmptyTitle>
+        {description && <EmptyDescription>{description}</EmptyDescription>}
+      </EmptyHeader>
+    </Empty>
+  )
+}
 
 const cents = (value: number | null | undefined) =>
   value === null || value === undefined ? '—' : `${Math.round(value * 100)}¢`
@@ -92,26 +152,19 @@ export function Live() {
   const currentSetup = setups.find((s) => s.id === activeStrategyId) ?? setups[0]
 
   const strategySymbol = data?.strategy?.symbol ?? control.data?.strategy?.symbol ?? currentSetup?.symbol ?? '—'
-  const strategyName = data?.strategy?.name ?? control.data?.strategy?.name ?? currentSetup?.name ?? '—'
-  const strategySignature =
-    data?.strategy?.signature ??
-    control.data?.strategy?.signature ??
-    currentSetup?.signature ??
-    currentSetup?.description
 
   return (
     <div className="mx-auto max-w-[1200px] p-5 sm:p-8">
       <PageHeader
-        title={`Live bot · ${strategySymbol}`}
-        subtitle={strategySignature}
+        icon={<Activity className="size-5" />}
+        title={`Live Bot · ${strategySymbol}`}
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <span title={strategyName}>
-              <Badge tone="accent" className="font-mono font-semibold">
-                {strategySymbol} · Recovery Engine
-              </Badge>
-            </span>
-            <Badge tone={snapshot.isError && !snapshot.data ? 'neutral' : running ? 'success' : 'neutral'} dot>
+            <Badge
+              tone={snapshot.isError && !snapshot.data ? 'neutral' : running ? 'success' : 'neutral'}
+              dot
+              live={running && !(snapshot.isError && !snapshot.data)}
+            >
               {snapshot.isError && !snapshot.data ? 'No signal' : running ? 'Streaming' : 'Stopped'}
             </Badge>
             {ws && (
@@ -126,6 +179,7 @@ export function Live() {
                     : 'neutral'
                 }
                 dot
+                live={ws.state === 'connected'}
               >
                 {ws.state === 'connected'
                   ? `WSS Live (${ws.age_ms != null ? `${ws.age_ms}ms` : '<40ms'})`
@@ -151,31 +205,31 @@ export function Live() {
       />
 
       {snapshot.isLoading || control.isLoading ? (
-        <Skeleton className="mt-6 h-[260px] rounded-card" />
+        <Skeleton className="mt-6 h-[260px] rounded-3xl" />
       ) : snapshot.isError && !snapshot.data ? (
-        <Card className="mt-6 p-6">
+        <Card className="mt-6 gap-0 p-6">
           <div className="flex items-start gap-3">
-            <span className="grid size-10 shrink-0 place-items-center rounded-card bg-warning-soft text-warning">
+            <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
               <Activity className="size-5" />
             </span>
             <div>
-              <h2 className="text-[15px] font-semibold">Bot API not reachable</h2>
-              <p className="mt-1 text-[13.5px] text-muted">
+              <h2 className="font-heading text-[15px] font-semibold">Bot API not reachable</h2>
+              <p className="mt-1 text-[13.5px] text-muted-foreground">
                 The request to {BOT_ORIGIN} failed. Start the API with <code>python bot/api.py</code>; this page fills in on its own once it answers.
               </p>
             </div>
           </div>
         </Card>
       ) : !running ? (
-        <Card className="mt-6 p-6">
+        <Card className="mt-6 gap-0 p-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex items-start gap-3">
-              <span className="grid size-10 shrink-0 place-items-center rounded-card bg-warning-soft text-warning">
+              <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
                 <Activity className="size-5" />
               </span>
               <div>
-                <h2 className="text-[15px] font-semibold">The loop is stopped</h2>
-                <p className="mt-1 max-w-xl text-[13.5px] text-muted">
+                <h2 className="font-heading text-[15px] font-semibold">The loop is stopped</h2>
+                <p className="mt-1 max-w-xl text-[13.5px] text-muted-foreground">
                   No windows are being traded, so there is nothing streaming to show. Start it from the Dashboard to resume one 5-minute
                   straddle window at a time.
                   {snapshot.data?.ageMs != null && (
@@ -184,20 +238,20 @@ export function Live() {
                 </p>
               </div>
             </div>
-            <Link to="/" className="text-[12.5px] font-medium text-muted hover:text-fg">
+            <Link to="/" className="text-[12.5px] font-medium text-muted-foreground hover:text-foreground">
               Start it from the Dashboard →
             </Link>
           </div>
         </Card>
       ) : !online ? (
-        <Card className="mt-6 p-6">
+        <Card className="mt-6 gap-0 p-6">
           <div className="flex items-start gap-3">
-            <span className="grid size-10 shrink-0 place-items-center rounded-card bg-warning-soft text-warning">
+            <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
               <Activity className="size-5" />
             </span>
             <div>
-              <h2 className="text-[15px] font-semibold">Waiting for the first window</h2>
-              <p className="mt-1 text-[13.5px] text-muted">
+              <h2 className="font-heading text-[15px] font-semibold">Waiting for the first window</h2>
+              <p className="mt-1 text-[13.5px] text-muted-foreground">
                 The loop is running — this page fills in as soon as it opens the next window.
               </p>
             </div>
@@ -215,11 +269,13 @@ export function Live() {
             <OrdersAndFillsTable items={trades.data?.items ?? []} windowSlugs={data.markets.map((market) => market.slug)} />
 
             <div className="mt-3 grid gap-3 lg:grid-cols-3">
-              <Card className="p-5 lg:col-span-3">
+              <Card className="gap-0 p-5 lg:col-span-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-[14px] font-semibold">Decision journal</h2>
-                    <p className="text-[12.5px] text-muted">Every gate it passed or failed, newest first.</p>
+                  <div className="flex items-center gap-2.5">
+                    <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+                      <ListFilter className="size-4" />
+                    </span>
+                    <h2 className="font-heading text-[15px] font-semibold text-foreground">Decision Journal</h2>
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5">
                     {(
@@ -377,10 +433,14 @@ function RestingOrdersStrip({ orders }: { orders: OpenOrderView[] }) {
   const pairPx = up && down ? up.price + down.price : null
 
   return (
-    <Card className="mt-3 p-4">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <h2 className="text-[14px] font-semibold">Resting orders</h2>
-        <p className="text-[12px] text-muted">Not fills yet — each one needs a seller to hit it.</p>
+    <Card className="mt-3 gap-0 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+        <div className="flex items-center gap-2.5">
+          <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+            <Clock className="size-4" />
+          </span>
+          <h2 className="font-heading text-[15px] font-semibold text-foreground">Resting Orders</h2>
+        </div>
       </div>
       <div className="mt-2 flex w-full items-stretch gap-2 select-none">
         <RestingSide order={up} />
@@ -477,11 +537,14 @@ function StraddleDeskStrip({ data }: { data: BotSnapshot }) {
   const favoredSide = payIfUp >= payIfDown ? 'Up' : 'Down'
 
   return (
-    <Card className="mt-3 p-4">
+    <Card className="mt-3 gap-0 p-4">
       <div className="grid grid-cols-2 gap-4 divide-y sm:divide-y-0 sm:divide-x divide-line lg:grid-cols-2">
         {/* Metric 1: Combined Pair Cost */}
         <div className="pt-2 sm:pt-0 sm:px-3 first:pl-0">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-faint">Combined Pair Cost</p>
+          <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-faint">
+            <Scale className="size-3.5 text-primary" />
+            Combined Pair Cost
+          </p>
           <div className="mt-1 flex items-baseline gap-2">
             <span
               className={cx(
@@ -526,7 +589,10 @@ function StraddleDeskStrip({ data }: { data: BotSnapshot }) {
 
         {/* Metric 2: Guaranteed Settlement Floor */}
         <div className="pt-2 sm:pt-0 sm:px-3 last:pr-0">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-faint">Settlement Payoff Floor</p>
+          <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-faint">
+            <ShieldCheck className="size-3.5 text-emerald-500" />
+            Settlement Payoff Floor
+          </p>
           <div className="mt-1 flex items-baseline gap-2">
             <span
               className={cx(
@@ -559,16 +625,13 @@ function StraddleDeskStrip({ data }: { data: BotSnapshot }) {
 
 function WssStreamTape({ ws, ticks }: { ws?: WsStatus; ticks?: WsTick[] }) {
   return (
-    <Card className="mt-3 p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
+    <Card className="mt-3 gap-0 p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
         <div className="flex items-center gap-2.5">
-          <span className="grid size-8 place-items-center rounded-card bg-accent-soft text-accent">
-            <Radio className="size-4 animate-pulse" />
+          <span className="grid size-8 place-items-center rounded-xl bg-primary/10 text-primary">
+            <Radio className={cx('size-4', ws?.state === 'connected' && 'animate-pulse')} />
           </span>
-          <div>
-            <h2 className="text-[14px] font-semibold">Live WSS Orderbook Stream</h2>
-            <p className="font-mono text-[11px] text-faint">wss://ws-subscriptions-clob.polymarket.com/ws/market</p>
-          </div>
+          <h2 className="font-heading text-[15px] font-semibold text-foreground">Live WSS Orderbook Stream</h2>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -635,61 +698,63 @@ function WssStreamTape({ ws, ticks }: { ws?: WsStatus; ticks?: WsTick[] }) {
 
       <div className="mt-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-[12.5px] font-semibold uppercase tracking-wider text-muted">Recent Stream Ticks</h3>
-          <span className="text-[11.5px] text-faint">Millisecond precision tape</span>
+          <h3 className="flex items-center gap-1.5 text-[12.5px] font-semibold uppercase tracking-wider text-muted">
+            <Zap className="size-3.5 text-primary" />
+            Recent Stream Ticks
+          </h3>
         </div>
 
         {!ticks || ticks.length === 0 ? (
           <EmptyState icon={<Radio />} title="Awaiting ticks" description="Real-time orderbook events stream here as they land from WebSocket." />
         ) : (
-          <div className="scrollbar-thin mt-2 max-h-[280px] overflow-y-auto">
-            <table className="w-full text-left text-[12.5px]">
-              <thead className="sticky top-0 border-b border-line bg-surface-1 text-[11px] uppercase tracking-wide text-faint">
-                <tr>
-                  <th className="py-1.5 font-medium">Timestamp</th>
-                  <th className="py-1.5 font-medium">Event</th>
-                  <th className="py-1.5 font-medium">Outcome</th>
-                  <th className="py-1.5 font-medium">Side</th>
-                  <th className="py-1.5 text-right font-medium">Price</th>
-                  <th className="py-1.5 text-right font-medium">Size</th>
-                  <th className="py-1.5 text-right font-medium">Midpoint</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-line">
+          <div className="mt-2 [&_[data-slot=table-container]]:max-h-[280px] [&_[data-slot=table-container]]:overflow-y-auto [&_[data-slot=table-container]]:scrollbar-thin">
+            <Table className="text-left text-[12.5px]">
+              <TableHeader className="sticky top-0 z-10 bg-card text-[11px] uppercase tracking-wide text-muted-foreground">
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="h-8 py-1.5 font-medium text-muted-foreground">Timestamp</TableHead>
+                  <TableHead className="h-8 py-1.5 font-medium text-muted-foreground">Event</TableHead>
+                  <TableHead className="h-8 py-1.5 font-medium text-muted-foreground">Outcome</TableHead>
+                  <TableHead className="h-8 py-1.5 font-medium text-muted-foreground">Side</TableHead>
+                  <TableHead className="h-8 py-1.5 text-right font-medium text-muted-foreground">Price</TableHead>
+                  <TableHead className="h-8 py-1.5 text-right font-medium text-muted-foreground">Size</TableHead>
+                  <TableHead className="h-8 py-1.5 text-right font-medium text-muted-foreground">Midpoint</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {[...ticks].reverse().map((t, idx) => (
-                  <tr key={`${t.ts}-${idx}`} className="transition-colors hover:bg-surface-2/50">
-                    <td className="py-1.5 font-mono text-[11.5px] text-muted">{t.time_str || clock(t.ts * 1000)}</td>
-                    <td className="py-1.5">
+                  <TableRow key={`${t.ts}-${idx}`}>
+                    <TableCell className="py-1.5 font-mono text-[11.5px] text-muted-foreground">{t.time_str || clock(t.ts * 1000)}</TableCell>
+                    <TableCell className="py-1.5">
                       <span
                         className={cx(
                           'inline-flex items-center rounded px-1.5 py-0.5 font-mono text-[10.5px] font-medium',
-                          t.event_type === 'snapshot' ? 'bg-info-soft text-info' : 'bg-surface-2 text-fg',
+                          t.event_type === 'snapshot' ? 'bg-sky-500/10 text-sky-600 dark:text-sky-400' : 'bg-muted text-foreground',
                         )}
                       >
                         {t.event_type === 'snapshot' ? '📦 SNAP' : '⚡ TICK'}
                       </span>
-                    </td>
-                    <td className="py-1.5">
+                    </TableCell>
+                    <TableCell className="py-1.5">
                       <Badge tone={t.outcome === 'Up' ? 'success' : 'danger'} className="px-1.5 py-0 text-[10.5px]">
                         {t.outcome}
                       </Badge>
-                    </td>
-                    <td className="py-1.5 text-[11.5px] font-medium">
+                    </TableCell>
+                    <TableCell className="py-1.5 text-[11.5px] font-medium">
                       {t.side ? (
-                        <span className={t.side === 'BUY' ? 'text-success' : 'text-danger'}>{t.side}</span>
+                        <span className={t.side === 'BUY' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>{t.side}</span>
                       ) : (
                         '—'
                       )}
-                    </td>
-                    <td className="py-1.5 text-right font-mono tabular-nums">{t.price != null ? cents(t.price) : '—'}</td>
-                    <td className="py-1.5 text-right font-mono tabular-nums text-muted">{t.size != null ? t.size.toFixed(1) : '—'}</td>
-                    <td className="py-1.5 text-right font-mono tabular-nums text-accent">
+                    </TableCell>
+                    <TableCell className="py-1.5 text-right font-mono tabular-nums">{t.price != null ? cents(t.price) : '—'}</TableCell>
+                    <TableCell className="py-1.5 text-right font-mono tabular-nums text-muted-foreground">{t.size != null ? t.size.toFixed(1) : '—'}</TableCell>
+                    <TableCell className="py-1.5 text-right font-mono tabular-nums text-primary">
                       {t.midpoint != null ? t.midpoint.toFixed(3) : '—'}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         )}
       </div>

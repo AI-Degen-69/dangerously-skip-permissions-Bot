@@ -1,12 +1,79 @@
-import { useId, useState, useRef, useMemo } from 'react'
 import { Clock } from 'lucide-react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 
+import { Badge } from '@/components/ui/badge'
+import { cn } from '@/lib/utils'
 import type { PerfWindow } from '../lib/bot'
-import { cx } from '../lib/cx'
 import { money2 } from '../lib/format'
-import { Badge } from './ui'
 
 const usd = money2
+
+type IndicatorId = 'trendline' | 'sma' | 'hwm' | 'band'
+
+const INDICATORS_STORAGE_KEY = 'dsp.equityIndicators'
+const INDICATORS_EVENT = 'dsp:equity-indicators'
+const DEFAULT_INDICATORS: IndicatorId[] = ['trendline']
+
+const INDICATOR_DEFS: Array<{
+  id: IndicatorId
+  label: string
+  color: string
+  description: string
+}> = [
+  { id: 'trendline', label: 'Trendline', color: '#f59e0b', description: 'OLS linear regression trendline' },
+  { id: 'sma', label: 'Moving Avg', color: '#38bdf8', description: 'Rolling simple moving average' },
+  { id: 'hwm', label: 'High-Water', color: '#a78bfa', description: 'Running peak high-water mark' },
+  { id: 'band', label: '±1σ Band', color: '#38bdf8', description: '±1σ residual channel around trendline' },
+]
+
+const VALID_INDICATORS = new Set<string>(INDICATOR_DEFS.map((d) => d.id))
+
+function readStoredIndicators(): IndicatorId[] {
+  try {
+    const raw = window.localStorage.getItem(INDICATORS_STORAGE_KEY)
+    if (raw === null) return DEFAULT_INDICATORS
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return DEFAULT_INDICATORS
+    return parsed.filter((item): item is IndicatorId => typeof item === 'string' && VALID_INDICATORS.has(item))
+  } catch {
+    return DEFAULT_INDICATORS
+  }
+}
+
+/**
+ * Persisted set of active equity curve overlays, synced across storage listeners.
+ */
+function useEquityIndicators(): [IndicatorId[], (id: IndicatorId) => void] {
+  const [active, setActive] = useState<IndicatorId[]>(() =>
+    typeof window === 'undefined' ? DEFAULT_INDICATORS : readStoredIndicators(),
+  )
+
+  useEffect(() => {
+    const sync = () => setActive(readStoredIndicators())
+    const onPick = (event: Event) => setActive((event as CustomEvent<IndicatorId[]>).detail)
+    window.addEventListener('storage', sync)
+    window.addEventListener(INDICATORS_EVENT, onPick)
+    return () => {
+      window.removeEventListener('storage', sync)
+      window.removeEventListener(INDICATORS_EVENT, onPick)
+    }
+  }, [])
+
+  const toggle = useCallback((id: IndicatorId) => {
+    setActive((prev) => {
+      const next = prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+      try {
+        window.localStorage.setItem(INDICATORS_STORAGE_KEY, JSON.stringify(next))
+      } catch {
+        // Private-mode storage failures must not block toggling indicators.
+      }
+      window.dispatchEvent(new CustomEvent(INDICATORS_EVENT, { detail: next }))
+      return next
+    })
+  }, [])
+
+  return [active, toggle]
+}
 
 const windowTime = (ms: number) =>
   new Date(ms).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })
@@ -61,6 +128,102 @@ function computeNiceTicks(min: number, max: number, startingCapital: number, tar
   return ticks
 }
 
+interface ChartIndicators {
+  trendStart: number
+  trendEnd: number
+  sigma: number
+  sma: number[]
+  hwm: number[]
+}
+
+/**
+ * Computes OLS linear regression trendline, residual sigma channel,
+ * rolling SMA, and running High-Water Mark over chart points.
+ */
+function computeIndicators(points: ChartPoint[], startingCapital: number): ChartIndicators {
+  const n = points.length
+  if (n === 0) {
+    return { trendStart: startingCapital, trendEnd: startingCapital, sigma: 0, sma: [], hwm: [] }
+  }
+
+  let trendStart = points[0].capital
+  let trendEnd = points[n - 1].capital
+  let sigma = 0
+
+  if (n >= 2) {
+    const meanX = (n - 1) / 2
+    const meanY = points.reduce((sum, pt) => sum + pt.capital, 0) / n
+    let num = 0
+    let den = 0
+    for (let i = 0; i < n; i++) {
+      const dx = i - meanX
+      num += dx * (points[i].capital - meanY)
+      den += dx * dx
+    }
+    const slope = den > 0 ? num / den : 0
+    const intercept = meanY - slope * meanX
+    trendStart = intercept
+    trendEnd = intercept + slope * (n - 1)
+
+    if (n > 2) {
+      let ssRes = 0
+      for (let i = 0; i < n; i++) {
+        const residual = points[i].capital - (intercept + slope * i)
+        ssRes += residual * residual
+      }
+      sigma = Math.sqrt(ssRes / (n - 2))
+    }
+  }
+
+  const smaWin = Math.min(8, Math.max(3, Math.floor(n / 4)))
+  const sma: number[] = []
+  let rollingSum = 0
+  for (let i = 0; i < n; i++) {
+    rollingSum += points[i].capital
+    if (i >= smaWin) rollingSum -= points[i - smaWin].capital
+    const denom = Math.min(i + 1, smaWin)
+    sma.push(rollingSum / denom)
+  }
+
+  const hwm: number[] = []
+  let peak = startingCapital
+  for (let i = 0; i < n; i++) {
+    if (points[i].capital > peak) peak = points[i].capital
+    hwm.push(peak)
+  }
+
+  return { trendStart, trendEnd, sigma, sma, hwm }
+}
+
+function IndicatorSwatch({ id, color, active }: { id: IndicatorId; color: string; active: boolean }) {
+  if (id === 'band') {
+    return (
+      <span
+        className={cn(
+          'inline-block h-2 w-3 rounded-[2px] border-y border-dotted transition-opacity',
+          !active && 'opacity-40',
+        )}
+        style={{ borderColor: color, backgroundColor: 'rgba(56, 189, 248, 0.16)' }}
+        aria-hidden="true"
+      />
+    )
+  }
+
+  return (
+    <span
+      className={cn(
+        'inline-block w-3 transition-opacity',
+        id === 'sma' ? 'h-0.5 rounded-full' : 'h-0 border-t-2',
+        id === 'trendline' && 'border-dashed',
+        id === 'hwm' && 'border-dotted',
+        !active && 'opacity-40',
+      )}
+      style={id === 'sma' ? { backgroundColor: color } : { borderColor: color }}
+      aria-hidden="true"
+    />
+  )
+}
+
 export function InteractivePnlChart({
   windows,
   startingCapital,
@@ -71,6 +234,7 @@ export function InteractivePnlChart({
 }: InteractivePnlChartProps) {
   const chartId = useId()
   const [internalHoverIndex, setInternalHoverIndex] = useState<number | null>(null)
+  const [activeIndicators, toggleIndicator] = useEquityIndicators()
   const containerRef = useRef<HTMLDivElement>(null)
 
   const settled = useMemo(() => windows.filter((w) => !w.pending), [windows])
@@ -119,6 +283,11 @@ export function InteractivePnlChart({
     }
     return null
   }, [internalHoverIndex, hoveredSlug, points])
+
+  const indicators = useMemo(
+    () => computeIndicators(points, startingCapital),
+    [points, startingCapital],
+  )
 
   if (settled.length === 0 || points.length === 0) {
     return null
@@ -178,8 +347,36 @@ export function InteractivePnlChart({
 
   const clipAboveId = `clip-above-${chartId}`
   const clipBelowId = `clip-below-${chartId}`
+  const clipPlotId = `clip-plot-${chartId}`
   const greenGradId = `green-grad-${chartId}`
   const redGradId = `red-grad-${chartId}`
+
+  const showTrendline = activeIndicators.includes('trendline') && points.length >= 2
+  const showSma = activeIndicators.includes('sma') && points.length >= 2
+  const showHwm = activeIndicators.includes('hwm') && points.length >= 2
+  const showBand = activeIndicators.includes('band') && points.length >= 2 && indicators.sigma > 0
+
+  const smaPath = showSma
+    ? points
+        .map((_, i) => `${i === 0 ? 'M' : 'L'} ${xCoord(i).toFixed(2)} ${yCoord(indicators.sma[i]).toFixed(2)}`)
+        .join(' ')
+    : ''
+  const hwmPath = showHwm
+    ? points
+        .map((_, i) => `${i === 0 ? 'M' : 'L'} ${xCoord(i).toFixed(2)} ${yCoord(indicators.hwm[i]).toFixed(2)}`)
+        .join(' ')
+    : ''
+  const trendX1 = xCoord(0)
+  const trendX2 = xCoord(points.length - 1)
+  const trendY1 = yCoord(indicators.trendStart)
+  const trendY2 = yCoord(indicators.trendEnd)
+  const bandAreaPath = showBand
+    ? `M ${trendX1.toFixed(2)} ${yCoord(indicators.trendStart + indicators.sigma).toFixed(2)} L ${trendX2.toFixed(2)} ${yCoord(indicators.trendEnd + indicators.sigma).toFixed(2)} L ${trendX2.toFixed(2)} ${yCoord(indicators.trendEnd - indicators.sigma).toFixed(2)} L ${trendX1.toFixed(2)} ${yCoord(indicators.trendStart - indicators.sigma).toFixed(2)} Z`
+    : ''
+  const bandUpperY1 = yCoord(indicators.trendStart + indicators.sigma)
+  const bandUpperY2 = yCoord(indicators.trendEnd + indicators.sigma)
+  const bandLowerY1 = yCoord(indicators.trendStart - indicators.sigma)
+  const bandLowerY2 = yCoord(indicators.trendEnd - indicators.sigma)
 
   const activePoint = activeIndex !== null ? points[activeIndex] : null
 
@@ -212,6 +409,7 @@ export function InteractivePnlChart({
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (points.length === 0) return
+    if (e.target instanceof HTMLElement && e.target.closest('button')) return
     if (e.key === 'ArrowRight') {
       e.preventDefault()
       const next = activeIndex === null ? 0 : Math.min(points.length - 1, activeIndex + 1)
@@ -236,7 +434,10 @@ export function InteractivePnlChart({
   return (
     <div
       ref={containerRef}
-      className={cx('relative select-none outline-none focus-visible:ring-1 focus-visible:ring-primary/50 rounded-lg', className)}
+      className={cn(
+        'relative rounded-xl outline-none select-none focus-visible:ring-2 focus-visible:ring-ring/50',
+        className,
+      )}
       tabIndex={0}
       role="region"
       aria-label="Interactive performance chart. Use left and right arrow keys to navigate windows."
@@ -280,6 +481,11 @@ export function InteractivePnlChart({
           {/* Clip path below starting capital baseline (negative area) */}
           <clipPath id={clipBelowId}>
             <rect x={padLeft} y={baselineY} width={chartWidth} height={Math.max(0, height - baselineY)} />
+          </clipPath>
+
+          {/* Clip path bounded to the chart plot area for indicator overlays */}
+          <clipPath id={clipPlotId}>
+            <rect x={padLeft} y={padTop} width={chartWidth} height={chartHeight} />
           </clipPath>
         </defs>
 
@@ -466,6 +672,71 @@ export function InteractivePnlChart({
           )
         })}
 
+        {/* Optional Statistical & Technical Overlay Indicators */}
+        <g clipPath={`url(#${clipPlotId})`} className="pointer-events-none">
+          {showBand && (
+            <g>
+              <path d={bandAreaPath} fill="#38bdf8" fillOpacity="0.08" />
+              <line
+                x1={trendX1}
+                x2={trendX2}
+                y1={bandUpperY1}
+                y2={bandUpperY2}
+                stroke="#38bdf8"
+                strokeWidth="1.25"
+                strokeDasharray="2 3"
+                opacity="0.55"
+              />
+              <line
+                x1={trendX1}
+                x2={trendX2}
+                y1={bandLowerY1}
+                y2={bandLowerY2}
+                stroke="#38bdf8"
+                strokeWidth="1.25"
+                strokeDasharray="2 3"
+                opacity="0.55"
+              />
+            </g>
+          )}
+          {showHwm && (
+            <path
+              d={hwmPath}
+              fill="none"
+              stroke="#a78bfa"
+              strokeWidth="1.5"
+              strokeDasharray="2 3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              opacity="0.85"
+            />
+          )}
+          {showSma && (
+            <path
+              d={smaPath}
+              fill="none"
+              stroke="#38bdf8"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              opacity="0.9"
+            />
+          )}
+          {showTrendline && (
+            <line
+              x1={trendX1}
+              x2={trendX2}
+              y1={trendY1}
+              y2={trendY2}
+              stroke="#f59e0b"
+              strokeWidth="1.75"
+              strokeDasharray="5 4"
+              strokeLinecap="round"
+              opacity="0.9"
+            />
+          )}
+        </g>
+
         {/* Interactive Ticks on the curve for EVERY settled window */}
         {points.map((p, idx) => {
           if (idx === 0) return null // Anchor start point
@@ -554,12 +825,50 @@ export function InteractivePnlChart({
         />
       </svg>
 
+      {/* Bottom Indicator Toggle Bar */}
+      <div
+        className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-line/60 px-2 pt-2 text-[11.5px]"
+        role="group"
+        aria-label="Chart overlay indicators"
+      >
+        <span className="font-mono text-[10.5px] uppercase tracking-wider text-faint">Indicators:</span>
+        <div className="flex flex-wrap items-center gap-y-1">
+          {INDICATOR_DEFS.map((ind, idx) => {
+            const active = activeIndicators.includes(ind.id)
+            return (
+              <div key={ind.id} className="inline-flex items-center">
+                {idx > 0 && (
+                  <span className="mx-1.5 select-none text-border" aria-hidden="true">
+                    |
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => toggleIndicator(ind.id)}
+                  aria-pressed={active}
+                  title={`${ind.description} — click to ${active ? 'hide' : 'show'}`}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[11.5px] font-medium transition-colors',
+                    active
+                      ? 'bg-surface-2 text-fg ring-1 ring-border'
+                      : 'text-muted-foreground/75 hover:bg-surface-2/50 hover:text-fg',
+                  )}
+                >
+                  <IndicatorSwatch id={ind.id} color={ind.color} active={active} />
+                  <span>{ind.label}</span>
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
       {/* Floating Window Summary Tooltip */}
       {activePoint !== null && (
         <div
-          className={cx(
-            'pointer-events-none absolute z-30 w-72 rounded-tile border border-line-strong/80 bg-surface/95 p-3.5 shadow-pop backdrop-blur-md transition-all duration-100',
-            activePctX > 62 ? '-translate-x-full mr-3' : 'translate-x-0 ml-3',
+          className={cn(
+            'pointer-events-none absolute z-30 w-72 rounded-2xl border border-border bg-popover/95 p-3.5 text-popover-foreground shadow-lg backdrop-blur-md transition-all duration-100',
+            activePctX > 62 ? 'mr-3 -translate-x-full' : 'ml-3 translate-x-0',
           )}
           style={{
             left: `${activePctX}%`,
@@ -568,43 +877,52 @@ export function InteractivePnlChart({
         >
           {activePoint.isStart ? (
             <div>
-              <div className="flex items-center justify-between border-b border-line pb-2">
-                <span className="text-[12px] font-semibold text-fg">{baseLabel}</span>
-                <Badge tone="neutral">Base</Badge>
+              <div className="flex items-center justify-between border-b border-border pb-2">
+                <span className="text-xs font-semibold text-foreground">{baseLabel}</span>
+                <Badge variant="secondary">Base</Badge>
               </div>
-              <p className="mt-2 text-[20px] font-bold text-fg tabular-nums">{usd(startingCapital)}</p>
-              <p className="mt-1 text-[11.5px] text-muted">
+              <p className="mt-2 font-mono text-xl font-bold text-foreground tabular-nums">{usd(startingCapital)}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
                 Trading capital before the first window in this view, opened at {windowTime(activePoint.ts)}.
               </p>
             </div>
           ) : activePoint.window ? (
             <div>
               {/* Header: Window time + Winner */}
-              <div className="flex items-center justify-between border-b border-line pb-2">
+              <div className="flex items-center justify-between border-b border-border pb-2">
                 <div className="flex items-center gap-1.5">
-                  <Clock className="size-3.5 text-muted" />
-                  <span className="font-mono text-[12px] font-semibold text-fg">
+                  <Clock className="size-3.5 text-muted-foreground" />
+                  <span className="font-mono text-xs font-semibold text-foreground">
                     Window {windowTime(activePoint.window.startMs)}
                   </span>
-                  <span className="text-[11px] text-faint">#{activePoint.index + 1}</span>
+                  <span className="font-mono text-[11px] text-muted-foreground">#{activePoint.index + 1}</span>
                 </div>
                 {activePoint.window.winner ? (
-                  <Badge tone={activePoint.window.winner === 'Up' ? 'success' : 'danger'}>
+                  <Badge
+                    variant="outline"
+                    className={
+                      activePoint.window.winner === 'Up'
+                        ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                        : 'border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400'
+                    }
+                  >
                     {activePoint.window.winner}
                   </Badge>
                 ) : (
-                  <Badge tone="neutral">Pending</Badge>
+                  <Badge variant="secondary">Pending</Badge>
                 )}
               </div>
 
               {/* Window Net & Capital */}
               <div className="mt-2.5 flex items-baseline justify-between">
                 <div>
-                  <p className="text-[11px] uppercase tracking-wide text-faint">Window Net</p>
+                  <p className="text-[11px] tracking-wide text-muted-foreground uppercase">Window Net</p>
                   <p
-                    className={cx(
-                      'text-[18px] font-bold tabular-nums tracking-[-0.02em]',
-                      activePoint.windowNet >= 0 ? 'text-success' : 'text-danger',
+                    className={cn(
+                      'font-mono text-lg font-bold tracking-tight tabular-nums',
+                      activePoint.windowNet >= 0
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : 'text-rose-600 dark:text-rose-400',
                     )}
                   >
                     {activePoint.windowNet >= 0 ? '+' : ''}
@@ -612,18 +930,22 @@ export function InteractivePnlChart({
                   </p>
                 </div>
                 <div className="text-right">
-                  <p className="text-[11px] uppercase tracking-wide text-faint">Total Capital</p>
-                  <p className="text-[15px] font-semibold text-fg tabular-nums">{usd(activePoint.capital)}</p>
+                  <p className="text-[11px] tracking-wide text-muted-foreground uppercase">Total Capital</p>
+                  <p className="font-mono text-[15px] font-semibold text-foreground tabular-nums">
+                    {usd(activePoint.capital)}
+                  </p>
                 </div>
               </div>
 
               {/* Cumulative Return vs Starting Capital */}
-              <div className="mt-1 flex items-center justify-between text-[11.5px] text-muted">
+              <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
                 <span>Total Net:</span>
                 <span
-                  className={cx(
-                    'font-medium tabular-nums',
-                    activePoint.cumNet >= 0 ? 'text-success' : 'text-danger',
+                  className={cn(
+                    'font-mono font-medium tabular-nums',
+                    activePoint.cumNet >= 0
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : 'text-rose-600 dark:text-rose-400',
                   )}
                 >
                   {activePoint.cumNet >= 0 ? '+' : ''}
@@ -635,38 +957,38 @@ export function InteractivePnlChart({
               </div>
 
               {/* Window Details Breakdown */}
-              <div className="mt-3 space-y-1.5 border-t border-line pt-2 text-[12px]">
+              <div className="mt-3 flex flex-col gap-1.5 border-t border-border pt-2 text-xs">
                 <div className="flex justify-between">
-                  <span className="text-muted">Trades / Fills:</span>
-                  <span className="font-medium tabular-nums text-fg">
+                  <span className="text-muted-foreground">Trades / Fills:</span>
+                  <span className="font-mono font-medium text-foreground tabular-nums">
                     {activePoint.window.trades} fills ({activePoint.window.upFills}↑ / {activePoint.window.downFills}↓)
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted">Staked → Payout:</span>
-                  <span className="font-medium tabular-nums text-fg">
+                  <span className="text-muted-foreground">Staked → Payout:</span>
+                  <span className="font-mono font-medium text-foreground tabular-nums">
                     {usd(activePoint.window.costUsd)} → {usd(activePoint.window.payoutUsd)}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted">Sides Covered:</span>
-                  <span className="text-fg">
+                  <span className="text-muted-foreground">Sides Covered:</span>
+                  <span className="text-foreground">
                     {activePoint.window.bothSides ? (
-                      <span className="text-success font-medium">Both sides (pass)</span>
+                      <span className="font-medium text-emerald-600 dark:text-emerald-400">Both sides (pass)</span>
                     ) : (
-                      <span className="text-warning font-medium">Single side</span>
+                      <span className="font-medium text-amber-600 dark:text-amber-400">Single side</span>
                     )}
                   </span>
                 </div>
                 {activePoint.window.zeroPriceFills > 0 && (
-                  <div className="flex justify-between text-danger">
+                  <div className="flex justify-between text-rose-600 dark:text-rose-400">
                     <span>Zero-price fills:</span>
-                    <span className="font-medium">{activePoint.window.zeroPriceFills}</span>
+                    <span className="font-mono font-medium tabular-nums">{activePoint.window.zeroPriceFills}</span>
                   </div>
                 )}
                 <div className="flex justify-between">
-                  <span className="text-muted">Redemption:</span>
-                  <span className="text-muted">
+                  <span className="text-muted-foreground">Redemption:</span>
+                  <span className="text-muted-foreground">
                     {activePoint.window.pending
                       ? 'Settling…'
                       : activePoint.window.redeemed
