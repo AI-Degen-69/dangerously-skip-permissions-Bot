@@ -401,11 +401,8 @@ def _dynamic_realism(
                 continue
             if pts < t0 or pts > window_end:
                 continue
-            if str(p.get("slug_outcome") or "") != str(fill.get("outcome") or ""):
-                continue
-            if str(p.get("side") or "").upper() != "SELL":
-                continue
-            if _num(p.get("price")) > limit + PRICE_EPS:
+            ok, _ = _is_maker_flow_print(p, fill.get("outcome"), limit)
+            if not ok:
                 continue
             events.append((pts, "print", p))
         for rec in books_by_outcome.get(str(fill.get("outcome") or ""), []):
@@ -421,7 +418,8 @@ def _dynamic_realism(
             if kind == "print":
                 sz = _num(payload.get("size"))
                 sells_le += sz
-                if abs(_num(payload.get("price")) - limit) <= 1e-6:
+                _, at_level = _is_maker_flow_print(payload, fill.get("outcome"), limit)
+                if at_level:
                     sells_at_L += sz
             else:
                 cur = _book_size_at(payload, limit)
@@ -596,20 +594,37 @@ def _own_market(tape: list[dict], condition_id: str | None) -> list[dict]:
     return [p for p in tape if str(p.get("market") or "") == market]
 
 
+def _is_maker_flow_print(print_row: dict, outcome: object, limit: float) -> tuple[bool, bool]:
+    """Return (matches_flow, at_exact_limit) for direct SELL or complementary BUY prints.
+
+    Direct match: SELL/ASK on ``outcome`` with price <= ``limit`` + PRICE_EPS.
+    Complementary match: BUY/BID on the opposite binary outcome with
+    price >= (1.0 - ``limit``) - PRICE_EPS.
+    """
+    target_oc = str(outcome or "")
+    print_oc = str(print_row.get("slug_outcome") or "")
+    side = str(print_row.get("side") or "").upper()
+    px = _num(print_row.get("price"))
+    if print_oc == target_oc:
+        if side in ("SELL", "ASK", "SELLS") and px <= limit + PRICE_EPS:
+            return True, abs(px - limit) <= 1e-6
+        return False, False
+    if (target_oc, print_oc) in (("Up", "Down"), ("Down", "Up")):
+        comp_limit = 1.0 - limit
+        if side in ("BUY", "BID", "BUYS") and px >= comp_limit - PRICE_EPS:
+            return True, abs(px - comp_limit) <= 1e-6
+    return False, False
+
+
 def _sell_flow(tape: list[dict], fill: dict, price: float) -> list[int]:
-    """Positions in `tape` of taker SELL prints at or below `price`, from the fill on."""
+    """Positions in `tape` of attainable maker flow (direct SELL or complementary BUY), from the fill on."""
     outcome = fill.get("outcome")
     first = bisect.bisect_left(tape, fill_epoch_s(fill), key=_print_ts)
     flow: list[int] = []
     for i in range(first, len(tape)):
-        print_row = tape[i]
-        if print_row.get("slug_outcome") != outcome:
-            continue
-        if str(print_row.get("side") or "").upper() != "SELL":
-            continue
-        if _num(print_row.get("price")) > price + PRICE_EPS:
-            continue
-        flow.append(i)
+        ok, _ = _is_maker_flow_print(tape[i], outcome, price)
+        if ok:
+            flow.append(i)
     return flow
 
 
@@ -625,7 +640,7 @@ def _maker_t0(fill: dict) -> float:
 
 
 def _maker_flow_from(tape: list[dict], outcome: object, limit: float, t0: float, window_end: float) -> list[int]:
-    """Positions in `tape` of taker SELL prints for `outcome` at/below `limit`.
+    """Positions in `tape` of attainable maker flow for `outcome` at `limit`.
 
     Same price/side/outcome gates as `_sell_flow`, but measured from placement
     time `t0` (not fill time) so cancel-credit rescues compete for the same
@@ -639,13 +654,9 @@ def _maker_flow_from(tape: list[dict], outcome: object, limit: float, t0: float,
             continue
         if pts < t0 or pts > window_end:
             continue
-        if str(print_row.get("slug_outcome") or "") != str(outcome or ""):
-            continue
-        if str(print_row.get("side") or "").upper() != "SELL":
-            continue
-        if _num(print_row.get("price")) > limit + PRICE_EPS:
-            continue
-        flow.append(i)
+        ok, _ = _is_maker_flow_print(print_row, outcome, limit)
+        if ok:
+            flow.append(i)
     return flow
 
 

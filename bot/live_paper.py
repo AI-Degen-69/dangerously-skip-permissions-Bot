@@ -491,6 +491,8 @@ def update_maker_order(
                 return (True, False)
             return (False, False)
 
+    if cur is not None:
+        cur.pop("_last_touch_ask_obs", None)
     q_val = float(ahead) if ahead is not None else 0.0
     open_orders[outcome] = {
         "side": outcome,

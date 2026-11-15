@@ -72,6 +72,61 @@ class MultiLevelTests(unittest.TestCase):
         self.assertGreater(filled, 0.0)
         self.assertLessEqual(filled, 10.0)
 
+    def test_queue_only_consumption_reduces_remaining_print_size(self):
+        # Two rungs: 0.22 has queue_ahead=20.0, lower 0.20 is outside visible top-1 -> queue_ahead=0.0.
+        # A 10-share complementary Down BUY @ 0.80 is completely absorbed reducing 0.22's queue
+        # (hit is None), so remaining must drop to 0 and NOT fill the 0.20 rung.
+        slot = 5_100_000
+        book = [
+            (slot + 4, "Up", [[0.22, 20.0]], [[0.24, 100.0]]),
+            (slot + 4, "Down", [[0.76, 100.0]], [[0.78, 100.0]]),
+        ]
+        prints = [(slot + 10, "Down", 0.80, 10.0, "BUY", "a")]
+        res = simulate_window(slot, "Up", book, prints,
+                              "dangerously-skip-permissions-v2.6", _entry(), levels=2,
+                              spacing=0.02)
+        self.assertEqual(res["n_fills"], 0)
+
+    def test_book_cross_fills_resting_hedge_without_prints_matching_live_paper(self):
+        slot = 5_200_000
+        entry = {
+            "startAfterOpenSec": 0,
+            "stopBeforeCloseSec": 30,
+            "sweepBeforeCloseSec": 12,
+            "minFillPrice": 0.07,
+            "maxFillPrice": 0.48,
+            "leg1MaxPrice": 0.48,
+            "leg2MaxPrice": 0.75,
+            "clipSharesDefault": 10.0,
+            "maxShares": 10.0,
+            "maxPairCost": 0.985,
+            "maxShareLead": 11.0,
+            "takerDipEntryMax": 0.36,
+            "takerDipBalancedOnly": True,
+            "minSpacingStaticSec": 0.0,
+            "minSpacingMoveSec": 0.0,
+            "includeTakerFee": True,
+        }
+        book = [
+            (slot + 10, "Up", [[0.73, 10.0]], [[0.74, 10.0]]),
+            (slot + 10, "Down", [[0.25, 10.0]], [[0.26, 10.0]]),
+            (slot + 20, "Up", [[0.68, 10.0]], [[0.70, 10.0]]),
+            (slot + 20, "Down", [[0.30, 10.0]], [[0.32, 10.0]]),
+            (slot + 30, "Up", [[0.66, 10.0]], [[0.70, 10.0]]),
+            (slot + 30, "Down", [[0.30, 10.0]], [[0.34, 10.0]]),
+            (slot + 40, "Up", [[0.64, 10.0]], [[0.66, 10.0]]),
+            (slot + 40, "Down", [[0.34, 10.0]], [[0.36, 10.0]]),
+        ]
+        res = simulate_window(slot, "Up", book, [], "hydrogen-v1.2", entry, levels=1)
+        self.assertEqual(res["n_fills"], 2)
+        self.assertEqual(res["fills"][0]["outcome"], "Down")
+        self.assertEqual(res["fills"][0]["role"], "TAKER")
+        self.assertEqual(res["fills"][0]["shares"], 10.0)
+        self.assertEqual(res["fills"][1]["outcome"], "Up")
+        self.assertEqual(res["fills"][1]["role"], "MAKER")
+        self.assertEqual(res["fills"][1]["price"], 0.68)
+        self.assertEqual(res["fills"][1]["shares"], 10.0)
+
 
 class QueueFlowTests(unittest.TestCase):
     def test_snapshot_queue_net_of_intervening_flow(self):

@@ -71,8 +71,9 @@ def match_maker_print(order: dict, print_row: dict) -> dict | None:
 
     Direct match: explicit SELL on the same outcome at or below the limit.
     Complementary binary match: explicit BUY on the opposite outcome at
-    opposite_price <= (1.0 - limit) + 1e-9 (e.g., BUY Down @ 0.32 matches
-    against a resting BUY Up @ 0.68 on Polymarket's binary CLOB).
+    opposite_price >= (1.0 - limit) - 1e-9 (e.g., BUY Down @ 0.32 or 0.36
+    matches against a resting BUY Up @ 0.68 on Polymarket's binary CLOB,
+    because binary crossing requires p_up + p_down >= 1.0).
     """
     order_side = str(order.get("side") or "")
     print_outcome = str(print_row.get("outcome") or "")
@@ -96,7 +97,7 @@ def match_maker_print(order: dict, print_row: dict) -> dict | None:
     elif is_complementary:
         if print_side not in ("BUY", "BID", "BUYS"):
             return None
-        if px > (1.0 - limit) + 1e-9:
+        if px < (1.0 - limit) - 1e-9:
             return None
     else:
         return None
@@ -142,11 +143,13 @@ def match_maker_book_cross(order: dict, quote: dict | None) -> dict | None:
     ask_crossed = (ask is not None and ask <= limit + 1e-9)
     bid_cleared = (bid is not None and bid < limit - 1e-9)
     if not (ask_crossed or bid_cleared):
+        order.pop("_last_touch_ask_obs", None)
         return None
 
     ahead = max(0.0, float(order.get("queue_ahead") or 0.0))
     strictly_cleared = bid_cleared or (ask is not None and ask < limit - 1e-9)
     if strictly_cleared:
+        order.pop("_last_touch_ask_obs", None)
         order["queue_ahead"] = 0.0
         order["shares_left"] = 0.0
         return {"fills": shares_left, "queueAhead": ahead}
@@ -159,6 +162,15 @@ def match_maker_book_cross(order: dict, quote: dict | None) -> dict | None:
         ask_size = None
 
     if ask_size is not None and ask_size > 0.0:
+        raw_ts = quote.get("ts") if quote.get("ts") is not None else quote.get("timestamp")
+        obs_key = (
+            round(float(ask), 6),
+            round(float(ask_size), 6),
+            str(raw_ts) if raw_ts is not None else None,
+        )
+        if order.get("_last_touch_ask_obs") == obs_key:
+            return None
+        order["_last_touch_ask_obs"] = obs_key
         used = min(ahead, ask_size)
         order["queue_ahead"] = ahead - used
         filled = min(ask_size - used, shares_left)
@@ -167,6 +179,7 @@ def match_maker_book_cross(order: dict, quote: dict | None) -> dict | None:
         order["shares_left"] = shares_left - filled
         return {"fills": filled, "queueAhead": ahead}
 
+    order.pop("_last_touch_ask_obs", None)
     order["queue_ahead"] = 0.0
     order["shares_left"] = 0.0
     return {"fills": shares_left, "queueAhead": ahead}

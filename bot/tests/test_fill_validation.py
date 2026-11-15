@@ -222,7 +222,8 @@ class MakerPrintMatchTests(unittest.TestCase):
         self.assertIsNone(match_maker_print(self._order(), self._print(size=0)))
 
     def test_complementary_buy_print_fills_resting_bid(self):
-        # Resting Up bid @ 0.68 matches Down BUY <= 0.32 (1 - 0.68)
+        # Polymarket binary crossing requires p_up + p_down >= 1.0:
+        # Resting Up bid @ 0.68 matches Down BUY >= 0.32 (1 - 0.68).
         order = self._order(side="Up", price=0.68, shares_left=10.0, queue_ahead=0.0)
         hit = match_maker_print(order, {"outcome": "Down", "side": "BUY", "price": 0.32, "size": 10.0})
         self.assertIsNotNone(hit)
@@ -230,14 +231,14 @@ class MakerPrintMatchTests(unittest.TestCase):
         self.assertEqual(order["shares_left"], 0.0)
 
         order2 = self._order(side="Up", price=0.68, shares_left=10.0, queue_ahead=0.0)
-        hit2 = match_maker_print(order2, {"outcome": "Down", "side": "BUY", "price": 0.28, "size": 6.0})
+        hit2 = match_maker_print(order2, {"outcome": "Down", "side": "BUY", "price": 0.35, "size": 6.0})
         self.assertIsNotNone(hit2)
         self.assertEqual(hit2["fills"], 6.0)
         self.assertEqual(order2["shares_left"], 4.0)
 
-        # Down BUY @ 0.35 (> 0.32) or Down SELL @ 0.32 does NOT fill Up bid @ 0.68
+        # Down BUY @ 0.28 (< 0.32 -> 0.68 + 0.28 = 0.96 < 1.0) or Down SELL @ 0.32 does NOT fill Up bid @ 0.68
         self.assertIsNone(match_maker_print(self._order(side="Up", price=0.68),
-                                            {"outcome": "Down", "side": "BUY", "price": 0.35, "size": 20.0}))
+                                            {"outcome": "Down", "side": "BUY", "price": 0.28, "size": 20.0}))
         self.assertIsNone(match_maker_print(self._order(side="Up", price=0.68),
                                             {"outcome": "Down", "side": "SELL", "price": 0.32, "size": 20.0}))
 
@@ -271,6 +272,16 @@ class MakerBookCrossTests(unittest.TestCase):
         self.assertAlmostEqual(hit["fills"], 7.0)
         self.assertAlmostEqual(order["shares_left"], 3.0)
         self.assertAlmostEqual(order["queue_ahead"], 0.0)
+
+        # Repeated poll of the identical unchanged touch quote must NOT fill again
+        self.assertIsNone(match_maker_book_cross(order, {"bid": 0.68, "ask": 0.68, "askSize": 12.0}))
+        self.assertAlmostEqual(order["shares_left"], 3.0)
+
+        # A genuinely new observation (e.g. updated timestamp) consumes new askSize
+        hit2 = match_maker_book_cross(order, {"bid": 0.68, "ask": 0.68, "askSize": 12.0, "ts": 2})
+        self.assertIsNotNone(hit2)
+        self.assertAlmostEqual(hit2["fills"], 3.0)
+        self.assertAlmostEqual(order["shares_left"], 0.0)
 
 
 class SetupCopyTests(unittest.TestCase):
