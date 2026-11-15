@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Verified Only — what the tape backs</title>
+<style>
+:root{--bg:#0f1419;--card:#171e26;--line:#2a3441;--fg:#eef2f6;--mut:#9aa7b4;--ok:#2fbf71;--warn:#e0a63c;--bad:#e05c5c;--acc:#4aa8ff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,Segoe UI,Roboto,Arial}
+.wrap{max-width:980px;margin:0 auto;padding:28px 18px 60px}
+.hero{background:linear-gradient(135deg,#182433,#101820);border:1px solid var(--line);border-radius:16px;padding:22px}
+.hero h1{margin:0 0 6px;font-size:26px}.hero p{margin:6px 0;color:var(--mut)}
+.grid{display:grid;gap:14px}.g2{grid-template-columns:1fr 1fr}.g3{grid-template-columns:repeat(3,1fr)}
+@media(max-width:760px){.g2,.g3{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+.card h2{margin:0 0 8px;font-size:17px}.card h3{margin:12px 0 6px;font-size:14px}
+code{background:#0b1016;border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-size:12.5px}
+.badge{display:inline-block;border:1px solid var(--line);border-radius:99px;padding:2px 10px;font-size:12px;color:var(--mut)}
+.badge.ok{color:var(--ok);border-color:#245c40}.badge.bad{color:var(--bad);border-color:#6b2d2d}
+.flow{display:flex;align-items:stretch;gap:0;margin:12px 0;flex-wrap:wrap}
+.step{flex:1;min-width:150px;background:#0d1319;border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center}
+.arrow{align-self:center;padding:0 8px;color:var(--acc);font-weight:700}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{border-bottom:1px solid var(--line);padding:8px;text-align:right}th:first-child,td:first-child{text-align:left}th{color:var(--mut);font-weight:600}
+.callout{border-left:4px solid var(--warn);padding:10px 12px;background:#1d1a12;border-radius:0 10px 10px 0}
+.okbox{border-left:4px solid var(--ok);padding:10px 12px;background:#10201a;border-radius:0 10px 10px 0}
+.kbd{font-family:ui-monospace,monospace}
+.switch{display:inline-flex;align-items:center;gap:8px}.dot{width:34px;height:18px;border-radius:99px;background:var(--ok);position:relative}.dot:after{content:"";position:absolute;top:2px;right:2px;width:14px;height:14px;background:#fff;border-radius:50%}
+.muted{color:var(--mut)}.small{font-size:13px}
+svg{max-width:100%;height:auto}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="hero">
+<span class="badge">Dashboard · chart card toggle</span>
+<h1>Verified Only — count only what the tape backs</h1>
+<p>Paper mode assumes fills. <b>Verified Only</b> recomputes every window from the fills the recorded trade prints corroborate. A window with zero confirmed fills <b>drops out entirely</b>. Read it as a <b>lower bound</b>, not an estimate.</p>
+<div class="switch"><span class="dot"></span><b>Verified Only</b> <span class="muted small">Counting only the fills the tape corroborates. Click to count every fill.</span></div>
+</div>
+
+<div class="grid g2" style="margin-top:14px">
+<div class="card">
+<h2>1 · The one-line rule</h2>
+<p><code>src/app/lib/verified.ts → verifiedWindow()</code></p>
+<div class="okbox small">Same window, confirmed numbers only — or <code>null</code> (dropped) when <code>verified.trades === 0</code>. Copies <code>trades, cost, payout, net, up/down fills, fees</code> from <code>window.verified</code>. Pending windows keep <code>net = null</code>.</div>
+<pre class="small muted">effective = verifiedOnly
+  ? windows.map(verifiedWindow).filter(w =&gt; w !== null)
+  : windows</pre>
+<p class="small muted">Everything downstream — KPI cards, PnL curve, bars, window log — reads the same <code>effective</code> slice, so they can never disagree. The API summary only backs the all-time, every-fill view.</p>
+</div>
+<div class="card">
+<h2>2 · What “verified” means</h2>
+<p><code>bot/tape_verifier.py</code> — per maker fill at limit <b>L</b>, size <b>C</b>:</p>
+<div class="flow">
+<div class="step"><b>Tape prints</b><br><span class="muted small">same window, same outcome, price ≤ L</span></div><div class="arrow">→</div>
+<div class="step"><b>Sum sizes</b><br><span class="muted small">both sides of fill count</span></div><div class="arrow">→</div>
+<div class="step"><b>≥ C ? verified</b><br><span class="muted small">&gt;0 but &lt;C → partial<br>0 → unverified</span></div>
+</div>
+<table>
+<tr><th>Fill type</th><th>Tape verdict</th><th>In view?</th></tr>
+<tr><td>Maker, level traded with size</td><td><span class="badge ok">verified</span></td><td>yes</td></tr>
+<tr><td>Maker, some prints</td><td><span class="badge">partial</span></td><td>no (only verified counts)</td></tr>
+<tr><td>Maker, never traded</td><td><span class="badge bad">unverified</span></td><td>no — drops out</td></tr>
+<tr><td>Taker (paper cross)</td><td><span class="badge bad">unverified-taker</span></td><td>no — no real book</td></tr>
+<tr><td>&lt; 5s old</td><td><span class="badge">pending</span></td><td>waits (grace 5s)</td></tr>
+</table>
+<p class="small muted">Taker fills can never be self-verified in paper mode — the hypothetical crossing order never entered the real book. The print that took your limit may land just <i>before</i> the fill timestamp (bot reads book after trade), so both sides count. Later windows never count.</p>
+</div>
+</div>
+
+<div class="card" style="margin-top:14px">
+<h2>3 · Worked example — one window</h2>
+<table>
+<tr><th>Window w-12:05</th><th>Paper (all fills)</th><th>Verified Only</th></tr>
+<tr><td>Fills</td><td>12 (8 maker + 4 taker)</td><td><b>5</b> confirmed maker</td></tr>
+<tr><td>Cost → Payout → Net</td><td>$38.20 → $45.00 → +$6.80</td><td><b>$15.10 → $18.00 → +$2.90</b></td></tr>
+<tr><td>Badges</td><td>—</td><td><span class="badge">maker only</span></td></tr>
+<tr><td>Chart</td><td>counts $6.80</td><td>counts <b>$2.90</b>; attainable row hidden</td></tr>
+</table>
+<p class="small muted">Second window with 0 verified fills: paper shows −$1.20, Verified Only removes the row completely — settled count drops from 12 → 11. That is intentional: silence is not proof.</p>
+<div class="callout small"><b>Lower bound, not estimate.</b> Unverified fills might still have filled. Verified Only answers “what survives the tape?”, not “what would live trading have made?”</div>
+</div>
+
+<div class="grid g2" style="margin-top:14px">
+<div class="card">
+<h2>4 · Verified vs Attainable — the full difference</h2>
+<p class="small">Two different questions on the same tape. <b>Verified</b> = weak level check. <b>Attainable</b> = strict queue check. A fill can be verified but phantom.</p>
+<table>
+<tr><th></th><th>Verified (weak check)</th><th>Attainable (queue check)</th></tr>
+<tr><td>Question</td><td>Did level trade at size?</td><td>Could <i>our</i> bid have got filled behind the queue?</td></tr>
+<tr><td>Needs</td><td>prints ≤ L summing to C</td><td>taker SELL after fill + queue-ahead at fill time</td></tr>
+<tr><td>Row when ON</td><td>verified view (maker only)</td><td>hidden — both cover judged windows differently</td></tr>
+<tr><td>Which prints</td><td>Same window, price ≤ L, <b>either side</b>, before or after fill</td><td>Same market, <b>taker SELL only</b>, price ≤ L, <b>after</b> fill</td></tr>
+<tr><td>Queue ahead</td><td>Ignored</td><td>Subtracted first; unknown queue = upper bound</td></tr>
+<tr><td>Flow sharing</td><td>Independent — every fill re-sums same prints</td><td>Spent — one print fills one order; highest price then oldest first</td></tr>
+<tr><td>No-print window</td><td>All unverified</td><td>Returns None — drops out of both sides; silence is not proof</td></tr>
+<tr><td>P&amp;L use</td><td>Lower-bound view</td><td>Attainable net vs paper net, pre-rebate; gap = phantom fills</td></tr>
+</table>
+<div class="flow">
+<div class="step"><b>Verified passes</b><br><span class="muted small">12c level traded 50 shares ✓</span></div><div class="arrow">but</div>
+<div class="step"><b>Attainable fails</b><br><span class="muted small">queue 40 + only 15 SELL after → phantom ✗</span></div>
+</div>
+<p class="small muted">Rule of thumb: <b>verified over-counts, attainable under-counts queue-unknown fills</b>. BUY prints never fill a resting bid — getting that backwards inverts the audit. Taker fills always pass attainable (they take the ask); they never pass verified in paper mode.</p>
+<p class="small muted">Per-fill live verdicts in <i>Orders &amp; Fills → STATUS</i>: <code>Attainable</code> as soon as selling so far could fill it, <code>Phantom</code> once complete tape proves it could not. <code>Verified</code> stays only until the audit judges it.</p>
+</div>
+<div class="card">
+<h2>5 · Operational gotchas</h2>
+<ul class="small">
+<li><b>Old runs look empty:</b> live verifier only stamps the window it is trading. Runs started before it existed keep fills unstamped → re-stamp with <code class="kbd">python bot/verify_run.py</code> (see <code>bot/RUNBOOK.md</code>), else the view covers a slice.</li>
+<li><b>Fees change meaning:</b> taker fees excluded, <span class="badge">maker only</span> badge appears; maker rebate still applies (drawn from maker pool).</li>
+<li><b>Corroboration line</b> under chart: confirmed maker vs all maker, never-traded count, unchecked taker count, payout resting on unverified fills.</li>
+<li><b>Files:</b> <code>bot/tape_verifier.py</code> (engine) · <code>bot/api.py:887</code> (per-fill status + window rollup) · <code>src/app/lib/verified.ts</code> · <code>Dashboard.tsx:89,101,478</code> (toggle + scope) · <code>scripts/pnl-scope-check.ts:80</code> (scope guard).</li>
+</ul>
+</div>
+</div>
+<p class="muted small" style="margin-top:14px">Sources: current diff + Dashboard.tsx, verified.ts, tape_verifier.py, api.py, usage-guide.md, RUNBOOK.md. Uncertainty: exact corroborated counts vary per run/tape completeness.</p>
+</div>
+</body>
+</html>
