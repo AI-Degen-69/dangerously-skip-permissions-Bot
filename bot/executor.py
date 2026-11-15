@@ -227,6 +227,7 @@ def evaluate_microstructure_ladder(
     elapsed_sec: float | None = None,
     unhedged_step_cents: float | None = None,
     unhedged_probe_shares: float | None = None,
+    open_orders: dict | None = None,
     **kwargs,
 ) -> MicrostructureDecision:
     """Decision Engine for Hybrid Arbitrage Pairing & Certainty Sniping.
@@ -471,20 +472,6 @@ def evaluate_microstructure_ladder(
                     projected_pair_cost=h_proj,
                     share_deficit=deficit,
                 )
-        # Patient pair, forced close. The hedge rests at the lagging side's bid
-        # and books when a seller comes to it. Crossing the ask on the next tick
-        # is the one timing the ledger measures as a loss (-0.2c per pair at a
-        # 0-5s lag, +2.7c at 61-120s). In the sweep the pair has to close, so
-        # there we cross.
-        if in_sweep_phase or bid is None:
-            role = "TAKER"
-            exec_px = px
-        else:
-            role = "MAKER"
-            exec_px = bid
-        est_usd, _ = compute_fill_usd(shares, exec_px, role=role, include_fee=(role == "TAKER"))
-        proj_pc = _projected_pair_cost(inv, side, shares, est_usd)
-
         # Tiered Rescue Hedging:
         # Standard: proj_pc <= max_pair_cost -> sub-$1.00 profitable pairing arbitrage.
         # Rescue: when holding a deficit in DSP or sweep phase, accepting proj_pc up to rescue_max_pair_cost (1.080)
@@ -497,6 +484,28 @@ def evaluate_microstructure_ladder(
         else:
             rescue_allowed = bool(is_dsp or in_sweep_phase)
             rescue_cap = rescue_max_pair_cost
+        # Patient pair, forced close. The hedge rests at the lagging side's bid
+        # and books when a seller comes to it. Crossing the ask on the next tick
+        # is the one timing the ledger measures as a loss (-0.2c per pair at a
+        # 0-5s lag, +2.7c at 61-120s). In the sweep the pair has to close, so
+        # there we cross.
+        if in_sweep_phase or bid is None:
+            role = "TAKER"
+            exec_px = px
+        else:
+            role = "MAKER"
+            exec_px = bid
+            if open_orders:
+                cur_order = open_orders.get(side)
+                if isinstance(cur_order, dict):
+                    cur_px = _fnum(cur_order.get("price"))
+                    if cur_px is not None and cur_px > exec_px + 1e-9 and cur_px <= effective_ceiling:
+                        cur_est, _ = compute_fill_usd(shares, cur_px, role="MAKER", include_fee=False)
+                        cur_proj = _projected_pair_cost(inv, side, shares, cur_est)
+                        if cur_proj is None or cur_proj <= max_pair_cost or (rescue_allowed and cur_proj <= rescue_cap):
+                            exec_px = cur_px
+        est_usd, _ = compute_fill_usd(shares, exec_px, role=role, include_fee=(role == "TAKER"))
+        proj_pc = _projected_pair_cost(inv, side, shares, est_usd)
         is_rescue = (proj_pc is not None and proj_pc > max_pair_cost)
         if proj_pc is None or proj_pc <= max_pair_cost or (rescue_allowed and proj_pc <= rescue_cap and exec_px <= effective_ceiling):
             shares = _cap_for_maker(shares, role, side)
@@ -537,9 +546,10 @@ def evaluate_microstructure_ladder(
     # side until balance is restored. (The old separate freezeLead setting was
     # merged into max_share_lead: one setting does all of this.)
     fl = max_share_lead
-    if up_def >= fl:
+    min_clip = min(10.0, default_clip, max_clip)
+    if up_def >= fl or (saw_pair_cap and up_def > 0 and up_def + min_clip >= fl):
         candidates = ("Up",)   # Down leads -> ONLY Up allowed!
-    elif down_def >= fl:
+    elif down_def >= fl or (saw_pair_cap and down_def > 0 and down_def + min_clip >= fl):
         candidates = ("Down",) # Up leads -> ONLY Down allowed!
     elif up_def > 0:
         candidates = ("Up", "Down")
@@ -646,7 +656,8 @@ def evaluate_microstructure_ladder(
             saw_dust = True
             continue
         if px > min(max_fill, leg1_cap):
-            saw_ceiling = True
+            if not saw_pair_cap:
+                saw_ceiling = True
             continue
         dip_max = 0.45 if is_dsp else C.DIP_LADDER_MAX
         if px <= dip_max:

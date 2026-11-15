@@ -584,6 +584,213 @@ class LivePaperLoopTests(unittest.TestCase):
             self.assertEqual(markets[0]["oddsHistory"], st_hist)
             self.assertEqual(api._ODDS_HISTORY.get(slug), st_hist)
 
+    def test_update_maker_order_holds_higher_bid_and_logs_only_changes(self):
+        from bot.executor import evaluate_microstructure_ladder
+        from bot.live_paper import update_maker_order
+
+        open_orders: dict[str, dict] = {}
+        changed, repriced = update_maker_order(
+            open_orders, "Up", 0.68, 10.0, 0, "clip-fill", "hedge-equalizer", 10.0,
+            ahead=10.0, now_ts=1000.0,
+        )
+        self.assertTrue(changed)
+        self.assertTrue(repriced)
+        self.assertEqual(open_orders["Up"]["price"], 0.68)
+        self.assertEqual(open_orders["Up"]["placed_ts"], 1000.0)
+        self.assertEqual(open_orders["Up"]["queue_ahead"], 10.0)
+
+        # Identical price & shares -> no-op
+        changed2, repriced2 = update_maker_order(
+            open_orders, "Up", 0.68, 10.0, 0, "clip-fill", "hedge-equalizer", 10.0,
+            ahead=99.0, now_ts=1005.0,
+        )
+        self.assertFalse(changed2)
+        self.assertFalse(repriced2)
+        self.assertEqual(open_orders["Up"]["placed_ts"], 1000.0)
+        self.assertEqual(open_orders["Up"]["queue_ahead"], 10.0)
+
+        # Dropping market bid (0.66, 0.64) must NEVER lower the resting 0.68 bid
+        for lower_px in (0.66, 0.64):
+            ch, rep = update_maker_order(
+                open_orders, "Up", lower_px, 10.0, 0, "clip-fill", "hedge-equalizer", 10.0,
+                ahead=50.0, now_ts=1010.0,
+            )
+            self.assertFalse(ch)
+            self.assertFalse(rep)
+            self.assertEqual(open_orders["Up"]["price"], 0.68)
+            self.assertEqual(open_orders["Up"]["placed_ts"], 1000.0)
+            self.assertEqual(open_orders["Up"]["queue_ahead"], 10.0)
+
+        # Decision engine holding resting 0.68 bid when best_bid drops to 0.64
+        inv = {
+            "Up": {"shares": 0.0, "cost": 0.0},
+            "Down": {"shares": 10.0, "cost": 2.73, "lowest_price": 0.26},
+        }
+        quotes = {
+            "Up": {"bid": 0.64, "ask": 0.69},
+            "Down": {"bid": 0.31, "ask": 0.36},
+        }
+        dec = evaluate_microstructure_ladder(
+            quotes=quotes, inv=inv, fill_idx=1, minute=0,
+            strategy_id="hydrogen-v1.2", min_fill=0.07, max_fill=0.48,
+            default_clip=10.0, max_clip=10.0, max_pair_cost=0.985,
+            max_share_lead=11.0, leg1_max_price=0.48, leg2_max_price=0.75,
+            open_orders=open_orders,
+        )
+        self.assertEqual(dec.action, "fill")
+        self.assertEqual(dec.outcome, "Up")
+        self.assertEqual(dec.price, 0.68)
+
+        # Upward improvement (0.70) replaces the resting order
+        ch_up, rep_up = update_maker_order(
+            open_orders, "Up", 0.70, 10.0, 0, "clip-fill", "hedge-equalizer", 10.0,
+            ahead=4.0, now_ts=1020.0,
+        )
+        self.assertTrue(ch_up)
+        self.assertTrue(rep_up)
+        self.assertEqual(open_orders["Up"]["price"], 0.70)
+        self.assertEqual(open_orders["Up"]["placed_ts"], 1020.0)
+        self.assertEqual(open_orders["Up"]["queue_ahead"], 4.0)
+
+    def test_pair_cost_cap_not_overwritten_by_leg1_ceiling(self):
+        from bot.executor import evaluate_microstructure_ladder
+
+        # Down holds 10 sh @ $2.73 (0.273/sh); Up at 0.74 passes leg2_max_price=0.75
+        # but violates max_pair_cost=0.985 -> must report pair-cost-cap, NOT ceiling-price-skip.
+        inv = {
+            "Up": {"shares": 0.0, "cost": 0.0},
+            "Down": {"shares": 10.0, "cost": 2.73, "lowest_price": 0.26},
+        }
+        quotes_74 = {
+            "Up": {"bid": 0.73, "ask": 0.74},
+            "Down": {"bid": 0.25, "ask": 0.26},
+        }
+        dec = evaluate_microstructure_ladder(
+            quotes=quotes_74, inv=inv, fill_idx=1, minute=0,
+            strategy_id="hydrogen-v1.2", min_fill=0.07, max_fill=0.48,
+            default_clip=10.0, max_clip=10.0, max_pair_cost=0.985,
+            max_share_lead=11.0, leg1_max_price=0.48, leg2_max_price=0.75,
+        )
+        self.assertEqual(dec.action, "skip")
+        self.assertEqual(dec.outcome, "Up")
+        self.assertEqual(dec.reason, "extreme-price-skip")
+        self.assertEqual(dec.sub_reason, "pair-cost-cap")
+
+        # Up at 0.85 exceeds leg2_max_price=0.75 -> still reports ceiling-price-skip.
+        quotes_85 = {
+            "Up": {"bid": 0.84, "ask": 0.85},
+            "Down": {"bid": 0.14, "ask": 0.15},
+        }
+        dec_ceil = evaluate_microstructure_ladder(
+            quotes=quotes_85, inv=inv, fill_idx=1, minute=0,
+            strategy_id="hydrogen-v1.2", min_fill=0.07, max_fill=0.48,
+            default_clip=10.0, max_clip=10.0, max_pair_cost=0.985,
+            max_share_lead=11.0, leg1_max_price=0.48, leg2_max_price=0.75,
+        )
+        self.assertEqual(dec_ceil.action, "skip")
+        self.assertEqual(dec_ceil.sub_reason, "ceiling-price-skip")
+
+    @patch("bot.live_paper.write_state")
+    @patch("bot.live_paper.log_event")
+    @patch("bot.live_paper.STATE_PATH")
+    @patch("bot.live_paper.RUNS_DIR")
+    @patch("bot.live_paper.get_window")
+    @patch("bot.live_paper.assert_single_window")
+    @patch("bot.live_paper.load_cfg")
+    def test_trade_window_fills_resting_hedge_on_book_cross_and_logs_order_placed(
+        self, mock_load_cfg, mock_assert_single, mock_get_window, mock_runs_dir, mock_state_path, mock_log_event, mock_write_state
+    ):
+        mock_state_path.__fspath__.return_value = str(self.tmp_path / "state.json")
+        mock_runs_dir.mkdir.return_value = None
+        mock_load_cfg.return_value = {
+            "strategy": {"id": "hydrogen-v1.2", "symbol": "H2", "name": "Hydrogen v1.2"},
+            "entry": {
+                "startAfterOpenSec": 0,
+                "stopBeforeCloseSec": 30,
+                "sweepBeforeCloseSec": 12,
+                "minFillPrice": 0.07,
+                "maxFillPrice": 0.48,
+                "leg1MaxPrice": 0.48,
+                "leg2MaxPrice": 0.75,
+                "clipSharesDefault": 10.0,
+                "maxShares": 10.0,
+                "maxPairCost": 0.985,
+                "maxShareLead": 11.0,
+                "takerDipEntryMax": 0.36,
+                "takerDipBalancedOnly": True,
+                "minSpacingStaticSec": 0.0,
+                "minSpacingMoveSec": 0.0,
+            },
+        }
+        mock_spec = MagicMock()
+        mock_spec.up_token_id = "tok_up"
+        mock_spec.down_token_id = "tok_down"
+        mock_spec.condition_id = "0xcondition"
+        mock_spec.question = "Will BTC be up?"
+        mock_get_window.return_value = mock_spec
+
+        slot = 1_700_000_100
+        clock = [float(slot)]
+        # Step 0: Down @ 0.26 ask -> taker-dip-entry (10 Down @ 0.26)
+        # Step 1: Up bid=0.68, ask=0.70 -> places resting Maker Up @ 0.68
+        # Step 2: Up bid=0.66, ask=0.70 -> holds resting 0.68 (no duplicate order-placed)
+        # Step 3: Up bid=0.64, ask=0.66 -> book crosses/clears 0.68 -> fills 10 Up @ 0.68 MAKER
+        # Step 4+: balanced -> stops at end
+        quote_seq = [
+            {"Up": {"bid": 0.73, "ask": 0.74}, "Down": {"bid": 0.25, "ask": 0.26}},
+            {"Up": {"bid": 0.68, "ask": 0.70}, "Down": {"bid": 0.30, "ask": 0.32}},
+            {"Up": {"bid": 0.66, "ask": 0.70}, "Down": {"bid": 0.30, "ask": 0.34}},
+            {"Up": {"bid": 0.64, "ask": 0.66}, "Down": {"bid": 0.34, "ask": 0.36}},
+        ]
+        idx = [0]
+
+        class _BookCrossStreamer:
+            def __init__(self):
+                self.on_print = None
+                self.enable_trade_prints = False
+                self.tape_dir = None
+
+            def start(self):
+                pass
+
+            def stop(self):
+                pass
+
+            def wait_for_tick(self, timeout=0.25):
+                clock[0] += 60.0
+                if idx[0] < len(quote_seq) - 1:
+                    idx[0] += 1
+
+            def get_status(self):
+                return {}
+
+            def get_recent_ticks(self, limit=30):
+                return []
+
+            def depth(self, asset_id, levels=1):
+                return {"bids": [[0.68, 10.0]], "asks": [[0.70, 10.0]]}
+
+        logged_events = []
+        mock_log_event.side_effect = lambda kind, reason, *args, **kw: logged_events.append((kind, reason, kw))
+
+        def fake_live_quote_pair(*args, **kwargs):
+            return quote_seq[idx[0]]
+
+        def fake_time():
+            return clock[0]
+
+        with patch("bot.live_paper.settle_slug"), \
+             patch("bot.live_paper.KILL_PATH", self.tmp_path / "kill"), \
+             patch("bot.live_paper.live_quote_pair", side_effect=fake_live_quote_pair), \
+             patch("bot.live_paper.time", SimpleNamespace(time=fake_time, sleep=lambda dt: None), create=True):
+            res = trade_window(MagicMock(), slot=slot, origin=None, verbose=False,
+                               pre_streamer=_BookCrossStreamer())
+
+        self.assertEqual(res["trades"], 2)
+        order_placed_events = [e for e in logged_events if e[1] == "order-placed"]
+        self.assertEqual(len(order_placed_events), 1)
+        self.assertEqual(order_placed_events[0][2]["detail"]["price"], 0.68)
+
 
 if __name__ == "__main__":
     unittest.main()
