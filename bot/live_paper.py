@@ -53,7 +53,7 @@ from bot.executor import (
     evaluate_microstructure_ladder,
 )
 from bot.fill_audit import attainable_indexes, audit_window
-from bot.fill_model import match_maker_print
+from bot.fill_model import match_maker_book_cross, match_maker_print
 from bot.risk import RiskState, assert_single_window, check_window, clip_shares, heartbeat
 from bot.runs import RunWorkspace, find_run_id, get_active_run_id, make_run_id, set_active_run_id
 from bot.signal import LeanSignal
@@ -443,6 +443,72 @@ def _risk_detail(raw_reason: str, state: RiskState, trades: int) -> dict:
     return {}
 
 
+def update_maker_order(
+    open_orders: dict[str, dict],
+    outcome: str,
+    px: float,
+    shares: float,
+    minute: int,
+    reason: str,
+    sub_reason: str,
+    deficit: float,
+    ahead: float | None,
+    now_ts: float,
+    inv: dict[str, dict[str, float]] | None = None,
+    unhedged_step_cents: float | None = None,
+) -> tuple[bool, bool]:
+    """Place or update a resting Maker bid without chasing falling prices downward.
+
+    Returns (changed, repriced_or_new):
+    - changed: True if an order was newly placed or modified.
+    - repriced_or_new: True if a new order was placed or repriced upward.
+    """
+    if inv is not None and unhedged_step_cents is not None and float(unhedged_step_cents) > 0:
+        opp_outcome = "Down" if outcome == "Up" else "Up"
+        if inv[opp_outcome]["shares"] <= 0 and inv[outcome]["shares"] > 0:
+            low_px = inv[outcome].get("lowest_price")
+            if low_px is not None:
+                max_allowed = low_px - (float(unhedged_step_cents) / 100.0) + 1e-6
+                if px > max_allowed:
+                    return (False, False)
+
+    cur = open_orders.get(outcome)
+    if cur is not None:
+        cur_px = float(cur["price"])
+        if abs(cur_px - px) < 1e-9:
+            # Same price: keep placed_ts and queue_ahead intact.
+            if abs(float(cur["shares_left"]) - shares) > 1e-9:
+                cur["shares_left"] = shares
+                cur["deficit"] = deficit
+                return (True, False)
+            return (False, False)
+        if px < cur_px - 1e-9:
+            # Falling bid: never lower an existing resting bid; preserve limit
+            # price, placed_ts, and queue priority so falling prices fill it.
+            if shares > float(cur["shares_left"]) + 1e-9:
+                cur["shares_left"] = shares
+                cur["deficit"] = deficit
+                return (True, False)
+            return (False, False)
+
+    if cur is not None:
+        cur.pop("_last_touch_ask_obs", None)
+    q_val = float(ahead) if ahead is not None else 0.0
+    open_orders[outcome] = {
+        "side": outcome,
+        "price": px,
+        "shares_left": shares,
+        "queue_ahead": q_val,
+        "queue_ahead_at_place": q_val,
+        "placed_ts": now_ts,
+        "reason": reason,
+        "sub_reason": sub_reason,
+        "minute": minute,
+        "deficit": deficit,
+    }
+    return (True, True)
+
+
 def trade_window(
     c: PublicClient,
     slot: int,
@@ -780,18 +846,59 @@ def trade_window(
             batch = list(pending_prints)
             pending_prints.clear()
         for pr in batch:
-            outcome = token_outcome.get(str(getattr(pr, "asset_id", "")))
-            if outcome is None:
+            pr_outcome = token_outcome.get(str(getattr(pr, "asset_id", "")))
+            if pr_outcome is None:
                 continue
-            order = open_orders.get(outcome)
-            if order is None:
-                continue
-            hit = match_maker_print(order, {
-                "outcome": outcome,
-                "side": getattr(pr, "side", ""),
-                "price": getattr(pr, "price", 0.0),
-                "size": getattr(pr, "size", 0.0),
-            })
+            for target_outcome in ("Up", "Down"):
+                order = open_orders.get(target_outcome)
+                if order is None:
+                    continue
+                hit = match_maker_print(order, {
+                    "outcome": pr_outcome,
+                    "side": getattr(pr, "side", ""),
+                    "price": getattr(pr, "price", 0.0),
+                    "size": getattr(pr, "size", 0.0),
+                })
+                if hit is not None:
+                    if unhedged_step_cents is not None and float(unhedged_step_cents) > 0:
+                        opp_outcome = "Down" if target_outcome == "Up" else "Up"
+                        if inv[opp_outcome]["shares"] <= 0 and inv[target_outcome]["shares"] > 0:
+                            low_px = inv[target_outcome].get("lowest_price")
+                            if low_px is not None:
+                                max_allowed = low_px - (float(unhedged_step_cents) / 100.0) + 1e-6
+                                if order["price"] > max_allowed:
+                                    open_orders.pop(target_outcome, None)
+                                    continue
+                    ts = float(getattr(pr, "ts", 0.0) or 0.0) or time.time()
+                    try:
+                        _placed_ms = int(float(order.get("placed_ts", 0.0)) * 1000) if order.get("placed_ts") else None
+                    except (TypeError, ValueError):
+                        _placed_ms = None
+                    _book_fill(target_outcome, order["price"], hit["fills"], "MAKER",
+                               _minute_of(ts),
+                               order["reason"], order["sub_reason"], hit["queueAhead"],
+                               order["deficit"], ts_ms=int(ts * 1000),
+                               placed_at_ms=_placed_ms,
+                               queue_ahead_at_place=order.get("queue_ahead_at_place", order.get("queue_ahead")))
+                if order["shares_left"] <= 0:
+                    open_orders.pop(target_outcome, None)
+
+    def _drain_book_crosses(quotes_map: dict) -> None:
+        """Fill resting Maker bids when live CLOB quotes cross or clear their limit."""
+        if not open_orders:
+            return
+        for outcome, order in list(open_orders.items()):
+            q = dict(quotes_map.get(outcome) or {})
+            if streamer is not None and "askSize" not in q and "ask_size" not in q:
+                try:
+                    tok = spec.up_token_id if outcome == "Up" else spec.down_token_id
+                    top = streamer.depth(str(tok), levels=1)
+                    asks = (top or {}).get("asks") or []
+                    if asks:
+                        q["askSize"] = float(asks[0][1])
+                except Exception:
+                    pass
+            hit = match_maker_book_cross(order, q)
             if hit is not None:
                 if unhedged_step_cents is not None and float(unhedged_step_cents) > 0:
                     opp_outcome = "Down" if outcome == "Up" else "Up"
@@ -802,15 +909,15 @@ def trade_window(
                             if order["price"] > max_allowed:
                                 open_orders.pop(outcome, None)
                                 continue
-                ts = float(getattr(pr, "ts", 0.0) or 0.0) or time.time()
+                now_ts = time.time()
                 try:
                     _placed_ms = int(float(order.get("placed_ts", 0.0)) * 1000) if order.get("placed_ts") else None
                 except (TypeError, ValueError):
                     _placed_ms = None
                 _book_fill(outcome, order["price"], hit["fills"], "MAKER",
-                           _minute_of(ts),
+                           _minute_of(now_ts),
                            order["reason"], order["sub_reason"], hit["queueAhead"],
-                           order["deficit"], ts_ms=int(ts * 1000),
+                           order["deficit"], ts_ms=int(now_ts * 1000),
                            placed_at_ms=_placed_ms,
                            queue_ahead_at_place=order.get("queue_ahead_at_place", order.get("queue_ahead")))
             if order["shares_left"] <= 0:
@@ -819,36 +926,41 @@ def trade_window(
     def _place_maker(outcome: str, px: float, shares: float, minute: int,
                      reason: str, sub_reason: str, deficit: float) -> None:
         nonlocal orders_posted
-        if unhedged_step_cents is not None and float(unhedged_step_cents) > 0:
-            opp_outcome = "Down" if outcome == "Up" else "Up"
-            if inv[opp_outcome]["shares"] <= 0 and inv[outcome]["shares"] > 0:
-                low_px = inv[outcome].get("lowest_price")
-                if low_px is not None:
-                    max_allowed = low_px - (float(unhedged_step_cents) / 100.0) + 1e-6
-                    if px > max_allowed:
-                        return
         cur = open_orders.get(outcome)
-        if cur is not None and abs(cur["price"] - px) < 1e-9:
-            # Same price: keep the order where it is. Re-placing it would send
-            # us to the back of the queue on every tick.
+        ahead = None
+        if cur is None or px > float(cur["price"]) + 1e-9:
+            ahead = live_queue_ahead(streamer,
+                                     spec.up_token_id if outcome == "Up" else spec.down_token_id, px)
+        changed, repriced_or_new = update_maker_order(
+            open_orders=open_orders,
+            outcome=outcome,
+            px=px,
+            shares=shares,
+            minute=minute,
+            reason=reason,
+            sub_reason=sub_reason,
+            deficit=deficit,
+            ahead=ahead,
+            now_ts=time.time(),
+            inv=inv,
+            unhedged_step_cents=unhedged_step_cents,
+        )
+        if not changed:
             return
-        ahead = live_queue_ahead(streamer,
-                                 spec.up_token_id if outcome == "Up" else spec.down_token_id, px)
-        orders_posted += 1
-        open_orders[outcome] = {
-            "side": outcome,
-            "price": px,
-            "shares_left": shares,
-            "queue_ahead": float(ahead) if ahead is not None else 0.0,
-            "queue_ahead_at_place": float(ahead) if ahead is not None else 0.0,
-            "placed_ts": time.time(),
-            "reason": reason,
-            "sub_reason": sub_reason,
-            "minute": minute,
-            "deficit": deficit,
-        }
+        order = open_orders[outcome]
+        if repriced_or_new:
+            orders_posted += 1
         shown = ahead if ahead is not None else "unknown"
-        log(f"M{minute} {outcome} rest {shares:.1f} @ {px:.3f} behind {shown} [MAKER · {sub_reason}]")
+        log(f"M{minute} {outcome} rest {order['shares_left']:.1f} @ {order['price']:.3f} behind {shown} [MAKER · {sub_reason}]")
+        log_event("hold", "order-placed", slug, side=outcome,
+                  detail={"minute": f"M{minute}",
+                          "price": order["price"],
+                          "shares": round(order["shares_left"], 2),
+                          "role": "MAKER",
+                          "subReason": sub_reason,
+                          "queueAhead": round(float(order["queue_ahead"]), 1),
+                          "deficit": round(float(deficit), 2),
+                          "strategy": strat_sym})
         _persist()
 
     def _cancel_orders(why: str) -> None:
@@ -911,6 +1023,9 @@ def trade_window(
             minute = min(max((now - slot) // 60, 0), 4)
 
             quotes = live_quote_pair(c, spec.up_token_id, spec.down_token_id, streamer=streamer)
+            _drain_book_crosses(quotes)
+            imbalance = abs(inv["Up"]["shares"] - inv["Down"]["shares"])
+            in_sweep_phase = (now >= end and now < sweep_end and imbalance > 0.0)
             try:
                 _depth_cap = float(entry.get("maxDepthShares", 0.0) or 0.0)
             except Exception:
@@ -958,6 +1073,7 @@ def trade_window(
                 unhedged_probe_shares=(float(unhedged_probe_shares) if unhedged_probe_shares is not None else 0.0),
                 max_depth_shares=_depth_cap,
                 resting_size=_resting,
+                open_orders=open_orders,
             )
 
             # Uncensored decision journal: every evaluation (fill or skip) with

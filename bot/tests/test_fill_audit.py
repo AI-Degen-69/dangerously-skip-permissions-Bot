@@ -89,6 +89,23 @@ class EngineMatchesAuditTest(unittest.TestCase):
         self.assertEqual(got["attainableFills"], 1)
         self.assertEqual(got["phantomFills"], 0)
 
+    def test_complementary_buy_fill_is_attainable(self):
+        from bot.fill_model import match_maker_print
+
+        order = {"side": "Up", "price": 0.68, "shares_left": 10.0, "queue_ahead": 2.0}
+        hit = match_maker_print(order, {"outcome": "Down", "side": "BUY", "price": 0.35, "size": 12.0})
+        self.assertEqual(hit["fills"], 10.0)
+        fill = {
+            "ts": int((START + 10) * 1000), "outcome": "Up", "price": 0.68,
+            "shares": 10.0, "usd": 6.80,
+            "detail": {"role": "MAKER", "queueAhead": hit["queueAhead"]},
+        }
+        tape = [{"ts": START + 10, "slug_outcome": "Down", "price": 0.35, "size": 12.0, "side": "BUY"}]
+        got = audit_window([fill], tape, START, "Up")
+        self.assertEqual(got["attainableFills"], 1)
+        self.assertEqual(got["phantomFills"], 0)
+        self.assertEqual(got["bands"]["verified"]["fills"], 0)
+
 
 class AuditWindowTest(unittest.TestCase):
 
