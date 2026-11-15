@@ -57,7 +57,7 @@ from bot.fill_model import match_maker_print
 from bot.risk import RiskState, assert_single_window, check_window, clip_shares, heartbeat
 from bot.runs import RunWorkspace, find_run_id, get_active_run_id, make_run_id, set_active_run_id
 from bot.signal import LeanSignal
-from bot.tape_verifier import load_prints_for_window, verify_fills
+from bot.tape_verifier import load_book_for_window, load_prints_for_window, verify_fills
 from bot.ws import LiveBookStreamer
 
 RUNS_DIR = Path("bot/paper_runs")
@@ -684,7 +684,8 @@ def trade_window(
 
     def _book_fill(outcome: str, px: float, shares: float, role: str, minute: int,
                    reason: str, sub_reason: str, queue_ahead, deficit: float,
-                   ts_ms: int | None = None) -> None:
+                   ts_ms: int | None = None, placed_at_ms: int | None = None,
+                   queue_ahead_at_place=None, taker_book: dict | None = None) -> None:
         nonlocal cost, total_fees_usd, last_fill_ts, last_fill_px
         imbalance_before = abs(inv["Up"]["shares"] - inv["Down"]["shares"])
         usd, fee_usd = compute_fill_usd(shares, px, role=role, include_fee=include_taker_fee)
@@ -754,6 +755,11 @@ def trade_window(
                 "deficit": deficit,
                 "strategy": strat_id,
                 "tapeStatus": "pending" if _tape_on else None,
+                "placedAtMs": placed_at_ms,
+                "queueAheadAtPlace": queue_ahead_at_place,
+                "askSize": (taker_book or {}).get("askSize"),
+                "bidSize": (taker_book or {}).get("bidSize"),
+                "spreadCents": (taker_book or {}).get("spreadCents"),
             },
         })
 
@@ -797,10 +803,16 @@ def trade_window(
                                 open_orders.pop(outcome, None)
                                 continue
                 ts = float(getattr(pr, "ts", 0.0) or 0.0) or time.time()
+                try:
+                    _placed_ms = int(float(order.get("placed_ts", 0.0)) * 1000) if order.get("placed_ts") else None
+                except (TypeError, ValueError):
+                    _placed_ms = None
                 _book_fill(outcome, order["price"], hit["fills"], "MAKER",
                            _minute_of(ts),
                            order["reason"], order["sub_reason"], hit["queueAhead"],
-                           order["deficit"], ts_ms=int(ts * 1000))
+                           order["deficit"], ts_ms=int(ts * 1000),
+                           placed_at_ms=_placed_ms,
+                           queue_ahead_at_place=order.get("queue_ahead"))
             if order["shares_left"] <= 0:
                 open_orders.pop(outcome, None)
 
@@ -994,9 +1006,26 @@ def trade_window(
                 # now. Crossing the spread and leaving a resting bid on the same
                 # side would be double exposure the desk never ordered.
                 open_orders.pop(outcome, None)
+                _taker_book: dict = {}
+                try:
+                    _tok = spec.up_token_id if outcome == "Up" else spec.down_token_id
+                    _top = streamer.depth(str(_tok), levels=1) if streamer is not None else {}
+                    _bids = (_top or {}).get("bids") or []
+                    _asks = (_top or {}).get("asks") or []
+                    _ask_sz = float(_asks[0][1]) if _asks else None
+                    _bid_sz = float(_bids[0][1]) if _bids else None
+                    _spread = None
+                    try:
+                        if _asks and _bids:
+                            _spread = round((float(_asks[0][0]) - float(_bids[0][0])) * 100.0, 2)
+                    except (TypeError, ValueError, IndexError):
+                        _spread = None
+                    _taker_book = {"askSize": _ask_sz, "bidSize": _bid_sz, "spreadCents": _spread}
+                except Exception:
+                    _taker_book = {}
                 _book_fill(outcome, px, shares, "TAKER", minute,
                            decision.reason, decision.sub_reason, None,
-                           decision.share_deficit)
+                           decision.share_deficit, taker_book=_taker_book)
             else:
                 _place_maker(outcome, px, shares, minute,
                              decision.reason, decision.sub_reason, decision.share_deficit)
@@ -1143,10 +1172,14 @@ def settle_slug(slug: str, snap: dict, origin: str | None, budget_s: int = 900) 
         try:
             slot_s = float(snap["slot"])
             prints = load_prints_for_window(Path(snap["tapeDir"]), slot_s, slot_s + C.WINDOW_S)
+            try:
+                _book = load_book_for_window(Path(snap["tapeDir"]), slot_s, slot_s + C.WINDOW_S)
+            except (OSError, ValueError):
+                _book = None
             # Resolution is the last word on attainability: stamp the rows too,
             # so the fills table and the window total can never disagree.
             _stamp_attainable(fills, prints, snap.get("condition_id"), final=True)
-            fidelity = audit_window(fills, prints, slot_s, winner, snap.get("condition_id"))
+            fidelity = audit_window(fills, prints, slot_s, winner, snap.get("condition_id"), book=_book)
         except (OSError, ValueError):
             fidelity = None
 

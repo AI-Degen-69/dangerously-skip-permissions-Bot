@@ -32,8 +32,8 @@ if __package__ in (None, ""):  # allow `python bot/verify_run.py`
 
 from bot import constants as C
 from bot.fill_audit import audit_window, load_prints
-from bot.runs import resolve_run_workspace
-from bot.tape_verifier import verify_fills
+from bot.runs import resolve_run_workspace, tape_segments
+from bot.tape_verifier import load_book_for_window, verify_fills
 
 
 def window_epoch(slug: str | None) -> int:
@@ -111,8 +111,12 @@ def main() -> int:
             changed_windows += 1
 
         if prints is not None:
+            try:
+                _book = load_book_for_window(tape_dir, float(epoch), float(epoch + C.WINDOW_S))
+            except OSError:
+                _book = None
             fidelity = audit_window(
-                fills, prints, float(epoch), record.get("winner"), record.get("condition_id")
+                fills, prints, float(epoch), record.get("winner"), record.get("condition_id"), book=_book
             )
             if fidelity is not None:
                 record["fidelity"] = fidelity

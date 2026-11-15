@@ -420,7 +420,7 @@ class RunWorkspace:
         """
         from bot import constants as C
         from bot.fill_audit import attainable_indexes, audit_window
-        from bot.tape_verifier import load_prints_for_window
+        from bot.tape_verifier import load_book_for_window, load_prints_for_window
 
         try:
             start = float(int(str(data.get("event_slug") or "").split("-")[-1]))
@@ -433,10 +433,14 @@ class RunWorkspace:
             prints = load_prints_for_window(self.tape_dir, start, start + C.WINDOW_S)
         except OSError:
             return
+        try:
+            _book = load_book_for_window(self.tape_dir, start, start + C.WINDOW_S)
+        except OSError:
+            _book = None
         cid = data.get("condition_id")
         for i, ok in (attainable_indexes(fills, prints, cid) or {}).items():
             fills[i].setdefault("detail", {})["attainable"] = ok
-        data["fidelity"] = audit_window(fills, prints, start, winner, cid)
+        data["fidelity"] = audit_window(fills, prints, start, winner, cid, book=_book)
 
 
 def find_run_id(query: str, runs_root: Path = RUNS_DIR) -> str | None:

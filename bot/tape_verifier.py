@@ -71,6 +71,41 @@ def load_prints_for_window(tape_dir: Path, window_start_s: float, window_end_s: 
     return result
 
 
+def load_book_for_window(tape_dir: Path, window_start_s: float, window_end_s: float) -> list[dict]:
+    """Load book snapshots that fall within [window_start_s, window_end_s].
+
+    Mirrors load_prints_for_window using tape_segments(tape_dir, "book").
+    Book rows are absolute levels per Polymarket docs MarketBookEvent:
+    {ts, asset_id, outcome, bids: [[price, size]], asks: [[price, size]]}.
+    price_change carries absolute level sizes; last_trade_price side is the
+    taker side (SELL fills a resting BUY); tick_size_change is granularity
+    only (verified against Polymarket Documentation realtime-data pages).
+    """
+    result: list[dict] = []
+    for book_path in tape_segments(tape_dir, "book"):
+        try:
+            with open(book_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+                    try:
+                        ts = float(rec.get("ts", 0))
+                    except (TypeError, ValueError):
+                        continue
+                    if ts < window_start_s:
+                        continue
+                    if ts > window_end_s:
+                        return result
+                    result.append(rec)
+        except OSError:
+            continue
+    return result
+
+
 def verify_single_fill(
     fill: dict,
     prints: list[dict],
