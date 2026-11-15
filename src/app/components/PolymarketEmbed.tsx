@@ -1,14 +1,25 @@
 import { Activity, ArrowUpRight, Radio } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 
-import { useBotConfig, type BotConfigView, type BotTrade, type Interval, type MarketView, type PositionView, type WsStatus } from '../lib/bot'
-import { cx } from '../lib/cx'
+import { Badge } from '@/components/ui/badge'
+import { Card } from '@/components/ui/card'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
+import { cn } from '@/lib/utils'
+import {
+  useBotConfig,
+  type BotConfigView,
+  type BotTrade,
+  type Interval,
+  type MarketView,
+  type PositionView,
+  type WsStatus,
+} from '../lib/bot'
 import { mmss } from '../lib/format'
 import { reasonLabel } from '../lib/labels'
-import { Badge, Card } from './ui'
 import { LiveWindowStrip } from './LiveWindowStrip'
 import { OpenPositionsStrip } from './OpenPositionsStrip'
 import { ProbabilityChart, type AxisTick, type OddsPoint } from './ProbabilityChart'
+import { StatusDot, type StatusDotTone } from './StatusDot'
 
 // Polymarket's official embed only plots last-trade prints, so a market this
 // quiet is stuck at its listing price forever. These panels keep the Polymarket
@@ -30,6 +41,22 @@ const TICK_BG: Record<AxisTick['tone'], string> = {
   info: 'bg-info',
   danger: 'bg-danger',
   muted: 'bg-muted',
+}
+
+type VerdictTone = 'success' | 'accent' | 'warning' | 'neutral'
+
+const VERDICT_BADGE: Record<VerdictTone, string> = {
+  success: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+  accent: 'border-primary/30 bg-primary/10 text-primary',
+  warning: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+  neutral: 'border-border bg-muted/60 text-muted-foreground',
+}
+
+const VERDICT_DOT_TONE: Record<VerdictTone, StatusDotTone> = {
+  success: 'live',
+  accent: 'stopped',
+  warning: 'warning',
+  neutral: 'stopped',
 }
 
 const MAX_SAMPLES = 500
@@ -75,7 +102,8 @@ const useOddsSeries = (market: MarketView): OddsPoint[] => {
   return points
 }
 
-const clock = (ms: number) => new Date(ms).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+const clock = (ms: number) =>
+  new Date(ms).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
 
 export function PolymarketLiveChart({
   markets,
@@ -105,7 +133,7 @@ export function PolymarketLiveChart({
   return (
     <div className="mt-3 grid gap-3 lg:grid-cols-2">
       {activeMarkets.length === 0 ? (
-        <Card className="p-5 lg:col-span-2">
+        <Card className="gap-0 p-5 lg:col-span-2">
           <WaitingBody />
         </Card>
       ) : (
@@ -232,24 +260,22 @@ function MarketChartPanel({
     ...minuteTicks.filter((mTick) => !gateTicks.some((gTick) => Math.abs(gTick.atSec - mTick.atSec) < 8)),
     ...gateTicks,
   ].sort((a, b) => a.atSec - b.atSec)
-  const verdictTone =
+  const verdictTone: VerdictTone =
     market.verdict.action === 'enter'
       ? 'success'
-      : market.verdict.action === 'snipe'
-      ? 'accent'
-      : market.verdict.action === 'blocked' || market.verdict.action === 'refuse'
-      ? 'warning'
-      : market.verdict.action === 'done'
-      ? 'accent'
-      : 'neutral'
+      : market.verdict.action === 'snipe' || market.verdict.action === 'done'
+        ? 'accent'
+        : market.verdict.action === 'blocked' || market.verdict.action === 'refuse'
+          ? 'warning'
+          : 'neutral'
   const slug = market.slug
   const eventUrl = `https://polymarket.com/event/${slug}?utm_medium=embed&utm_campaign=market&utm_content=spread-hunter`
 
   return (
-    <Card aria-label={`Live odds for ${slug}`} className={cx('flex flex-col p-5', wide && 'lg:col-span-2')}>
+    <Card aria-label={`Live odds for ${slug}`} className={cn('gap-0 p-5', wide && 'lg:col-span-2')}>
       <div className="flex items-center justify-between gap-2">
-        <p className="flex items-center gap-1.5 text-[11px] text-faint">
-          <Radio className="size-3 text-danger" aria-hidden />
+        <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <Radio className="size-3 text-rose-500" aria-hidden />
           Live odds · via Polymarket
         </p>
         <div className="flex items-center gap-2">
@@ -257,7 +283,7 @@ function MarketChartPanel({
             href={eventUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-[11px] font-medium text-accent hover:underline"
+            className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
             title="Open live market on Polymarket"
           >
             trade on Polymarket
@@ -265,49 +291,59 @@ function MarketChartPanel({
           </a>
         </div>
       </div>
+
       <div className="mt-1 flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="flex items-center gap-2 text-[13px] font-semibold">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
             {market.interval} window
-            <span className="text-[11.5px] font-normal text-faint">{clock(market.startMs)}</span>
+            <span className="font-mono text-xs font-normal text-muted-foreground tabular-nums">
+              {clock(market.startMs)}
+            </span>
             {hasUp && hasDown ? (
-              <Badge tone="accent">holding UP & DOWN</Badge>
+              <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">
+                holding UP &amp; DOWN
+              </Badge>
             ) : hasUp ? (
-              <Badge tone="accent">holding Up (first leg)</Badge>
+              <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">
+                holding Up (first leg)
+              </Badge>
             ) : hasDown ? (
-              <Badge tone="accent">holding Down (first leg)</Badge>
+              <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">
+                holding Down (first leg)
+              </Badge>
             ) : null}
           </h3>
-          <p className="mt-0.5 truncate font-mono text-[10.5px] text-faint">{slug}</p>
+          <p className="mt-0.5 truncate font-mono text-[10.5px] text-muted-foreground">{slug}</p>
         </div>
-        <Badge tone={verdictTone} dot>
+        <Badge variant="outline" className={VERDICT_BADGE[verdictTone]}>
+          <StatusDot tone={VERDICT_DOT_TONE[verdictTone]} blink={verdictTone === 'success'} size="xs" />
           {reasonLabel(market.verdict.reason)}
         </Badge>
       </div>
 
       <ProbabilityChart market={market} points={points} ticks={ticks} fills={fills} />
 
-      <div className="mt-3 space-y-2">
+      <div className="mt-3 flex flex-col gap-2">
         <LiveWindowStrip markets={[market]} ws={ws} pairCostCap={pairCostCap} />
         <OpenPositionsStrip positions={positions} pairCostCap={pairCostCap} />
       </div>
 
-      <div className="mt-3 flex items-center justify-between text-[11px] text-faint">
-        <span>{Math.round(progress * 100)}% elapsed</span>
-        <span className="tabular-nums">{Math.max(0, Math.round(market.secondsRemaining))}s left</span>
+      <div className="mt-3 flex items-center justify-between text-[11px] text-muted-foreground">
+        <span className="tabular-nums">{Math.round(progress * 100)}% elapsed</span>
+        <span className="font-mono tabular-nums">{Math.max(0, Math.round(market.secondsRemaining))}s left</span>
       </div>
       <div className="relative mt-1 pb-3">
-        <div className="flex h-1 overflow-hidden rounded-full bg-surface-2">
+        <div className="flex h-1 overflow-hidden rounded-full bg-muted">
           {bands.length === 0 ? (
             <div
-              className="h-full rounded-full bg-accent transition-[width] duration-1000 ease-linear"
+              className="h-full rounded-full bg-primary transition-[width] duration-1000 ease-linear"
               style={{ width: `${Math.round(progress * 100)}%` }}
             />
           ) : (
             bands.map((band) => (
-              <div key={band.key} className={cx('h-full', band.soft)} style={{ width: `${band.width}%` }}>
+              <div key={band.key} className={cn('h-full', band.soft)} style={{ width: `${band.width}%` }}>
                 <div
-                  className={cx('h-full transition-[width] duration-1000 ease-linear', band.tone)}
+                  className={cn('h-full transition-[width] duration-1000 ease-linear', band.tone)}
                   style={{ width: `${band.filled}%` }}
                 />
               </div>
@@ -323,26 +359,29 @@ function MarketChartPanel({
             className="absolute top-0 -translate-x-1/2"
             style={{ left: `${Math.min(96, Math.max(4, (tick.atSec / intervalSec) * 100))}%` }}
           >
-            <span className={cx('mx-auto -mt-[3px] block h-[10px] w-0.5 rounded-full', TICK_BG[tick.tone])} />
-            <span className="mt-0.5 block whitespace-nowrap text-[9px] tabular-nums tracking-wide text-faint">{tick.label}</span>
+            <span className={cn('mx-auto -mt-[3px] block h-[10px] w-0.5 rounded-full', TICK_BG[tick.tone])} />
+            <span className="mt-0.5 block font-mono text-[9px] tracking-wide whitespace-nowrap text-muted-foreground tabular-nums">
+              {tick.label}
+            </span>
           </span>
         ))}
       </div>
-
     </Card>
   )
 }
 
 function WaitingBody() {
   return (
-    <div className="grid h-[230px] place-items-center">
-      <div className="flex flex-col items-center gap-2 text-center">
-        <Activity className="size-6 animate-pulse text-faint" aria-hidden />
-        <p className="text-[13px] font-medium text-muted">Next window opening…</p>
-        <p className="max-w-[320px] text-[12px] text-faint">
+    <Empty className="h-[230px] p-6">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <Activity className="size-5 animate-pulse" aria-hidden />
+        </EmptyMedia>
+        <EmptyTitle>Next window opening…</EmptyTitle>
+        <EmptyDescription>
           The bot reattaches on its own — this switches the moment the new 5m/15m market appears.
-        </p>
-      </div>
-    </div>
+        </EmptyDescription>
+      </EmptyHeader>
+    </Empty>
   )
 }

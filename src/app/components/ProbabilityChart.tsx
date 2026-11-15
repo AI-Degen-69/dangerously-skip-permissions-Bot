@@ -1,9 +1,10 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
+import { Badge } from '@/components/ui/badge'
+import { cn } from '@/lib/utils'
 import type { MarketView } from '../lib/bot'
 import { axisLabels, projectX, projectY } from '../lib/chartMath'
 import { mmss } from '../lib/format'
-import { Badge } from './ui'
 
 /** Sampled implied-Up odds over the window: { t: epoch ms, v: probability 0..1 }. */
 export interface OddsPoint {
@@ -212,15 +213,30 @@ export function ProbabilityChart({
   const elapsedSec = hovered ? Math.max(0, (hovered.t - market.startMs) / 1000) : 0
 
   return (
-    <div className="relative mt-2.5 overflow-hidden rounded-tile border border-line bg-surface-2/30 p-3">
+    <div className="relative mt-2.5 overflow-hidden rounded-2xl border border-border bg-muted/30 p-3">
       <div className="relative flex items-center justify-between gap-2">
-        <p className="text-[10px] font-medium uppercase tracking-wide text-faint">Live probability trajectory</p>
+        <p className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+          Live probability trajectory
+        </p>
         {marks.length > 0 && (
-          <span className="ml-auto font-mono text-[10px] text-faint" title="Diamonds on the curve mark where the bot filled">
+          <span
+            className="ml-auto font-mono text-[10px] text-muted-foreground tabular-nums"
+            title="Diamonds on the curve mark where the bot filled"
+          >
             ◆ {marks.length} {marks.length === 1 ? 'fill' : 'fills'}
           </span>
         )}
-        <Badge tone={coords.length === 0 ? 'neutral' : isUp ? 'success' : 'danger'} className="font-mono text-[11px]">
+        <Badge
+          variant="outline"
+          className={cn(
+            'font-mono text-[11px] tabular-nums',
+            coords.length === 0
+              ? 'border-border bg-muted/60 text-muted-foreground'
+              : isUp
+                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                : 'border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400',
+          )}
+        >
           {coords.length === 0 ? '—' : `${isUp ? 'UP' : 'DN'} ${Math.round(current * 100)}¢`}
         </Badge>
       </div>
@@ -403,11 +419,11 @@ export function ProbabilityChart({
 
         {hovered && (
           <div
-            className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-full rounded border border-line bg-surface-2 px-2 py-1 font-mono text-[11px] text-fg shadow-pop"
+            className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-full rounded-lg border border-border bg-popover px-2 py-1 font-mono text-[11px] text-popover-foreground tabular-nums shadow-md"
             style={{ left: tipLeft, top: tipTop }}
           >
             {Math.round(hovered.v * 100)}¢
-            <span className="ml-1 text-faint">{mmss(elapsedSec)}</span>
+            <span className="ml-1 text-muted-foreground">{mmss(elapsedSec)}</span>
           </div>
         )}
       </div>

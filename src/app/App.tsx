@@ -1,8 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
 
+import { Spinner } from '@/components/ui/spinner'
+import { Toaster } from '@/components/ui/toast'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { Shell } from './components/Shell'
-import { Spinner, ToastProvider } from './components/ui'
+import { ToastProvider } from './components/ui'
 import { ApiError, useMe } from './lib/api'
 import { AbTest } from './pages/AbTest'
 import { Config } from './pages/Config'
@@ -20,8 +23,8 @@ function Gate() {
   const me = useMe()
   if (me.isLoading) {
     return (
-      <div className="grid h-full place-items-center">
-        <Spinner />
+      <div className="flex h-full items-center justify-center bg-background text-muted-foreground">
+        <Spinner className="size-5 text-muted-foreground" />
       </div>
     )
   }
@@ -48,11 +51,15 @@ function Gate() {
 export function App() {
   return (
     <QueryClientProvider client={client}>
-      <ToastProvider>
-        <BrowserRouter>
-          <Gate />
-        </BrowserRouter>
-      </ToastProvider>
+      <TooltipProvider>
+        <Toaster>
+          <ToastProvider>
+            <BrowserRouter>
+              <Gate />
+            </BrowserRouter>
+          </ToastProvider>
+        </Toaster>
+      </TooltipProvider>
     </QueryClientProvider>
   )
 }
