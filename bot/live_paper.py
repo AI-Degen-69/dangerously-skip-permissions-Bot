@@ -812,7 +812,7 @@ def trade_window(
                            order["reason"], order["sub_reason"], hit["queueAhead"],
                            order["deficit"], ts_ms=int(ts * 1000),
                            placed_at_ms=_placed_ms,
-                           queue_ahead_at_place=order.get("queue_ahead"))
+                           queue_ahead_at_place=order.get("queue_ahead_at_place", order.get("queue_ahead")))
             if order["shares_left"] <= 0:
                 open_orders.pop(outcome, None)
 
@@ -840,6 +840,7 @@ def trade_window(
             "price": px,
             "shares_left": shares,
             "queue_ahead": float(ahead) if ahead is not None else 0.0,
+            "queue_ahead_at_place": float(ahead) if ahead is not None else 0.0,
             "placed_ts": time.time(),
             "reason": reason,
             "sub_reason": sub_reason,

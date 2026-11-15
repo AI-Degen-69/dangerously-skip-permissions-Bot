@@ -387,7 +387,7 @@ export function AbTest() {
   // Windows sitting in the clipped tails, so Core never silently drops evidence.
   const clipped = useMemo(() => {
     if (!isCore) return { a: 0, b: 0, pctA: 0, pctB: 0 }
-    const outside = (v: number) => v < -15 || v > 15
+    const outside = (v: number) => v < -15 || v >= 15
     const aList = baseline?.pnlList ?? []
     const bList = candidate?.pnlList ?? []
     const a = aList.filter(outside).length
@@ -483,8 +483,8 @@ export function AbTest() {
       if (candidate.meanMinusStd != null) out.push({ key: 'm1B', value: candidate.meanMinusStd, label: <Math tex={String.raw`-1\sigma_B`} className="text-[10px]" />, title: `Candidate −1σ $${candidate.meanMinusStd.toFixed(2)}`, arm: 'B' })
       if (candidate.meanPlusStd != null) out.push({ key: 'p1B', value: candidate.meanPlusStd, label: <Math tex={String.raw`+1\sigma_B`} className="text-[10px]" />, title: `Candidate +1σ $${candidate.meanPlusStd.toFixed(2)}`, arm: 'B' })
     }
-    return out
-  }, [baseline, candidate])
+    return out.filter((s) => inDomain(s.value))
+  }, [baseline, candidate, histLo, histSpan])
 
   // Which of the six spec knobs differ between the two arms: B highlights them.
   const changedSpecs = useMemo(() => {

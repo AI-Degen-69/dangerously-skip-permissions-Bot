@@ -103,19 +103,46 @@ def audit_window(
     if not tape:
         return None
     window_end = float(window_start_s) + C.WINDOW_S
-    book_rows = _window_book(book, float(window_start_s), window_end, condition_id) if book else []
+    # This window's token ids: book rows carry asset_id but no market id, and
+    # the next window's recorder starts ~10s before this one ends, so foreign
+    # rows can fall inside this window's time range. Scope book rows to our
+    # own tokens; rows that predate asset tagging stay unfiltered.
+    _allowed_assets = {str(_p.get("asset_id") or "") for _p in tape} - {""}
+    book_rows = _window_book(book, float(window_start_s), window_end, condition_id, _allowed_assets) if book else []
     verdicts = _attainability(fills, tape)
     # Dynamic per-fill realism (cancel credit + time-to-fill + taker slippage).
     dyn = _dynamic_realism(fills, tape, book_rows, float(window_start_s), window_end)
     if book_rows:
         # Cancel credit can only rescue phantom fills, never condemn a fill
         # the static queue already credits (backward-compatible upgrade).
-        for _i, _fill in enumerate(fills):
-            if role_of(_fill) == "TAKER":
+        # Rescues share one SELL pool in _attainability order so the same
+        # volume cannot fill two orders, and rescued rows are stamped so
+        # detail.attainable and the window totals share one verdict.
+        _pool: dict[int, float] = {}
+        _order = sorted(range(len(fills)), key=lambda _oi: (-_num(fills[_oi].get("price")), fill_epoch_s(fills[_oi])))
+        for _i in _order:
+            if role_of(fills[_i]) == "TAKER" or not verdicts.get(_i):
+                continue
+            _sflow = _maker_flow_from(tape, fills[_i].get("outcome"), _num(fills[_i].get("price")), _maker_t0(fills[_i]), window_end)
+            _spend(tape, _sflow, _queue_ahead(fills[_i]) + _num(fills[_i].get("shares")), _pool)
+        for _i in _order:
+            if role_of(fills[_i]) == "TAKER" or verdicts.get(_i):
+                continue
+            _shares = _num(fills[_i].get("shares"))
+            if _shares <= 0:
                 continue
             _ttf = (dyn.get(_i) or {}).get("timeToAttainableMs")
-            if isinstance(_ttf, (int, float)):
+            if not isinstance(_ttf, (int, float)):
+                continue
+            _eff_end = (dyn.get(_i) or {}).get("effQueueEnd")
+            if not isinstance(_eff_end, (int, float)) or isinstance(_eff_end, bool):
+                _eff_end = _queue_ahead(fills[_i])
+            _need = max(0.0, float(_eff_end)) + _shares
+            _flow = _maker_flow_from(tape, fills[_i].get("outcome"), _num(fills[_i].get("price")), _maker_t0(fills[_i]), window_end)
+            if _available(tape, _flow, _pool) + PRICE_EPS >= _need:
                 verdicts[_i] = True
+                fills[_i].setdefault("detail", {})["attainable"] = True
+                _spend(tape, _flow, _need, _pool)
 
     maker = attainable = phantom = queue_known = 0
     assumed_shares = attainable_shares = 0.0
@@ -245,7 +272,8 @@ def _window_tape(prints: list[dict], start: float, condition_id: str | None) -> 
 
 
 def _window_book(
-    book: list[dict] | None, start: float, end: float, condition_id: str | None
+    book: list[dict] | None, start: float, end: float, condition_id: str | None,
+    allowed_assets: set[str] | None = None,
 ) -> list[dict]:
     if not book:
         return []
@@ -258,6 +286,12 @@ def _window_book(
         if ts < start or ts > end:
             continue
         rows.append(rec)
+    # Book rows carry asset_id but no market id. When the window's own prints
+    # name their tokens, drop rows from other markets (the next recorder
+    # starts ~10s before this window ends). Rows that predate asset tagging
+    # carry no asset_id and stay unfiltered.
+    if allowed_assets and any(str(r.get("asset_id") or "") for r in rows):
+        rows = [r for r in rows if str(r.get("asset_id") or "") in allowed_assets]
     # Keep only this window's market when condition_id is known; book rows
     # carry asset/outcome but not always market, so fall back to all rows.
     if condition_id:
@@ -351,7 +385,7 @@ def _dynamic_realism(
         shares = _num(fill.get("shares"))
         init_q = _num(detail.get("queueAheadAtPlace")) if _queue_value_present(detail.get("queueAheadAtPlace")) else _queue_ahead(fill)
         if not book_rows:
-            out[i] = {"effQueueStart": round(init_q, 2), "effQueueEnd": round(init_q, 2), "timeToAttainableMs": 0.0 if shares > 0 else None}
+            out[i] = {"effQueueStart": round(init_q, 2), "effQueueEnd": round(init_q, 2), "timeToAttainableMs": None}  # No book: timing unavailable, never 0.0 ms
             continue
         eff = max(0.0, init_q)
         prev = init_q
@@ -391,6 +425,11 @@ def _dynamic_realism(
                     sells_at_L += sz
             else:
                 cur = _book_size_at(payload, limit)
+                if cur is None:
+                    # Snapshot does not cover our limit: depth unknown, so
+                    # grant no cancel credit here and keep the last known
+                    # depth instead of treating it as emptied.
+                    continue
                 delta = cur - prev
                 if delta < -PRICE_EPS:
                     cancel = max(0.0, (-delta) - sells_at_L)
@@ -412,7 +451,13 @@ def _queue_value_present(v: Any) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0
 
 
-def _book_size_at(rec: dict, limit: float) -> float:
+def _book_size_at(rec: dict, limit: float) -> float | None:
+    """Depth resting at exactly `limit`, or None when the snapshot is silent.
+
+    Only the top-5 bid levels are recorded: a limit below them has unknown
+    depth behind it, which must never read as zero (that would grant the
+    whole recorded queue as cancel credit).
+    """
     for rung in rec.get("bids") or []:
         try:
             p, s = float(rung[0]), float(rung[1])
@@ -420,7 +465,7 @@ def _book_size_at(rec: dict, limit: float) -> float:
             continue
         if abs(p - limit) <= 1e-6:
             return max(0.0, s)
-    return 0.0
+    return None
 
 
 def _taker_ask_size(fill: dict, brows: list[dict], t_fill: float) -> float | None:
@@ -503,7 +548,7 @@ def _by_minute(
     for m in range(5):
         key = f"M{m}"
         idx = [i for i, f in enumerate(fills) if _minute_of(f, window_start) == m and role_of(f) == "MAKER"]
-        ttf = [float((dyn.get(i) or {}).get("timeToAttainableMs")) for i in idx if isinstance((dyn.get(i) or {}).get("timeToAttainableMs"), (int, float))]
+        ttf = [float((dyn.get(i) or {}).get("timeToAttainableMs")) for i in idx if verdicts.get(i) and isinstance((dyn.get(i) or {}).get("timeToAttainableMs"), (int, float))]
         out[key] = {
             "verified": sum(1 for i in idx if verified_map.get(i)),
             "attainable": sum(1 for i in idx if verdicts.get(i)),
@@ -563,6 +608,42 @@ def _sell_flow(tape: list[dict], fill: dict, price: float) -> list[int]:
         if str(print_row.get("side") or "").upper() != "SELL":
             continue
         if _num(print_row.get("price")) > price + PRICE_EPS:
+            continue
+        flow.append(i)
+    return flow
+
+
+def _maker_t0(fill: dict) -> float:
+    """Placement time for a maker fill: placedAtMs when recorded, else fill time."""
+    detail = fill.get("detail") or {}
+    t_fill = fill_epoch_s(fill)
+    try:
+        t0 = float(detail.get("placedAtMs", 0)) / 1000.0 if detail.get("placedAtMs") else t_fill
+    except (TypeError, ValueError):
+        t0 = t_fill
+    return t0
+
+
+def _maker_flow_from(tape: list[dict], outcome: object, limit: float, t0: float, window_end: float) -> list[int]:
+    """Positions in `tape` of taker SELL prints for `outcome` at/below `limit`.
+
+    Same price/side/outcome gates as `_sell_flow`, but measured from placement
+    time `t0` (not fill time) so cancel-credit rescues compete for the same
+    volume the static check spends, oldest print first.
+    """
+    flow: list[int] = []
+    for i, print_row in enumerate(tape):
+        try:
+            pts = float(print_row.get("ts") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if pts < t0 or pts > window_end:
+            continue
+        if str(print_row.get("slug_outcome") or "") != str(outcome or ""):
+            continue
+        if str(print_row.get("side") or "").upper() != "SELL":
+            continue
+        if _num(print_row.get("price")) > limit + PRICE_EPS:
             continue
         flow.append(i)
     return flow

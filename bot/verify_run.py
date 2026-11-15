@@ -104,9 +104,11 @@ def main() -> int:
         # would downgrade already-verified fills to unverified on no evidence.
         # Skip verify_fills (silence is not proof); leave stamps as-is.
         _has_tape = True
+        window_prints = None
         if _window_prints is not None:
             try:
-                _has_tape = bool(_window_prints(tape_dir, float(epoch), float(epoch + C.WINDOW_S)))
+                window_prints = _window_prints(tape_dir, float(epoch), float(epoch + C.WINDOW_S))
+                _has_tape = bool(window_prints)
             except OSError:
                 _has_tape = False
         if _has_tape:
@@ -116,6 +118,7 @@ def main() -> int:
                 window_start_s=float(epoch),
                 window_end_s=float(epoch + C.WINDOW_S),
                 force=True,
+                prints=window_prints,
             )
         else:
             skipped += 1

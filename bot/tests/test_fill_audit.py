@@ -284,5 +284,58 @@ class Phase1RealismTest(unittest.TestCase):
         self.assertEqual(got["phantomRate"], 0.0)
 
 
+class SharedVolumeTest(unittest.TestCase):
+    """One SELL share fills one order only, including book-aware rescues."""
+
+    def _book(self, ts_offset, bids, outcome="Down", asset_id=None):
+        row = {"ts": START + ts_offset, "outcome": outcome, "bids": bids, "asks": []}
+        if asset_id is not None:
+            row["asset_id"] = asset_id
+        return row
+
+    def test_shared_sell_not_double_spent(self):
+        # Two 10-share fills behind queue 20, one later 10-share SELL: the
+        # static check rejects both, and cancel credit (depth 20 -> 0) can
+        # only rescue one. The rescued row is stamped so rows and totals
+        # share one verdict.
+        fills = [
+            _fill(queueAhead=20, queueAheadAtPlace=20, placedAtMs=int((START + 5) * 1000), offset=5),
+            _fill(queueAhead=20, queueAheadAtPlace=20, placedAtMs=int((START + 5) * 1000), offset=6),
+        ]
+        prints = [_print(size=10, offset=10)]
+        book = [self._book(6, [[0.42, 20.0]]), self._book(8, [[0.42, 0.0]])]
+        got = audit_window(fills, prints, START, "Down", book=book)
+        self.assertEqual(got["attainableFills"], 1)
+        self.assertEqual(got["phantomFills"], 1)
+        rescued = [f for f in fills if (f.get("detail") or {}).get("attainable")]
+        self.assertEqual(len(rescued), 1)
+
+    def test_next_market_book_rows_ignored(self):
+        # A foreign-market snapshot must not grant cancel credit, even when
+        # it shows our level empty. Prints name our token; the foreign row
+        # must be scoped out, leaving the static verdict (phantom here).
+        fill = _fill(queueAhead=20, queueAheadAtPlace=20, placedAtMs=int((START + 5) * 1000), offset=5)
+        prints = [_print(size=15, offset=10)]
+        prints[0]["asset_id"] = "up_token_1"
+        book = [
+            {"ts": START + 6, "outcome": "Down", "asset_id": "up_token_1", "bids": [[0.42, 20.0]], "asks": []},
+            {"ts": START + 8, "outcome": "Down", "asset_id": "down_token_9", "bids": [[0.42, 5.0]], "asks": []},
+        ]
+        got = audit_window([fill], prints, START, "Down", book=book)
+        self.assertEqual(got["attainableFills"], 0)
+        self.assertEqual(got["phantomFills"], 1)
+
+    def test_uncovered_limit_grants_no_credit(self):
+        # Only top-5 levels are recorded: our 0.42 limit is below every
+        # recorded rung, so depth is unknown and no credit applies. A SELL
+        # of 10 against queue 20 + a 10-share clip stays phantom.
+        fill = _fill(queueAhead=20, queueAheadAtPlace=20, placedAtMs=int((START + 5) * 1000), offset=5)
+        book = [self._book(8, [[0.45, 50.0]])]
+        prints = [_print(size=10, offset=10)]
+        got = audit_window([fill], prints, START, "Down", book=book)
+        self.assertEqual(got["attainableFills"], 0)
+        self.assertEqual(got["phantomFills"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -34,7 +34,7 @@ svg{max-width:100%;height:auto}
 <div class="hero">
 <span class="badge">Dashboard · chart card toggle</span>
 <h1>Verified Only — count only what the tape backs</h1>
-<p>Paper mode assumes fills. <b>Verified Only</b> recomputes every window from the fills the recorded trade prints corroborate. A window with zero confirmed fills <b>drops out entirely</b>. Read it as a <b>lower bound</b>, not an estimate.</p>
+<p>Paper mode assumes fills. <b>Verified Only</b> recomputes every window from the fills the recorded trade prints corroborate. A window with zero confirmed fills <b>drops out entirely</b>. Read it as a <b>tape-backed subset</b>, not a bound or an estimate: removing an unverified losing fill can raise the shown net, and the weak level check can include fills the queue check would reject.</p>
 <div class="switch"><span class="dot"></span><b>Verified Only</b> <span class="muted small">Counting only the fills the tape corroborates. Click to count every fill.</span></div>
 </div>
 

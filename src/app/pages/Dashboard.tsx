@@ -1014,9 +1014,9 @@ function Stat({
   return (
     <Card className="group relative flex h-[116px] flex-col justify-between p-3.5 transition-colors hover:border-line-strong">
       <div className="flex items-center justify-between gap-1.5">
-        <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-muted">
+        <div className="flex min-w-0 items-center gap-1.5 text-[12.5px] font-medium text-muted">
           {icon && <span className="text-faint [&_svg]:size-3.5">{icon}</span>}
-          <span className="whitespace-nowrap">{label}</span>
+          <span className="min-w-0 truncate">{label}</span>
           {tip && (
             <span className="group/tip relative inline-flex">
               <span
