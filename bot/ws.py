@@ -209,9 +209,9 @@ class StreamTick:
 # directory bounded. Verification only needs prints from the current window, and
 # readers walk segments oldest-first, so archived prints stay usable.
 TAPE_SEGMENT_BYTES = {"prints": 32 * 1024 * 1024, "book": 128 * 1024 * 1024}
-TAPE_ARCHIVE_BYTES = {"prints": 64 * 1024 * 1024, "book": 256 * 1024 * 1024}
-TAPE_RETENTION_S = 6 * 3600
-TAPE_MAX_ARCHIVES = 4
+TAPE_ARCHIVE_BYTES = {"prints": 64 * 1024 * 1024, "book": 1024 * 1024 * 1024}
+TAPE_RETENTION_S = 12 * 3600
+TAPE_MAX_ARCHIVES = 12
 
 
 class LiveBookStreamer:
