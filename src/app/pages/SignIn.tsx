@@ -212,8 +212,7 @@ export function SetupNeeded({ message }: { message: string }) {
                 <Terminal />
                 <AlertTitle>Worker bindings required</AlertTitle>
                 <AlertDescription>
-                  In Freebuff, ask the agent to add D1 storage named DB and R2 storage named FILES,
-                  then deploy again.
+                  In Freebuff, ask the agent to add D1 storage named DB, then deploy again.
                 </AlertDescription>
               </Alert>
             </EmptyContent>
