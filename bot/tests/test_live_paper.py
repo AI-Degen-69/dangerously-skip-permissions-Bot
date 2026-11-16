@@ -506,10 +506,55 @@ class LivePaperLoopTests(unittest.TestCase):
             self.assertEqual(markets[0]["verdict"]["action"], "snipe")
             self.assertEqual(markets[0]["verdict"]["reason"], "m4-snipe")
 
-    def test_enrich_fill_m4_snipe_kind(self):
+    def test_live_markets_m4_no_snipe_verdict_for_v20(self):
         import bot.api as api
 
+        slot = 1_700_000_000
+        # 4m 15s elapsed (255s) -> 45s remaining, so in M4 and before 15s cutoff
+        now_ms = (slot + 255) * 1000
+
+        mock_spec = MagicMock()
+        mock_spec.up_token_id = "tok_up"
+        mock_spec.down_token_id = "tok_down"
+        mock_spec.condition_id = "0xcondition"
+        mock_spec.question = "Will BTC be up?"
+
+        mock_client = MagicMock()
+        mock_client.get_price.return_value = "0.50"
+        mock_client.get_midpoint.return_value = "0.50"
+
+        st = {
+            "slug": f"btc-updown-5m-{slot}",
+            "fills": [{"minute": 0}, {"minute": 1}, {"minute": 2}],
+        }
+        cfg = {"strategy": {"id": "hydrogen-v2.0", "name": "Hydrogen v2.0"}}
+
+        with patch.object(api, "visible_slots", return_value=[slot]), \
+             patch("bot.discovery.get_window", return_value=mock_spec), \
+             patch.object(api, "client", return_value=mock_client), \
+             patch.object(api, "state", return_value=st), \
+             patch("time.time", return_value=now_ms / 1000.0):
+            markets = api.live_markets(cfg)
+            self.assertEqual(len(markets), 1)
+            self.assertEqual(markets[0]["verdict"]["action"], "enter")
+            self.assertEqual(markets[0]["verdict"]["reason"], "working-fills")
+
+    def test_enrich_fill_m4_not_snipe_kind(self):
+        import bot.api as api
+
+        # Reason-less minute-4 fills are ordinary balance clips, not snipes
+        # (hydrogen-v2.0 never emits engine snipes; mislabeling them also
+        # mistreats their fees as taker).
         fill = {"minute": 4, "outcome": "Up", "price": 0.10, "shares": 30.0, "usd": 3.0}
+        enriched = api._enrich_fill(fill, idx=5, default_ts=1700000000000, slug="btc-updown-5m-1700000000")
+        self.assertEqual(enriched["kind"], "entry")
+        self.assertEqual(enriched["reason"], "straddle-balance")
+
+    def test_enrich_fill_keeps_genuine_snipe_reason(self):
+        import bot.api as api
+
+        fill = {"minute": 4, "outcome": "Up", "price": 0.93, "shares": 5.0, "usd": 4.65,
+                "reason": "m4-snipe", "detail": {"subReason": "resolution-certainty-snipe"}}
         enriched = api._enrich_fill(fill, idx=5, default_ts=1700000000000, slug="btc-updown-5m-1700000000")
         self.assertEqual(enriched["kind"], "snipe")
         self.assertEqual(enriched["reason"], "m4-snipe")
