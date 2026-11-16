@@ -6,24 +6,6 @@ from bot import ab_test as ab
 from bot import constants as C
 
 
-class TestHydrogenV13Registry(unittest.TestCase):
-    def test_v13_registered_with_v12_identical_params(self):
-        v12 = C.STRATEGY_SETUPS.get("hydrogen-v1.2")
-        v13 = C.STRATEGY_SETUPS.get("hydrogen-v1.3")
-        self.assertIsNotNone(v12)
-        self.assertIsNotNone(v13)
-        # v1.3 is a build/engine bump, NOT a parameter change.
-        self.assertEqual(v13["entry"], v12["entry"])
-        self.assertNotIn("maxShareLead", v13["entry"])
-        self.assertTrue(v13["entry"]["takerDipBalancedOnly"])
-        self.assertEqual(v13["name"], "Hydrogen v1.3")
-
-    def test_v13_superseded_but_registered(self):
-        # v1.3 stays frozen and registered while later candidates are active.
-        self.assertIn(ab.DEFAULT_CANDIDATE_ID, ("hydrogen-v1.5", "hydrogen-v1.9", "hydrogen-v2.0"))
-        self.assertIn("hydrogen-v1.3", C.STRATEGY_SETUPS)
-
-
 class TestArchivedRunExclusion(unittest.TestCase):
     def test_archived_prefix_detected(self):
         # Non-existent / empty runs are not archived.

@@ -4,6 +4,7 @@ import unittest
 from bot import ab_test as ab
 from bot import constants as C
 from bot import replay
+from bot.live_paper import cancel_side_orders, ladder_keys, update_maker_order
 from bot.executor import (
     H19_L1_PRICE_MAX,
     H19_L1_PRICE_MIN,
@@ -176,6 +177,37 @@ class TestHydrogenV19Layer3TakerBailout(unittest.TestCase):
         self.assertEqual(d.price, 0.65)
         self.assertEqual(d.shares, 5.0)
         self.assertEqual(d.sub_reason, "rebalance-taker")
+
+
+
+class TestLadderOrderHygiene(unittest.TestCase):
+    """Resting-rung bookkeeping used by the v1.9 maker hedge."""
+
+    def test_ladder_rungs_rest_independently(self):
+        orders: dict[str, dict] = {}
+        update_maker_order(orders, "Up", 0.44, 5.0, 0, "clip-fill",
+                           "split-ladder-maker", 0.0, 10.0, 1000.0, order_key="Up")
+        update_maker_order(orders, "Up", 0.43, 5.0, 0, "clip-fill",
+                           "split-ladder-maker", 0.0, 12.0, 1000.0, order_key="Up#1")
+        update_maker_order(orders, "Down", 0.55, 5.0, 0, "clip-fill",
+                           "split-ladder-maker", 0.0, 8.0, 1000.0)
+        self.assertEqual(ladder_keys(orders, "Up"), ["Up", "Up#1"])
+        self.assertEqual(ladder_keys(orders, "Down"), ["Down"])
+        # Rungs report their real side, so the fill loops can match them.
+        self.assertEqual(orders["Up#1"]["side"], "Up")
+        self.assertEqual(orders["Up"]["shares_left"], 5.0)
+        self.assertEqual(orders["Up#1"]["price"], 0.43)
+
+    def test_cancel_side_pulls_every_rung_only(self):
+        orders: dict[str, dict] = {}
+        for key, px in (("Up", 0.44), ("Up#1", 0.43)):
+            update_maker_order(orders, "Up", px, 5.0, 0, "clip-fill",
+                               "split-ladder-maker", 0.0, 1.0, 1000.0, order_key=key)
+        update_maker_order(orders, "Down", 0.55, 5.0, 0, "clip-fill",
+                           "split-ladder-maker", 0.0, 1.0, 1000.0)
+        pulled = cancel_side_orders(orders, "Up")
+        self.assertEqual(len(pulled), 2)
+        self.assertEqual(set(orders), {"Down"})
 
 if __name__ == "__main__":
     unittest.main()

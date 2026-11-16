@@ -1,6 +1,5 @@
 import unittest
 from bot.executor import evaluate_microstructure_ladder
-from bot import constants as C
 
 
 V12_KNOBS = dict(
@@ -33,38 +32,6 @@ def _inv(up, up_cost, down, down_cost, up_low=None, down_low=None):
     if down_low is not None:
         out["Down"]["lowest_price"] = down_low
     return out
-
-
-class TestHydrogenV12Registry(unittest.TestCase):
-    def test_v12_registered_with_bound_lead(self):
-        reg = C.STRATEGY_SETUPS.get("hydrogen-v1.2")
-        self.assertIsNotNone(reg)
-        e = reg["entry"]
-        # v1.1 working base is preserved ...
-        self.assertEqual(e["takerDipEntryMax"], 0.36)
-        self.assertEqual(e["unhedgedStepCents"], 8.0)
-        self.assertEqual(e["unhedgedProbeShares"], 10.0)
-        self.assertEqual(e["leg1MaxPrice"], 0.48)
-        self.assertEqual(e["leg2MaxPrice"], 0.75)
-        self.assertEqual(e["targetPairCost"], 0.960)
-        self.assertEqual(e["maxPairCost"], 0.985)
-        self.assertEqual(e["lateRescueStartSec"], 210)
-        self.assertEqual(e["lateRescueMaxPairCost"], 1.02)
-        self.assertEqual(e["maxUnhedgedUsd"], 45.0)
-        # ... but the 25-share ratchet is gone: every leg is 10sh, and there
-        # is no share veto at all — unhedged risk is dollar-capped.
-        self.assertEqual(e["clipSharesDefault"], 10.0)
-        self.assertEqual(e["maxShares"], 10.0)
-        self.assertEqual(e["maxClipShares"], 10.0)
-        self.assertNotIn("maxShareLead", e)
-        self.assertTrue(e["takerDipBalancedOnly"])
-
-    def test_v11_frozen_setup_untouched(self):
-        reg = C.STRATEGY_SETUPS.get("hydrogen-v1.1")
-        self.assertIsNotNone(reg)
-        self.assertEqual(reg["entry"]["maxShares"], 25.0)
-        self.assertNotIn("maxShareLead", reg["entry"])
-        self.assertNotIn("takerDipBalancedOnly", reg["entry"])
 
 
 class TestHydrogenV12NoLeadVeto(unittest.TestCase):

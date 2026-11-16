@@ -2,9 +2,8 @@
 
 Compares the frozen, measured Hydrogen v1.0 baseline run
 (DEFAULT_BASELINE_ID, `run_20261113_183248_paper_hydrogen_v1_0`) against the
-Hydrogen v1.5 candidate (`hydrogen-v1.5`: concurrent two-sided accumulation
-from T+4s -- both sides quoted, lighter side first to 85c, half-gap top-ups,
-no dip band, no rescue ladder, no pair-cost gate).
+Hydrogen v1.9 candidate (`hydrogen-v1.9`: single 5-share probe, clamped
+maker hedge under $0.990, 20s patient taker bailout).
 
 Archived runs (`run_meta.json` status starting with "archived") are never
 picked up as baseline or candidate, so the tainted pre-PR #56 v1.2 runs stay

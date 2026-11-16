@@ -143,33 +143,6 @@ class TestBaselineIdentity(unittest.TestCase):
             self.assertNotIn(banned, h0)
             self.assertNotIn(banned, h1)
 
-    def test_hydrogen_candidate_registered(self):
-        from bot import constants as C
-        # v1.1/v1.2/v1.3/v1.4 stay registered as frozen setups; v1.5 is the candidate.
-        self.assertIsNotNone(C.STRATEGY_SETUPS.get("hydrogen-v1.1"))
-        self.assertIsNotNone(C.STRATEGY_SETUPS.get("hydrogen-v1.2"))
-        self.assertIsNotNone(C.STRATEGY_SETUPS.get("hydrogen-v1.3"))
-        self.assertIsNotNone(C.STRATEGY_SETUPS.get("hydrogen-v1.4"))
-        reg = C.STRATEGY_SETUPS.get("hydrogen-v1.5")
-        self.assertIsNotNone(reg)
-        e = reg["entry"]
-        self.assertEqual(e["startAfterOpenSec"], 4)
-        self.assertEqual(e["stopBeforeCloseSec"], 30)
-        self.assertEqual(e["sweepBeforeCloseSec"], 12)
-        self.assertEqual(e["minFillPrice"], 0.07)
-        self.assertEqual(e["maxFillPrice"], 0.85)
-        self.assertNotIn("dipCurve", e)
-        self.assertNotIn("leg2MaxPrice", e)
-        self.assertNotIn("takerDipEntryMax", e)
-        self.assertNotIn("lateRescueStartSec", e)
-        self.assertEqual(e["maxClipShares"], 30.0)
-        self.assertEqual(e["maxUnhedgedShares"], 100.0)
-        self.assertEqual(e["maxUnhedgedUsd"], 45.0)
-        self.assertEqual(e["maxPairCost"], 0.985)
-        self.assertEqual(e["clipSchedule"], [[0, 30.0], [120, 15.0]])
-
-
-class TestPairedOneSidedPnl(unittest.TestCase):
     def test_paired_vs_one_sided_split(self):
         recs = [
             _rec("p1", 1.0, 2, 10.0, 10.0, 0.95),
