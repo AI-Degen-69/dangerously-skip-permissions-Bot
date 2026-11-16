@@ -400,7 +400,7 @@ export function AbTest() {
     if (m) return m[0].toLowerCase()
     return fallback
   }
-  const subB = cleanSub(candidate?.name ?? control.data?.strategy?.name, 'v1.2')
+  const subB = cleanSub(candidate?.name ?? control.data?.strategy?.name, 'v1.3')
   const subA = cleanSub(baseline?.name, 'v1.0')
 
   const candidateActive = candidate?.activeWindows ?? candidate?.samples ?? 0

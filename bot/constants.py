@@ -403,6 +403,52 @@ STRATEGY_SETUPS = {
             "maxDepthShares": 0.0,
         },
     },
+    "hydrogen-v1.3": {
+        "id": "hydrogen-v1.3",
+        "symbol": "H2 Hydrogen-v1.3",
+        "name": "Hydrogen v1.3",
+        # Post-PR #56 CLOB/Maker-hold engine build. Trading parameters are
+        # intentionally identical to hydrogen-v1.2 (maxShareLead=11,
+        # takerDipBalancedOnly=True, ...): the v1.2 -> v1.3 bump isolates the
+        # fixed fill & order-hold behavior from the tainted pre-PR #56 v1.2
+        # run, it is NOT a parameter change.
+        "entry": {
+            "startAfterOpenSec": 15,
+            "stopBeforeCloseSec": 30,
+            "sweepBeforeCloseSec": 12,
+            "clipSharesDefault": 10.0,
+            "maxShares": 10.0,
+            "maxClipShares": 10.0,
+            "minFillPrice": 0.07,
+            "maxFillPrice": 0.48,
+            "maxLeg1Price": 0.48,
+            "leg1MaxPrice": 0.48,
+            "leg2MaxPrice": 0.75,
+            "benchmarkPairCost": 0.960,
+            "targetPairCost": 0.960,
+            "maxPairCost": 0.985,
+            "maxShareLead": 11.0,
+            "maxUnhedgedShares": 100.0,
+            "maxUnhedgedUsd": 45.0,
+            "dipCurve": "hump",
+            "wholeLadderClips": True,
+            "levelsPerSide": 2,
+            "levelSpacing": 0.01,
+            "minSpacingMoveSec": 0.5,
+            "minSpacingStaticSec": 2.5,
+            "staticRequoteSec": 2.5,
+            "includeTakerFee": True,
+            "takerDipEntryMax": 0.36,
+            "takerDipBalancedOnly": True,
+            "unhedgedStepCents": 8.0,
+            "unhedgedProbeShares": 10.0,
+            "lateRescueStartSec": 210,
+            "lateRescueMaxPairCost": 1.02,
+            "rescuePairCostMax": 1.02,
+            "rescueCeilingPrice": 0.985,
+            "maxDepthShares": 0.0,
+        },
+    },
     "hydrogen-v1.2": {
         "id": "hydrogen-v1.2",
         "symbol": "H2 Hydrogen-v1.2",
@@ -509,7 +555,12 @@ _SETUP_FEATURES = {
     "hydrogen-v1.2": {
         "sizing": "hump", "preflightGate": False, "patientHedge": True, "takerDip": True,
         "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
-        "blurb": "uniform 10sh clips under an 11-share lead veto with balanced-or-light-only taker dip entry to 36c, 8c unhedged step, leg-2 ceiling 75c, and late rescue to $1.02 from T+210s",
+        "blurb": "uniform 10sh clips under an 11-share lead veto with balanced-or-light-only taker dip entry to 36c, 8c unhedged step, leg-2 ceiling 75c, and late rescue to $1.02 from T+210s (pre-PR #56 engine; superseded by v1.3)",
+    },
+    "hydrogen-v1.3": {
+        "sizing": "hump", "preflightGate": False, "patientHedge": True, "takerDip": True,
+        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
+        "blurb": "post-PR #56 CLOB/maker-hold build: uniform 10sh clips under an 11-share lead veto with balanced-or-light-only taker dip entry to 36c, 8c unhedged step, leg-2 ceiling 75c, and late rescue to $1.02 from T+210s",
     },
 }
 
