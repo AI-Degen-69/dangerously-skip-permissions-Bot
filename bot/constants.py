@@ -822,6 +822,37 @@ STRATEGY_SETUPS = {
             "maxDepthShares": 0.0,
         },
     },
+    "hydrogen-v2.0": {
+        "id": "hydrogen-v2.0",
+        "symbol": "H2 Hydrogen-v2.0",
+        "name": "Hydrogen v2.0",
+        "entry": {
+            "startAfterOpenSec": 4,
+            "stopBeforeCloseSec": 30,
+            "sweepBeforeCloseSec": 12,
+            "clipSharesDefault": 10.0,
+            "maxShares": 45.0,
+            "maxClipShares": 45.0,
+            "levelsPerSide": 1,
+            "levelSpacing": 0.01,
+            "minFillPrice": 0.07,
+            "maxFillPrice": 0.47,
+            "benchmarkPairCost": 0.965,
+            "targetPairCost": 0.965,
+            "maxPairCost": 0.985,
+            "rescuePairCostMax": 0.995,
+            "rescueCeilingPrice": 0.985,
+            "maxUnhedgedShares": 0.0,
+            "maxUnhedgedUsd": 6.0,
+            "dipCurve": {"lo": 0.07, "hi": 0.45, "sharesLo": 33.0, "sharesHi": 8.0},
+            "minSpacingMoveSec": 0.5,
+            "minSpacingStaticSec": 2.5,
+            "staticRequoteSec": 2.5,
+            "includeTakerFee": True,
+            "wholeLadderClips": True,
+            "maxDepthShares": 0.0,
+        },
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -929,6 +960,11 @@ _SETUP_FEATURES = {
         "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False, "l3Mode": "off",
         "blurb": "candidate Arm E: two-sided simultaneous 5sh maker resting in 42–48c band with 0 taker fills and sub-$0.990 pair cost",
     },
+    "hydrogen-v2.0": {
+        "sizing": "two-sided-dip-v20", "preflightGate": False, "patientHedge": False, "takerDip": False,
+        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False, "l3Mode": "subpar",
+        "blurb": "two-sided simultaneous resting (42-47c ATM & 7-45c inverse-dip curve, <=$6 unhedged USD) + clamped sub-$0.985 maker / <=$0.965 profit-lock taker",
+    },
 }
 
 
@@ -959,6 +995,7 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
     balanced = (sizing == "balanced")
     split_v18 = (sizing == "split-ladder-v18")
     split_v19 = (sizing == "split-ladder-v19")
+    two_sided_v20 = (sizing == "two-sided-dip-v20")
     preflight = bool(f.get("preflightGate", False))
     hedge_now = bool(f.get("hedgeNowGate", False))
     patient = bool(f.get("patientHedge", False))
@@ -1003,6 +1040,18 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
             f"with strict resting hygiene and exact deficit sizing"
         )
         sig_size = "Single Probe (5 sh)"
+    elif two_sided_v20:
+        curve = e.get("dipCurve") or {}
+        s_lo = curve.get("sharesLo", 33) if isinstance(curve, dict) else 33
+        s_hi = curve.get("sharesHi", 8) if isinstance(curve, dict) else 8
+        c_lo = round(float(curve.get("lo", lo_c / 100)) * 100) if isinstance(curve, dict) else lo_c
+        c_hi = round(float(curve.get("hi", 0.45)) * 100) if isinstance(curve, dict) else 45
+        dip_txt = (
+            f"simultaneous two-sided resting orders: {s_lo:g} sh at {c_lo}c scaling down to "
+            f"{s_hi:g} sh at {c_hi}c–{hi_c}c (off-touch -1c in ATM balanced band), "
+            f"strictly bounded to ${float(e.get('maxUnhedgedUsd', 6.0)):.2f} max unhedged USD"
+        )
+        sig_size = f"Two-Sided + Curve ({s_lo:g}@{c_lo}c → {s_hi:g}@{hi_c}c)"
     elif split_v18 and _sch_txt is not None:
         _c0, _t1, _c1 = _sch_txt
         dip_txt = (
@@ -1083,6 +1132,15 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
             f"with single-window freeze latch"
         )
         sig_gate = "Clamped Maker (≤$0.990) + Patient L3 (20s)"
+    elif two_sided_v20:
+        sweep_sec = float(e.get("sweepBeforeCloseSec", 12))
+        gate_txt = (
+            f"mutual two-sided gating under ${tgt:.3f} fresh pair cost; "
+            f"any imbalance > 0.5 sh cancels heavy-side orders and hedges via profit-lock taker (<= ${tgt:.3f}) "
+            f"or clamped maker (<= ${cap:.3f}), sweeping deficits <= ${rescue:.3f} down to T-{sweep_sec:g}s "
+            f"(never >= $1.00, no freeze latch)"
+        )
+        sig_gate = f"Two-Sided ≤${cap:.3f} (No ≥$1.00 / No Latch)"
     elif split_v18:
         gate_txt = (
             f"a 3-layer breakout defense: balanced entries stay in 42–58c under ${cap:.3f} pair cost "
@@ -1135,7 +1193,7 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         f"Buys dips {dip_txt}; entries follow {gate_txt}; "
         f"never {gap_txt}.{sweep_txt}{heavy_txt}{depth_txt}"
     ).strip()
-    if balanced or split_v18 or split_v19:
+    if balanced or split_v18 or split_v19 or two_sided_v20:
         signature = f"{sig_size} - {sig_gate} - {gap_cap_txt} - Max Buy {hi_c}c"
         description = (
             f"Accumulates both sides from the open: {dip_txt}; {gate_txt}; "
@@ -1165,6 +1223,12 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
     elif split_v19:
         highlights["pairGates"] = "balanced <= $0.990; clamped maker <= floor(0.990 - heavy_avg); patient taker 20s delay (>= $1.07)"
         highlights["preflightGate"] = "Deficit Trigger (tol = 0.5 sh) + Window Freeze Latch"
+    elif two_sided_v20:
+        highlights["pairGates"] = (
+            f"balanced <= ${tgt:.3f}; clamped maker <= ${cap:.3f}; "
+            f"profit-lock taker <= ${tgt:.3f} (sweep <= ${rescue:.3f}), never >= $1.00"
+        )
+        highlights["preflightGate"] = "Two-Sided Mutual Gate + Sub-$1.00 Deficit Equalizer (No Freeze Latch)"
     elif split_v18:
         highlights["pairGates"] = "balanced <= $0.995; rebalance-maker unblocked to 85c; breakout taker 60-68c"
         highlights["preflightGate"] = "Heavy Floor Gate (>=10sh & <45c) + Breakout Taker (60-68c)"

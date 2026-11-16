@@ -54,13 +54,16 @@ export function tweakCards(candidate: AbTestDistributionStats | null | undefined
   const balanced = sizing === 'balanced'
   const splitV18 = sizing === 'split-ladder-v18'
   const splitV19 = sizing === 'split-ladder-v19'
+  const twoSidedV20 = sizing === 'two-sided-dip-v20'
   const l3 = typeof f.l3Mode === 'string' ? f.l3Mode : 'patient'
   const risk = num(f.dollarRisk, 4.5)
   const uncapped = f.pairedVolumeCapped === false
 
   const t1body = empty
     ? 'Waiting for a candidate run — its live gates will appear here.'
-    : splitV19 && l3 === 'immediate'
+    : twoSidedV20
+      ? `Two-sided mutual gate (≤${tgt} fresh); imbalance > 0.5 sh cancels heavy-side orders and hedges via profit-lock taker (≤${tgt}) or clamped maker (≤${cap}), sweeping ≤${rescue}. Never pays ≥$1.00; no freeze latch.`
+      : splitV19 && l3 === 'immediate'
       ? `Clamped Maker (≤$0.990) with strict resting order hygiene on lead > 0.5 sh; Immediate Layer 3 taker equalizer (marginal pair ≥$1.00 & ask ≤72¢); single-window freeze latch prevents breakout re-accumulation.`
       : splitV19 && l3 === 'off'
       ? `Clamped Maker (≤$0.990) with strict resting order hygiene on lead > 0.5 sh; no Layer 3 taker bailout (pure maker execution); single-window freeze latch prevents breakout re-accumulation.`
@@ -75,7 +78,9 @@ export function tweakCards(candidate: AbTestDistributionStats | null | undefined
             : `No pre-flight check. Fresh dips must project ${tgt} pair cost or better, deficit closes ${cap}, rescue ${rescue} — so entries keep flowing and equalize on the next swing.`
 
   const t2body =
-    splitV19 && l3 === 'off'
+    twoSidedV20
+      ? (hl.dipClips ?? `Simultaneous two-sided resting orders: inverse-dip curve (33 sh @ 7¢ → 8 sh @ 45–47¢, -1¢ off-touch in ATM band), strictly capped to $${num(e.maxUnhedgedUsd, 6).toFixed(2)} unhedged USD.`)
+      : splitV19 && l3 === 'off'
       ? (hl.dipClips ?? `Two-sided simultaneous 5 sh maker resting at bid - 0.01 inside the 42–48¢ band at sub-$0.990 pair cost; zero taker fills.`)
       : splitV19
       ? (hl.dipClips ?? `Single 5 sh maker probe at bid - 0.01 inside the 42–49¢ ATM band; Layer 1 freezes at elapsed ≥ 150s or matched ≥ 40 sh. Any fill triggers immediate Layer 2 maker hedge at ≤$0.990.`)
@@ -97,23 +102,25 @@ export function tweakCards(candidate: AbTestDistributionStats | null | undefined
   return [
     {
       kicker: 'Tweak 1 · Hard Gate',
-      badge: empty ? '—' : splitV19 && l3 === 'immediate' ? `≤$0.990 Clamp + Immediate L3` : splitV19 && l3 === 'off' ? `≤$0.990 Clamp, No Taker` : splitV19 ? `≤$0.990 Clamp + 20s L3` : splitV18 ? `3-Layer to ${hiC}c` : balanced ? `Max ${hiC}c, no gate` : preflight ? `Max ${rescue}` : `${tgt} fresh`,
-      title: splitV19 && l3 === 'immediate' ? 'Clamped Maker + Immediate L3 + Freeze Latch' : splitV19 && l3 === 'off' ? 'Clamped Maker + Pure Maker + Freeze Latch' : splitV19 ? 'Clamped Maker + Patient L3 + Freeze Latch' : splitV18 ? '3-Layer Breakout Defense' : balanced ? 'Balance Rule, No Price Gate' : preflight ? 'Pre-Flight Arb Check & Cap' : 'Pair-Cost Gate & Cap',
+      badge: empty ? '—' : twoSidedV20 ? `≤${cap} / Never ≥$1` : splitV19 && l3 === 'immediate' ? `≤$0.990 Clamp + Immediate L3` : splitV19 && l3 === 'off' ? `≤$0.990 Clamp, No Taker` : splitV19 ? `≤$0.990 Clamp + 20s L3` : splitV18 ? `3-Layer to ${hiC}c` : balanced ? `Max ${hiC}c, no gate` : preflight ? `Max ${rescue}` : `${tgt} fresh`,
+      title: twoSidedV20 ? 'Two-Sided Mutual Gate + Sub-$1 Equalizer' : splitV19 && l3 === 'immediate' ? 'Clamped Maker + Immediate L3 + Freeze Latch' : splitV19 && l3 === 'off' ? 'Clamped Maker + Pure Maker + Freeze Latch' : splitV19 ? 'Clamped Maker + Patient L3 + Freeze Latch' : splitV18 ? '3-Layer Breakout Defense' : balanced ? 'Balance Rule, No Price Gate' : preflight ? 'Pre-Flight Arb Check & Cap' : 'Pair-Cost Gate & Cap',
       body: t1body,
     },
     {
       kicker: 'Tweak 2 · Intake',
-      badge: empty ? '—' : splitV19 && l3 === 'off' ? `5 sh x 2 sides (42–48¢)` : splitV19 ? `5 sh x 1 level (42–49¢)` : splitV18 ? `10-8 sh x 2 rungs` : balanced ? `${clip}-${mx} sh` : probe > 0 ? `${probe}-${mx} sh` : sizing === 'constant-risk' ? `${clip}-${mx} sh` : sizing === 'confidence' ? `${mx} sh / ${clip} sh` : `max ${mx} sh`,
-      title: splitV19 && l3 === 'off' ? 'Two-Sided 5 sh Resting (No Taker)' : splitV19 ? 'Single 5 sh Probe (T+150s / 40 sh Cutoff)' : splitV18 ? '2-Rung Split Ladder + Rebalance' : balanced ? 'Concurrent Accumulation' : probe > 0 ? 'Probe Sizing & Step Gate' : sizing === 'constant-risk' ? 'Constant Dollar-Risk Sizing' : sizing === 'confidence' ? 'Bi-Modal Confidence Sizing' : 'Dip Intake',
+      badge: empty ? '—' : twoSidedV20 ? `2-Sided 7–${hiC}¢ (≤$${num(e.maxUnhedgedUsd, 6).toFixed(0)})` : splitV19 && l3 === 'off' ? `5 sh x 2 sides (42–48¢)` : splitV19 ? `5 sh x 1 level (42–49¢)` : splitV18 ? `10-8 sh x 2 rungs` : balanced ? `${clip}-${mx} sh` : probe > 0 ? `${probe}-${mx} sh` : sizing === 'constant-risk' ? `${clip}-${mx} sh` : sizing === 'confidence' ? `${mx} sh / ${clip} sh` : `max ${mx} sh`,
+      title: twoSidedV20 ? 'Simultaneous Two-Sided + Inverse-Dip Curve' : splitV19 && l3 === 'off' ? 'Two-Sided 5 sh Resting (No Taker)' : splitV19 ? 'Single 5 sh Probe (T+150s / 40 sh Cutoff)' : splitV18 ? '2-Rung Split Ladder + Rebalance' : balanced ? 'Concurrent Accumulation' : probe > 0 ? 'Probe Sizing & Step Gate' : sizing === 'constant-risk' ? 'Constant Dollar-Risk Sizing' : sizing === 'confidence' ? 'Bi-Modal Confidence Sizing' : 'Dip Intake',
       body: t2body,
     },
     {
       kicker: 'Tweak 3 / Sweep',
       badge: empty ? '---' : `T-${cutoff}s / T-${sweep}s`,
-      title: (balanced || splitV18 || splitV19) ? 'Stop + Sweep, No Rescue' : 'Stop + Sweep + Late Rescue',
+      title: (balanced || splitV18 || splitV19 || twoSidedV20) ? 'Stop + Sweep, No Rescue' : 'Stop + Sweep + Late Rescue',
       body: empty
         ? 'Waiting for a candidate run.'
-        : splitV19 && l3 === 'immediate'
+        : twoSidedV20
+          ? `Stop opening at T-${cutoff}s; sweep crosses ≤${rescue} deficits (or rests clamped maker) down to T-${sweep}s with zero ≥$1.00 fills.`
+          : splitV19 && l3 === 'immediate'
           ? `Stop opening at T-${cutoff}s; the sweep holds the balanced book to settlement down to T-${sweep}s. No late chase ladder — deficits equalize via clamped maker or immediate bailout.`
           : splitV19 && l3 === 'off'
           ? `Stop opening at T-${cutoff}s; the sweep holds the balanced book to settlement down to T-${sweep}s. No late chase ladder — deficits equalize via clamped maker only, never a taker.`

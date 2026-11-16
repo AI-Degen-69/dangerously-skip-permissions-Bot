@@ -52,6 +52,7 @@ from bot.discovery import WINDOW_S, current_slot, get_window
 from bot.executor import (
     compute_fill_usd,
     evaluate_microstructure_ladder,
+    v20_max_hedge_price,
 )
 from bot.fill_audit import attainable_indexes, audit_window
 from bot.fill_model import match_maker_book_cross, match_maker_print
@@ -545,6 +546,15 @@ def cancel_side_orders(open_orders: dict[str, dict], outcome: str) -> list[dict]
     return pulled
 
 
+def prune_pre_sweep_orders(open_orders: dict[str, dict]) -> list[dict]:
+    """Cancel pre-sweep non-hedge orders during sweep, preserving active sweep/rebalance orders."""
+    stale_keys = [
+        k for k, o in list(open_orders.items())
+        if o.get("reason") != "sweep" and o.get("sub_reason") != "rebalance-maker"
+    ]
+    return [open_orders.pop(k) for k in stale_keys]
+
+
 def trade_window(
     c: PublicClient,
     slot: int,
@@ -819,7 +829,10 @@ def trade_window(
         imbalance_after = abs(inv["Up"]["shares"] - inv["Down"]["shares"])
         pair_cost = _live_pair_cost() if imbalance_after < imbalance_before else None
 
-        if sub_reason in ("rebalance-taker", "rebalance-maker") and imbalance_after < imbalance_before:
+        if strat_id.startswith("hydrogen-v2") and role == "TAKER" and sub_reason == "rebalance-taker":
+            opp_outcome = "Down" if outcome == "Up" else "Up"
+            cancel_side_orders(open_orders, opp_outcome)
+        if strat_id.startswith("hydrogen-v1.9") and sub_reason in ("rebalance-taker", "rebalance-maker") and imbalance_after < imbalance_before:
             opp_outcome = "Down" if outcome == "Up" else "Up"
             if inv[opp_outcome]["shares"] > 0:
                 heavy_avg_cost = inv[opp_outcome]["cost"] / inv[opp_outcome]["shares"]
@@ -858,7 +871,7 @@ def trade_window(
             trade_reason = "balance-topup"
             event_reason = "clip-fill"
             fill_kind = "hedge"
-        elif sub_reason in ("balance-maker", "balance-probe", "split-ladder-maker"):
+        elif sub_reason in ("balance-maker", "balance-probe", "split-ladder-maker", "two-sided-maker"):
             # Hydrogen v1.5: concurrent accumulation tilt fill.
             trade_reason = "balance-build"
             event_reason = "clip-fill"
@@ -1001,17 +1014,26 @@ def trade_window(
             if order["shares_left"] <= 0:
                 open_orders.pop(order_key, None)
 
-    def _place_maker(outcome: str, px: float, shares: float, minute: int,
-                     reason: str, sub_reason: str, deficit: float) -> None:
-        nonlocal orders_posted
+    def _apply_rebalance_hygiene(outcome: str, reason: str, sub_reason: str) -> float | None:
+        if sub_reason != "rebalance-maker":
+            return None
         opp_side = "Down" if outcome == "Up" else "Up"
-        max_hedge_px = None
-        # v1.9-only resting hygiene: older strategies keep their own behavior.
-        if sub_reason == "rebalance-maker" and strat_id.startswith("hydrogen-v1.9"):
+        if strat_id.startswith("hydrogen-v2"):
+            cancel_side_orders(open_orders, opp_side)
+            if inv[opp_side]["shares"] > inv[outcome]["shares"] + 1e-9:
+                cap = min(rescue_max_pair_cost if reason == "sweep" else max_pair_cost, 0.999)
+                return v20_max_hedge_price(inv, opp_side, outcome, cap)
+        elif strat_id.startswith("hydrogen-v1.9"):
             cancel_side_orders(open_orders, opp_side)
             if inv[opp_side]["shares"] > 0:
                 heavy_avg = inv[opp_side]["cost"] / inv[opp_side]["shares"]
-                max_hedge_px = math.floor((max_pair_cost - heavy_avg + 1e-9) * 100.0) / 100.0
+                return math.floor((max_pair_cost - heavy_avg + 1e-9) * 100.0) / 100.0
+        return None
+
+    def _place_maker(outcome: str, px: float, shares: float, minute: int,
+                     reason: str, sub_reason: str, deficit: float) -> None:
+        nonlocal orders_posted
+        max_hedge_px = _apply_rebalance_hygiene(outcome, reason, sub_reason)
         cur = open_orders.get(outcome)
         ahead = None
         if cur is None or px > float(cur["price"]) + 1e-9:
@@ -1061,13 +1083,7 @@ def trade_window(
         """
         nonlocal orders_posted, orders_cancelled
         opp_side = "Down" if outcome == "Up" else "Up"
-        max_hedge_px = None
-        # v1.9-only resting hygiene: older strategies keep their own behavior.
-        if sub_reason == "rebalance-maker" and strat_id.startswith("hydrogen-v1.9"):
-            cancel_side_orders(open_orders, opp_side)
-            if inv[opp_side]["shares"] > 0:
-                heavy_avg = inv[opp_side]["cost"] / inv[opp_side]["shares"]
-                max_hedge_px = math.floor((max_pair_cost - heavy_avg + 1e-9) * 100.0) / 100.0
+        max_hedge_px = _apply_rebalance_hygiene(outcome, reason, sub_reason)
         desired = [round(px - i * ladder_spacing, 4) for i in range(ladder_levels)]
         for key in ladder_keys(open_orders, outcome):
             order = open_orders[key]
@@ -1163,12 +1179,10 @@ def trade_window(
                 deficit_since_ts = None
             deficit_duration_sec = (float(now) - deficit_since_ts) if deficit_since_ts is not None else 0.0
             in_sweep_phase = (now >= end and now < sweep_end and imbalance > 0.0)
-            if now >= end and open_orders:
-                # The strategy stops opening in the sweep; a bid left resting
-                # through it would fill on flow the strategy never saw.
-                _cancel_orders("sweep phase")
-
             if now >= sweep_end or (now >= end and imbalance <= 0.0):
+                if open_orders:
+                    # Exit sweep: cancel any remaining resting bids cleanly before resolution hold.
+                    _cancel_orders("sweep phase")
                 up_sh = sum(f["shares"] for f in fills if f["outcome"] == "Up")
                 down_sh = sum(f["shares"] for f in fills if f["outcome"] == "Down")
                 log_event("done", "holding-to-resolution", slug,
@@ -1177,6 +1191,17 @@ def trade_window(
                                   "pairCost": _live_pair_cost(), "strategy": strat_sym,
                                   "imbalance": round(imbalance, 1)})
                 break
+            if in_sweep_phase and open_orders:
+                pulled = prune_pre_sweep_orders(open_orders)
+                for order in pulled:
+                    orders_cancelled += 1
+                    log(f"cancel {order['side']} {order['shares_left']:.1f} @ {order['price']:.3f} (pre-sweep)")
+                    log_event("refuse", "order-cancel", slug, side=order["side"],
+                              detail={"minute": f"M{order['minute']}", "price": order["price"],
+                                      "shares": round(order["shares_left"], 2), "why": "pre-sweep",
+                                      "strategy": strat_sym})
+                if pulled:
+                    _persist()
             state.daily_loss_usd = _current_daily_pnl(day_start)
             if reason := check_window(len(fills), state, KILL_PATH):
                 log_event("risk", _risk_reason_code(reason), slug,

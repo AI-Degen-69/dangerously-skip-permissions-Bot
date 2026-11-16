@@ -31,8 +31,8 @@ from bot.fill_audit import role_of
 ROOT = Path(__file__).resolve().parent.parent
 RUNS_DIR = ROOT / "bot" / "runs"
 DEFAULT_BASELINE_ID = "run_20261113_183248_paper_hydrogen_v1_0"
-DEFAULT_CANDIDATE_ID = "hydrogen-v1.9"
-CANDIDATE_DISPLAY_NAME = "Hydrogen v1.9"
+DEFAULT_CANDIDATE_ID = "hydrogen-v2.0"
+CANDIDATE_DISPLAY_NAME = "Hydrogen v2.0"
 BASELINE_DISPLAY_NAME = "Hydrogen v1.0"
 AB_STATE_PATH = ROOT / "bot" / "ab_test_state.json"
 
@@ -426,6 +426,8 @@ def _run_strategy_id(run_id: str | None) -> str:
         return "hydrogen-v1.1"
     if "hydrogen_v1_8" in str(run_id).lower() or "hydrogen-v1.8" in str(run_id).lower():
         return "hydrogen-v1.8"
+    if "hydrogen_v2_0" in str(run_id).lower() or "hydrogen-v2.0" in str(run_id).lower():
+        return "hydrogen-v2.0"
     if "hydrogen_v1_9_arm_a" in str(run_id).lower() or "hydrogen-v1.9-arm-a" in str(run_id).lower():
         return "hydrogen-v1.9-arm-a"
     if "hydrogen_v1_9_arm_b" in str(run_id).lower() or "hydrogen-v1.9-arm-b" in str(run_id).lower():
@@ -485,7 +487,9 @@ def _hypothesis_text(candidate_id: str | None, *, null: bool,
     strat_id = _run_strategy_id(candidate_id)
     base_strat_id = _run_strategy_id(baseline_id or DEFAULT_BASELINE_ID)
 
-    if "hydrogen-v1.9" in str(strat_id).lower() or "v1_9" in str(strat_id).lower() or "v1.9" in str(strat_id).lower():
+    if "hydrogen-v2.0" in str(strat_id).lower() or "v2_0" in str(strat_id).lower() or "v2.0" in str(strat_id).lower():
+        cand_label = "Hydrogen_v2.0"
+    elif "hydrogen-v1.9" in str(strat_id).lower() or "v1_9" in str(strat_id).lower() or "v1.9" in str(strat_id).lower():
         cand_label = "Hydrogen_v1.9"
     elif "hydrogen-v1.8" in str(strat_id).lower() or "v1_8" in str(strat_id).lower() or "v1.8" in str(strat_id).lower():
         cand_label = "Hydrogen_v1.8"

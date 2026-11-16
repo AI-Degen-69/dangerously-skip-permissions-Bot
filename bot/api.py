@@ -1961,9 +1961,25 @@ class Handler(BaseHTTPRequestHandler):
                 entry_cfg = cfg.setdefault("entry", {})
                 # A leftover curve or dollar cap from the previous setup would keep
                 # sizing the new one; unrelated entry keys are preserved.
-                entry_cfg.pop("dipCurve", None)
-                entry_cfg.pop("maxUnhedgedUsd", None)
-                entry_cfg.pop("takerDipBalancedOnly", None)
+                for _stale_key in (
+                    "dipCurve",
+                    "clipSchedule",
+                    "maxUnhedgedUsd",
+                    "maxUnhedgedShares",
+                    "takerDipBalancedOnly",
+                    "takerDipEntryMax",
+                    "leg1MaxPrice",
+                    "maxLeg1Price",
+                    "leg2MaxPrice",
+                    "lateRescueStartSec",
+                    "lateRescueMaxPairCost",
+                    "unhedgedStepCents",
+                    "unhedgedProbeShares",
+                    "rescuePairCostMax",
+                    "rescueCeilingPrice",
+                    "maxDepthShares",
+                ):
+                    entry_cfg.pop(_stale_key, None)
                 entry_cfg.update(setup["entry"])
                 tmp_cfg = CONFIG_PATH.with_suffix(".tmp")
                 tmp_cfg.write_text(json.dumps(cfg, indent=2))

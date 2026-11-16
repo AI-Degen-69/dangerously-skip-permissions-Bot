@@ -123,7 +123,7 @@ class TestBaselineIdentity(unittest.TestCase):
     def test_default_baseline_is_hydrogen_v1_0(self):
         self.assertEqual(ab.DEFAULT_BASELINE_ID,
                          "run_20261113_183248_paper_hydrogen_v1_0")
-        self.assertIn(ab.DEFAULT_CANDIDATE_ID, ("hydrogen-v1.5", "hydrogen-v1.9"))
+        self.assertIn(ab.DEFAULT_CANDIDATE_ID, ("hydrogen-v1.5", "hydrogen-v1.9", "hydrogen-v2.0"))
         self.assertEqual(ab.TARGET_SAMPLE_SIZE, 120)
         self.assertEqual(ab.TARGET_PAIRED_WINDOWS, 60)
         self.assertEqual(ab.TARGET_SUB_DOLLAR_PAIRS, 35)
