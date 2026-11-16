@@ -392,6 +392,48 @@ STRATEGY_SETUPS = {
             "maxDepthShares": 0.0,
         },
     },
+    "hydrogen-v1.6": {
+        "id": "hydrogen-v1.6",
+        "symbol": "H2 Hydrogen-v1.6",
+        "name": "Hydrogen v1.6",
+        "signature": (
+            "Edge-Seeking Sizing (15% Lead Tol) - Expensive Legs Maker-Only Capped - "
+            "No Bid-Edge No Taker - Pair-Throttled Size, Never Gated"
+        ),
+        "description": (
+            "Same concurrent grammar as v1.5 with edge-seeking risk/sizing: tighter 15% lead "
+            "tolerance, expensive legs maker-only with capped clips, no taker when bids sum "
+            "above 99c, projected pairs over $1 halve expensive-leg size (5sh over $1.02). "
+            "Cheap legs never throttled. Pair cost recorded, never a refusal."
+        ),
+        "configHighlights": {
+            "timing": "T+4s open, 30->15 clips",
+            "sizing": "expensive legs capped maker-only, cheap legs full size",
+            "pairGates": "reported vs $0.977 wallet benchmark, never gated",
+        },
+        "entry": {
+            "startAfterOpenSec": 4,
+            "stopBeforeCloseSec": 30,
+            "sweepBeforeCloseSec": 12,
+            "clipSharesDefault": 30.0,
+            "maxShares": 30.0,
+            "maxClipShares": 30.0,
+            "clipSchedule": [[0, 30.0], [120, 15.0]],
+            "minFillPrice": 0.07,
+            "maxFillPrice": 0.85,
+            "benchmarkPairCost": 0.960,
+            "targetPairCost": 0.960,
+            "maxPairCost": 0.985,
+            "maxUnhedgedShares": 100.0,
+            "maxUnhedgedUsd": 45.0,
+            "wholeLadderClips": True,
+            "minSpacingMoveSec": 0.5,
+            "minSpacingStaticSec": 2.5,
+            "staticRequoteSec": 2.5,
+            "includeTakerFee": True,
+            "maxDepthShares": 0.0,
+        },
+    },
     "hydrogen-v1.5": {
         "id": "hydrogen-v1.5",
         "symbol": "H2 Hydrogen-v1.5",

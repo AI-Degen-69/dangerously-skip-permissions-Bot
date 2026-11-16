@@ -195,6 +195,24 @@ H15_PROBE_SHARES = 5.0      # measured modal minimum: 5-share price-discovery pr
 H15_TAKER_SPREAD_MAX = 0.02  # cross the ask when the spread is at most 2c
 H15_GAP_CLOSE_FRACTION = 0.5  # rebalance top-ups close at most half the gap per fill
 
+# H16 edge-seeking sizing (no hard pair gate): asks sum ~1.01, so
+# taker-taker pairs always lose. Edge only exists at the bids. Expensive
+# legs are throttled by SIZE + ROLE (small maker-only), never by refusal,
+# so the fill model stays honest and the book still balances. Cheap legs
+# are never throttled: buying them is what pulls the average under $1.
+H16_LEAD_TOLERANCE = 0.15    # tighter: a 100+ sh gap on a 700 book rebalances
+H16_MIN_LEAD_SHARES = 5.0
+H16_PROBE_SHARES = 5.0
+H16_TAKER_SPREAD_MAX = 0.02
+H16_GAP_CLOSE_FRACTION = 0.5
+H16_EXPENSIVE = 0.65          # at/above: maker-only, capped clips
+H16_VERY_EXPENSIVE = 0.78     # at/above: 5 sh maker-only max
+H16_CHEAP = 0.35              # at/below: full clip, taker allowed
+H16_MID_PRICE = 0.50          # throttle-by-pair applies only at/above this leg price
+H16_BID_SUM_PATIENT = 0.99    # bids summing above: no taker anywhere, makers only
+H16_PAIR_SOFT = 1.00          # above: halve expensive-leg size
+H16_PAIR_FIRM = 1.02          # above: expensive leg to 5 sh maker-only
+
 
 def _h15_side_prices(quotes: dict, side: str) -> tuple[float | None, float | None]:
     q = quotes.get(side) or {}
@@ -371,6 +389,225 @@ def _evaluate_concurrent_accumulation(
             )
         # No fill on this side: fall through and try the other side. Skips
         # are reported once, after every candidate side has been tried.
+    if saw_ceiling:
+        return _skip("extreme-price-skip", "ceiling-price-skip", preferred)
+    if saw_dust:
+        return _skip("dust-quote", "below-price-floor", preferred)
+    if saw_unhedged:
+        return _skip("unhedged-cap-skip", "unhedged-cap", preferred)
+    if saw_depth:
+        return _skip("no-liquidity", "depth-cap", preferred)
+    return _skip("no-liquidity", "no-liquidity", preferred)
+
+
+def _h16_throttle_size(px: float, want: float, proj: float | None) -> float:
+    """Edge-seeking sizing: expensive legs shrink, cheap legs never do.
+
+    No refusal here -- only smaller clips. Buying a cheap leg always pulls
+    the matched average down, so throttling applies solely to legs at or
+    above mid-price whose projected pair is already over the soft line.
+    """
+    capped = float(want)
+    if px >= H16_VERY_EXPENSIVE:
+        capped = min(capped, 5.0)
+    elif px >= H16_EXPENSIVE:
+        capped = min(capped, 10.0)
+    if proj is not None and px >= H16_MID_PRICE:
+        if proj > H16_PAIR_FIRM:
+            capped = min(capped, 5.0)
+        elif proj > H16_PAIR_SOFT:
+            capped = min(capped, max(5.0, capped / 2.0))
+    return max(0.0, capped)
+
+
+def _evaluate_edge_accumulation(
+    quotes: dict[str, dict[str, float | None]],
+    inv: dict[str, dict[str, float]],
+    fill_idx: int,
+    default_clip: float,
+    max_clip: float,
+    min_fill: float,
+    max_ceiling: float,
+    max_unhedged_usd: float,
+    in_sweep_phase: bool,
+    max_depth_shares: float = 0.0,
+    resting_size: dict | None = None,
+) -> MicrostructureDecision:
+    """Hydrogen v1.6 decision: same concurrent grammar as v1.5, plus edge.
+
+    Tighter lead tolerance (15%) so 100+ sh gaps rebalance instead of
+    sitting inside tolerance; expensive legs (>=65c) are maker-only with
+    capped clips (5 sh at >=78c); no taker anywhere when the bids sum
+    above 99c; projected pairs over $1.00 halve expensive-leg size and
+    over $1.02 cut it to 5 sh maker-only. Cheap legs are never throttled.
+    Pair cost is still recorded, never a refusal reason.
+    """
+    up_sh = float((inv.get("Up") or {}).get("shares", 0.0))
+    dn_sh = float((inv.get("Down") or {}).get("shares", 0.0))
+    matched = min(up_sh, dn_sh)
+    lead = up_sh - dn_sh
+    tol = max(H16_MIN_LEAD_SHARES, H16_LEAD_TOLERANCE * matched)
+    over = abs(lead) > tol
+    light = "Down" if lead > 0 else ("Up" if lead < 0 else None)
+    up_bid, _up_ask = _h15_side_prices(quotes, "Up")
+    dn_bid, _dn_ask = _h15_side_prices(quotes, "Down")
+    bid_sum = None
+    if up_bid is not None and dn_bid is not None:
+        try:
+            bid_sum = float(up_bid) + float(dn_bid)
+        except (TypeError, ValueError):
+            bid_sum = None
+    patient = bid_sum is not None and bid_sum > H16_BID_SUM_PATIENT + 1e-9
+
+    def _unhedged_ok(side: str, shares: float, est_usd: float) -> bool:
+        if max_unhedged_usd <= 0:
+            return True
+        cur = inv.get(side) or {}
+        new_sh = float(cur.get("shares", 0.0)) + shares
+        new_cost = float(cur.get("cost", 0.0)) + est_usd
+        opp = "Down" if side == "Up" else "Up"
+        lead_after = new_sh - float((inv.get(opp) or {}).get("shares", 0.0))
+        if lead_after > 0 and new_sh > 0:
+            if (new_cost / new_sh) * lead_after > max_unhedged_usd:
+                return False
+        return True
+
+    def _cap_maker(shares: float, role: str, side: str) -> float:
+        try:
+            dc = float(max_depth_shares or 0.0)
+        except Exception:
+            dc = 0.0
+        if dc <= 0 or role != "MAKER":
+            return shares
+        avail = None
+        if isinstance(resting_size, dict):
+            avail = resting_size.get(side)
+        try:
+            avail = float(avail) if avail is not None else None
+        except (TypeError, ValueError):
+            avail = None
+        if avail is None:
+            return shares
+        if avail <= 0:
+            return 0.0
+        return min(float(shares), float(avail))
+
+    def _skip(reason: str, sub: str, preferred: str | None) -> MicrostructureDecision:
+        return MicrostructureDecision(action="skip", outcome=preferred,
+                                      reason=reason, sub_reason=sub)
+
+    if in_sweep_phase:
+        preferred = light if light is not None else "Up"
+        return _skip("sweep-balanced", "sweep-balanced", preferred)
+
+    # --- Rebalance mode: lighter side first, but expensive light legs go
+    # small and maker-only instead of crossing the spread. ---
+    if over and light is not None:
+        want = min(float(default_clip), math.ceil(abs(lead) * H16_GAP_CLOSE_FRACTION))
+        bid, ask = _h15_side_prices(quotes, light)
+        spread = (ask - bid) if (ask is not None and bid is not None) else None
+        tight = spread is not None and spread <= H16_TAKER_SPREAD_MAX + 1e-9
+        # Maker-only when the light leg is expensive or the book shows no bid edge.
+        maker_only = patient or (ask is not None and ask >= H16_EXPENSIVE)
+        if bid is not None and (ask is None or not tight or maker_only):
+            px, role = bid, "MAKER"
+        elif ask is not None and not maker_only and tight:
+            px, role = ask, "TAKER"
+        elif bid is not None:
+            px, role = bid, "MAKER"
+        else:
+            return _skip("no-liquidity", "no-liquidity", light)
+        if px < min_fill:
+            return _skip("dust-quote", "below-price-floor", light)
+        if px > max_ceiling:
+            return _skip("extreme-price-skip", "ceiling-price-skip", light)
+        est_usd, _fee = compute_fill_usd(5.0, px, role=role,
+                                         include_fee=(role == "TAKER"))
+        proj_probe = _projected_pair_cost(inv, light, 5.0, est_usd)
+        size = _h16_throttle_size(px, want, proj_probe)
+        size = min(clip_shares(round(size, 1), max_clip), max_clip)
+        if size <= 0:
+            return _skip("no-liquidity", "no-liquidity", light)
+        est_usd, _fee = compute_fill_usd(size, px, role=role,
+                                         include_fee=(role == "TAKER"))
+        if not _unhedged_ok(light, size, est_usd):
+            return _skip("unhedged-cap-skip", "unhedged-cap", light)
+        size = _cap_maker(size, role, light)
+        if size <= 0:
+            return _skip("no-liquidity", "depth-cap", light)
+        proj = _projected_pair_cost(inv, light, size, est_usd)
+        opp_sh = float((inv.get("Up" if light == "Down" else "Down") or {}).get("shares", 0.0))
+        return MicrostructureDecision(
+            action="fill", outcome=light, price=round(px, 4), shares=size,
+            role=role, reason="balance-topup",
+            sub_reason="rebalance-taker" if role == "TAKER" else "rebalance-maker",
+            projected_pair_cost=proj,
+            share_deficit=round(max(0.0, opp_sh - float((inv.get(light) or {}).get("shares", 0.0))), 2),
+        )
+
+    # --- Balanced mode: tilt cheap, throttle expensive, never gate. ---
+    up_bid2, up_ask2 = _h15_side_prices(quotes, "Up")
+    dn_bid2, dn_ask2 = _h15_side_prices(quotes, "Down")
+    up_ref = up_bid2 if up_bid2 is not None else up_ask2
+    dn_ref = dn_bid2 if dn_bid2 is not None else dn_ask2
+    if up_ref is None and dn_ref is None:
+        return _skip("no-liquidity", "no-liquidity", "Up" if fill_idx % 2 == 0 else "Down")
+    if up_ref is None:
+        sides = ["Down"]
+    elif dn_ref is None:
+        sides = ["Up"]
+    elif up_ref < dn_ref:
+        sides = ["Up", "Down"]
+    elif dn_ref < up_ref:
+        sides = ["Down", "Up"]
+    else:
+        sides = ["Up", "Down"] if fill_idx % 2 == 0 else ["Down", "Up"]
+    preferred = sides[0]
+    saw_dust = saw_ceiling = saw_unhedged = saw_depth = False
+    for side in sides:
+        bid, ask = _h15_side_prices(quotes, side)
+        spread = (ask - bid) if (ask is not None and bid is not None) else None
+        wide = spread is not None and spread > H16_TAKER_SPREAD_MAX + 1e-9
+        maker_only_side = patient or (ask is not None and ask >= H16_EXPENSIVE) or \
+            (bid is not None and bid >= H16_EXPENSIVE)
+        attempts: list[tuple[str, float, float]] = []
+        if ask is not None and not maker_only_side and (bid is None or wide):
+            attempts.append(("TAKER", ask, min(H16_PROBE_SHARES, max_clip)))
+        if bid is not None:
+            attempts.append(("MAKER", bid, min(float(default_clip), max_clip)))
+        for role, px, want in attempts:
+            if px < min_fill:
+                saw_dust = True
+                continue
+            if px > max_ceiling:
+                saw_ceiling = True
+                continue
+            if role == "TAKER" and maker_only_side:
+                continue
+            probe_usd, _f = compute_fill_usd(5.0, px, role=role,
+                                             include_fee=(role == "TAKER"))
+            probe_proj = _projected_pair_cost(inv, side, 5.0, probe_usd)
+            want_adj = _h16_throttle_size(px, want, probe_proj)
+            size = min(clip_shares(round(want_adj, 1), max_clip), max_clip)
+            if size <= 0:
+                continue
+            est_usd, _fee = compute_fill_usd(size, px, role=role,
+                                             include_fee=(role == "TAKER"))
+            if not _unhedged_ok(side, size, est_usd):
+                saw_unhedged = True
+                continue
+            size = _cap_maker(size, role, side)
+            if size <= 0:
+                saw_depth = True
+                continue
+            proj = _projected_pair_cost(inv, side, size, est_usd)
+            return MicrostructureDecision(
+                action="fill", outcome=side, price=round(px, 4), shares=size,
+                role=role, reason="clip-fill",
+                sub_reason="balance-probe" if role == "TAKER" else "balance-maker",
+                projected_pair_cost=proj,
+                share_deficit=0.0,
+            )
     if saw_ceiling:
         return _skip("extreme-price-skip", "ceiling-price-skip", preferred)
     if saw_dust:
@@ -598,6 +835,21 @@ def evaluate_microstructure_ladder(
             max_unhedged_usd=max_unhedged_usd,
             in_sweep_phase=in_sweep_phase,
             max_depth_shares=_v15_depth,
+            resting_size=resting_size,
+        )
+
+    if strategy_id == "hydrogen-v1.6":
+        try:
+            _v16_depth = float(max_depth_shares or 0.0)
+        except Exception:
+            _v16_depth = 0.0
+        return _evaluate_edge_accumulation(
+            quotes=quotes, inv=inv, fill_idx=fill_idx,
+            default_clip=default_clip, max_clip=max_clip,
+            min_fill=min_fill, max_ceiling=max_fill,
+            max_unhedged_usd=max_unhedged_usd,
+            in_sweep_phase=in_sweep_phase,
+            max_depth_shares=_v16_depth,
             resting_size=resting_size,
         )
 
