@@ -80,70 +80,6 @@ STRATEGY_SETUPS = {
             "maxDepthShares": 0.0,
         },
     },
-    "dangerously-skip-permissions-v2.1": {
-        "id": "dangerously-skip-permissions-v2.1",
-        "symbol": "⚡ DSP-v2.1",
-        "name": "Dangerously Skip Permissions v2.1 (Unified Triad)",
-        "signature": (
-            "De-escalating Dip Clips (30→20→10) · Passive Maker Sweep (T-75s..15s) · "
-            "Strict Sub-$1.00 Pair Cap (≤$0.995) · Certainty Rescue (≤98.5¢)"
-        ),
-        "description": (
-            "Unified candidate setup: Prevents runaway deficits via de-escalating dip clips, "
-            "executes 0% fee maker equalization between T-75s and T-15s, and hard-caps pair cost at ≤$0.995 "
-            "so every merged pair redeems with guaranteed positive return."
-        ),
-        "entry": {
-            "startAfterOpenSec": 4,
-            "stopBeforeCloseSec": 75,
-            "clipSharesDefault": 30.0,
-            "maxShares": 50.0,
-            "minFillPrice": 0.07,
-            "maxFillPrice": 0.880,
-            "benchmarkPairCost": 0.965,
-            "targetPairCost": 0.965,
-            "maxPairCost": 0.985,
-            "rescuePairCostMax": 0.995,
-            "rescueCeilingPrice": 0.985,
-            "minSpacingMoveSec": 0.5,
-            "minSpacingStaticSec": 2.5,
-            "includeTakerFee": True,
-            "wholeLadderClips": True,
-            "maxDepthShares": 0.0,
-        },
-    },
-    "dangerously-skip-permissions-v2.2": {
-        "id": "dangerously-skip-permissions-v2.2",
-        "symbol": "⚡ DSP-v2.2",
-        "name": "Dangerously Skip Permissions v2.2 (Confidence Sizing)",
-        "signature": (
-            "Confidence Sizing (60 sh Atomic / 10 sh Micro) · Pre-Flight Arb Gate (≤$0.995) · "
-            "Passive Maker Sweep (T-75s..15s) · Strict Sub-$1.00 Pair Cap"
-        ),
-        "description": (
-            "Confidence-based sizing candidate: Maximizes profit by heavy sizing (60 shares) on 100% risk-free "
-            "atomic pairings and deficit equalizations, while minimizing risk via 10-share micro clips on speculative "
-            "dips and enforcing a pre-flight hedge gate to prevent entering unhedgeable positions."
-        ),
-        "entry": {
-            "startAfterOpenSec": 4,
-            "stopBeforeCloseSec": 75,
-            "clipSharesDefault": 10.0,
-            "maxShares": 60.0,
-            "minFillPrice": 0.07,
-            "maxFillPrice": 0.880,
-            "benchmarkPairCost": 0.965,
-            "targetPairCost": 0.965,
-            "maxPairCost": 0.985,
-            "rescuePairCostMax": 0.995,
-            "rescueCeilingPrice": 0.985,
-            "minSpacingMoveSec": 0.5,
-            "minSpacingStaticSec": 2.5,
-            "includeTakerFee": True,
-            "wholeLadderClips": True,
-            "maxDepthShares": 0.0,
-        },
-    },
     "dangerously-skip-permissions-v2.3": {
         "id": "dangerously-skip-permissions-v2.3",
         "symbol": "⚡ DSP-v2.3",
@@ -213,33 +149,6 @@ STRATEGY_SETUPS = {
             "includeTakerFee": True,
             "wholeLadderClips": True,
             "maxDepthShares": 0.0,
-        },
-    },
-    "dangerously-skip-permissions-v2.5": {
-        "id": "dangerously-skip-permissions-v2.5",
-        "symbol": "⚡ DSP-v2.5",
-        "name": "Dangerously Skip Permissions v2.5 (Inverse-Dip Curve + Dollar Gap Cap)",
-        "entry": {
-            "startAfterOpenSec": 4,
-            "stopBeforeCloseSec": 75,
-            "clipSharesDefault": 10.0,
-            "maxShares": 45.0,
-            "minFillPrice": 0.07,
-            "maxFillPrice": 0.45,
-            "benchmarkPairCost": 0.965,
-            "targetPairCost": 0.965,
-            "maxPairCost": 0.985,
-            # No share veto anywhere in the engine: a 33-share clip at 7c is
-            # $2.31 of risk, and the dollar cap below is what governs it.
-            "maxUnhedgedUsd": 5.0,
-            # Inverse-dip curve: 33 shares at 7c -> 8 shares at 45c, linear in price.
-            "dipCurve": {"lo": 0.07, "hi": 0.45, "sharesLo": 33.0, "sharesHi": 8.0},
-            "rescuePairCostMax": 0.995,
-            "rescueCeilingPrice": 0.985,
-            "minSpacingMoveSec": 0.5,
-            "minSpacingStaticSec": 2.5,
-            "includeTakerFee": True,
-            "wholeLadderClips": True,
         },
     },
     "dangerously-skip-permissions-v2.6": {
@@ -754,14 +663,6 @@ _SETUP_FEATURES = {
         "sizing": "ladder", "preflightGate": False, "heavyAtomic": False,
         "sweep": False, "pairedVolumeCapped": True, "blurb": "deep-dip grid with tiered rescue pairing",
     },
-    "dangerously-skip-permissions-v2.1": {
-        "sizing": "de-escalating", "preflightGate": False, "heavyAtomic": False,
-        "sweep": True, "pairedVolumeCapped": True, "blurb": "de-escalating dip clips with passive maker sweep",
-    },
-    "dangerously-skip-permissions-v2.2": {
-        "sizing": "confidence", "preflightGate": True, "heavyAtomic": True,
-        "sweep": True, "pairedVolumeCapped": True, "blurb": "heavy clips on risk-free pairs, micro clips on speculative dips, pre-flight hedge gate",
-    },
     "dangerously-skip-permissions-v2.3": {
         "sizing": "constant-risk", "dollarRisk": 4.50, "preflightGate": False,
         "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
@@ -773,11 +674,6 @@ _SETUP_FEATURES = {
         "sizing": "ladder", "preflightGate": False,
         "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
         "blurb": "flat 10-share ladder with passive sweep and uncapped paired volume (no share veto; dollar-capped unhedged risk)",
-    },
-    "dangerously-skip-permissions-v2.5": {
-        "sizing": "inverse-curve", "preflightGate": False, "heavyAtomic": False,
-        "sweep": True, "pairedVolumeCapped": False,
-        "blurb": "inverse-dip clip curve (fatter clips at deep dips) with the gap limit denominated in dollars",
     },
     "dangerously-skip-permissions-v2.6": {
         "sizing": "inverse-curve", "preflightGate": False, "patientHedge": True,
