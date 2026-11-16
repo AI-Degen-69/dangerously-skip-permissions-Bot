@@ -44,7 +44,7 @@ from bot.runs import tape_segments
 WINDOW_S = int(C.WINDOW_S)
 STRATEGY_V26 = "dangerously-skip-permissions-v2.6"
 STRATEGY_V27 = "dangerously-skip-permissions-v2.7"
-STRATEGY_HYDROGEN = "hydrogen-v1.8"
+STRATEGY_HYDROGEN = "hydrogen-v1.9"
 BASELINE_RUN = "run_20261113_080232_paper_dsp_v2_6"
 LOOP_LOG = Path("bot/loop.log")
 
@@ -431,9 +431,12 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
     next_eval_ts = float("-inf")
     last_fill_ts = 0.0
     last_fill_px: float | None = None
+    deficit_since_ts: float | None = None
+    window_bailout_latched: bool = False
 
     def book_fill(outcome, px, shares, role, minute, sub_reason, queue_ahead, deficit, ts):
-        nonlocal cost, fees, last_fill_ts, last_fill_px
+        nonlocal cost, fees, last_fill_ts, last_fill_px, window_bailout_latched
+        imbalance_before = abs(inv["Up"]["shares"] - inv["Down"]["shares"])
         usd, fee_usd = compute_fill_usd(shares, px, role=role, include_fee=include_fee)
         inv[outcome]["shares"] += shares
         inv[outcome]["cost"] += usd
@@ -444,6 +447,14 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
         fees += fee_usd
         last_fill_ts = ts
         last_fill_px = px
+        imbalance_after = abs(inv["Up"]["shares"] - inv["Down"]["shares"])
+        if sub_reason in ("rebalance-taker", "rebalance-maker") and imbalance_after < imbalance_before:
+            opp_outcome = "Down" if outcome == "Up" else "Up"
+            if inv[opp_outcome]["shares"] > 0:
+                heavy_avg_cost = inv[opp_outcome]["cost"] / inv[opp_outcome]["shares"]
+                marginal_pair = heavy_avg_cost + px
+                if marginal_pair > 1.000:
+                    window_bailout_latched = True
         fills.append({"ts": ts, "minute": minute, "outcome": outcome, "price": px,
                       "shares": shares, "usd": usd, "role": role,
                       "subReason": sub_reason, "feeUsd": fee_usd,
@@ -548,10 +559,16 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
         stores for None) and count it.
         """
         nonlocal placements, queue_unknown
+        opp_side = "Down" if outcome == "Up" else "Up"
+        max_hedge_px = None
+        if sub_reason == "rebalance-maker":
+            resting[opp_side] = []
+            if inv[opp_side]["shares"] > 0:
+                heavy_avg = inv[opp_side]["cost"] / inv[opp_side]["shares"]
+                max_hedge_px = math.floor((max_pc - heavy_avg + 1e-9) * 100.0) / 100.0
         bids = state[outcome]["bids"] or []
         desired = [round(px - i * spacing, 4) for i in range(max(1, levels))]
         if unhedged_step_cents > 0:
-            opp_side = "Down" if outcome == "Up" else "Up"
             if inv[opp_side]["shares"] == 0 and inv[outcome]["shares"] > 0:
                 held_pxs = [f["price"] for f in fills if f["outcome"] == outcome]
                 min_held = min(held_pxs) if held_pxs else 1.0
@@ -564,6 +581,8 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
                 (deficit > 0 or float(order.get("deficit") or 0.0) > 0)
                 and float(order["price"]) > px + 1e-9
             )
+            if is_higher_hedge and max_hedge_px is not None and float(order["price"]) > max_hedge_px + 1e-9:
+                is_higher_hedge = False
             if any(abs(order["price"] - d) < 1e-9 for d in desired) or is_higher_hedge:
                 keep.append(order)
                 if is_higher_hedge:
@@ -667,6 +686,12 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
         if eval_floor_s:
             next_eval_ts = ts + eval_floor_s
         imbalance = abs(inv["Up"]["shares"] - inv["Down"]["shares"])
+        if imbalance > 0.5:
+            if deficit_since_ts is None:
+                deficit_since_ts = ts
+        else:
+            deficit_since_ts = None
+        deficit_duration_sec = (ts - deficit_since_ts) if deficit_since_ts is not None else 0.0
         in_sweep = (ts >= end and ts < sweep_end and imbalance > 0.0)
         if ts >= sweep_end or (ts >= end and imbalance <= 0.0):
             break
@@ -696,6 +721,8 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
             unhedged_step_cents=unhedged_step_cents,
             unhedged_probe_shares=unhedged_probe_shares,
             open_orders=open_orders,
+            deficit_duration_sec=deficit_duration_sec,
+            window_bailout_latched=window_bailout_latched,
         )
         if decision.action == "skip" or decision.outcome is None or decision.price is None:
             continue

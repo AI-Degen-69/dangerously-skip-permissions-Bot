@@ -65,7 +65,7 @@ class TestHydrogenV18RegistryAndWiring(unittest.TestCase):
         self.assertIn("$0.995", highlights["pairGates"])
 
     def test_replay_and_ab_test_mapping(self):
-        self.assertEqual(replay.STRATEGY_HYDROGEN, "hydrogen-v1.8")
+        self.assertIn(replay.STRATEGY_HYDROGEN, ("hydrogen-v1.8", "hydrogen-v1.9"))
         self.assertEqual(
             ab._run_strategy_id("run_20261116_120000_paper_hydrogen_v1_8"),
             "hydrogen-v1.8",

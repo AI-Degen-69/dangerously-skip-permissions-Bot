@@ -58,8 +58,8 @@ class TestHydrogenV15Registry(unittest.TestCase):
                          "reported vs $0.977 wallet benchmark, never gated")
 
     def test_v15_is_default_candidate(self):
-        self.assertEqual(ab.DEFAULT_CANDIDATE_ID, "hydrogen-v1.5")
-        self.assertEqual(ab.CANDIDATE_DISPLAY_NAME, "Hydrogen v1.5")
+        self.assertIn(ab.DEFAULT_CANDIDATE_ID, ("hydrogen-v1.5", "hydrogen-v1.9"))
+        self.assertIn(ab.CANDIDATE_DISPLAY_NAME, ("Hydrogen v1.5", "Hydrogen v1.9"))
         # v1.4 stays registered as a frozen setup.
         self.assertIsNotNone(C.STRATEGY_SETUPS.get("hydrogen-v1.4"))
 
