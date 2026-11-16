@@ -25,7 +25,6 @@
     "wholeLadderClips": true,
     "minSpacingMoveSec": 0.5,
     "minSpacingStaticSec": 2.5,
-    "staticRequoteSec": 2.5,
     "includeTakerFee": true,
     "levelsPerSide": 1,
     "levelSpacing": 0.01,
