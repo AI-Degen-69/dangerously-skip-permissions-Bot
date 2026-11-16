@@ -1254,7 +1254,8 @@ def _evaluate_hydrogen_v20(
                 deficit, float(light_ask), role="TAKER", include_fee=include_taker_fee,
             )
             proj_taker = _projected_pair_cost(inv, light, deficit, taker_usd)
-            heavy_avg = (inv[heavy]["cost"] / inv[heavy]["shares"]) if inv[heavy]["shares"] > 0 else 0.0
+            _heavy_pos = inv.get(heavy) or {}
+            heavy_avg = (float(_heavy_pos.get("cost", 0.0)) / float(_heavy_pos.get("shares", 0.0))) if float(_heavy_pos.get("shares", 0.0)) > 0 else 0.0
             marginal_taker = heavy_avg + (taker_usd / deficit)
             if (
                 proj_taker is not None
