@@ -569,7 +569,7 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
             if strategy_id.startswith("hydrogen-v2"):
                 resting[opp_side] = []
                 if inv[opp_side]["shares"] > inv[outcome]["shares"] + 1e-9:
-                    cap = rescue_max if reason == "sweep" else max_pc
+                    cap = min(rescue_max if reason == "sweep" else max_pc, 0.999)
                     max_hedge_px = v20_max_hedge_price(inv, opp_side, outcome, cap)
             elif strategy_id.startswith("hydrogen-v1.9"):
                 resting[opp_side] = []

@@ -1275,7 +1275,10 @@ def _evaluate_hydrogen_v20(
                     share_deficit=deficit,
                 )
 
-        maker_cap = float(rescue_max_pair_cost if in_sweep_phase else max_pair_cost)
+        # Never complete a pair at >= $1.00 on the maker path (the taker path
+        # enforces this explicitly): clamp custom rescue configs to $0.999.
+        # Default configs (sweep 0.995) are unchanged.
+        maker_cap = min(float(rescue_max_pair_cost if in_sweep_phase else max_pair_cost), 0.999)
         max_hedge_px = min(float(rescue_ceiling), v20_max_hedge_price(inv, heavy, light, maker_cap))
         if light_bid is None or float(light_bid) < min_fill - 1e-9 or max_hedge_px < min_fill - 1e-9:
             return MicrostructureDecision(
@@ -1395,15 +1398,28 @@ def _evaluate_hydrogen_v20(
             lead_after = max(0.0, new_sh - opp_sh)
             unhedged_after = (new_cost / new_sh) * lead_after if new_sh > 0 else 0.0
             if unhedged_after > max_unhedged_usd + 1e-9:
-                if side_sh <= opp_sh + 1e-9:
-                    avail_lead = max(0.0, max_unhedged_usd / max(px, 1e-6))
-                    allowed = math.floor((avail_lead + max(0.0, opp_sh - side_sh) + 1e-9) * 10.0) / 10.0
+                # Exact max addable shares from the same average-cost formula:
+                # (side_cost + n*px) * (side_sh + n - opp_sh) <= M * (side_sh + n).
+                # Shares resting up to opp_sh carry no unhedged cost; the root
+                # accounts for them. Floored to 0.1 sh like the old branches.
+                _a = px
+                _b = side_cost + px * (side_sh - opp_sh) - max_unhedged_usd
+                _c = side_cost * (side_sh - opp_sh) - max_unhedged_usd * side_sh
+                _disc = _b * _b - 4.0 * _a * _c
+                if _disc < 0.0 or _a <= 1e-12:
+                    allowed = 0.0
                 else:
-                    cur_avg = side_cost / side_sh
-                    rem_usd = max(0.0, max_unhedged_usd - cur_avg * (side_sh - opp_sh))
-                    allowed = math.floor((rem_usd / max(px, 1e-6) + 1e-9) * 10.0) / 10.0
+                    allowed = max(0.0, (-_b + math.sqrt(_disc)) / (2.0 * _a))
+                allowed = math.floor((allowed + 1e-9) * 10.0) / 10.0
                 shares = min(shares, allowed)
                 if shares < 1.0 - 1e-9:
+                    continue
+                # Recheck the reduced size against the limit before accepting.
+                new_sh = side_sh + shares
+                new_cost = side_cost + shares * px
+                lead_after = max(0.0, new_sh - opp_sh)
+                unhedged_after = (new_cost / new_sh) * lead_after if new_sh > 0 else 0.0
+                if unhedged_after > max_unhedged_usd + 1e-9:
                     continue
 
         if max_unhedged_shares > 0.0:

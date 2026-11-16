@@ -1021,7 +1021,7 @@ def trade_window(
         if strat_id.startswith("hydrogen-v2"):
             cancel_side_orders(open_orders, opp_side)
             if inv[opp_side]["shares"] > inv[outcome]["shares"] + 1e-9:
-                cap = rescue_max_pair_cost if reason == "sweep" else max_pair_cost
+                cap = min(rescue_max_pair_cost if reason == "sweep" else max_pair_cost, 0.999)
                 return v20_max_hedge_price(inv, opp_side, outcome, cap)
         elif strat_id.startswith("hydrogen-v1.9"):
             cancel_side_orders(open_orders, opp_side)
