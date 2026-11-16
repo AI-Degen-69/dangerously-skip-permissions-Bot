@@ -183,7 +183,9 @@ def events(limit: int = 150) -> list[dict]:
             # Normalize kind mappings
             if ev.get("reason") in ("dust-quote", "extreme-price-skip", "no-liquidity", "spread-too-wide"):
                 ev["kind"] = "refuse"
-            elif ev.get("reason") == "m4-snipe" or (ev.get("kind") in ("entry", "snipe") and ev.get("detail", {}).get("minute") in ("M4", 4)):
+            elif ev.get("reason") == "m4-snipe":
+                # Genuine engine snipes only: minute-4 maker fills keep their
+                # own reason (a minute-based relabel here used to rebrand them).
                 ev["kind"] = "snipe"
                 ev["reason"] = "m4-snipe"
             elif ev.get("reason") in ("holding-to-resolution", "too-late-in-window"):
@@ -475,7 +477,12 @@ def live_markets(cfg: dict) -> list[dict]:
             verdict = {"action": "enter", "reason": "hedge-pending",
                        "detail": {"fills": fills_count, "minute": f"M{minute_num}", "remainingSec": remaining}}
         elif elapsed_sec >= 240 or remaining <= 60:
-            verdict = {"action": "snipe", "reason": "m4-snipe",
+            # hydrogen-v2.0 routes around every engine snipe path, so its
+            # endgame verdict stays on working fills (fail-open: every other
+            # strategy keeps the legacy snipe hint, e.g. hapcs-v1).
+            snipes = "hydrogen-v2.0" not in str((cfg.get("strategy") or {}).get("id", ""))
+            action, reason = ("snipe", "m4-snipe") if snipes else ("enter", "working-fills")
+            verdict = {"action": action, "reason": reason,
                        "detail": {"fills": fills_count, "minute": "M4", "remainingSec": remaining}}
         elif fills_count >= 2:
             verdict = {"action": "enter", "reason": "working-fills",
@@ -1462,9 +1469,10 @@ def _enrich_fill(f: dict, idx: int, default_ts: int, slug: str | None) -> dict:
             reason = "straddle-open"
         elif idx == 1:
             reason = "hedge-leg"
-        elif minute == 4:
-            reason = "m4-snipe"
         elif minute is not None:
+            # No minute-4 snipe default: reason-less late fills are ordinary
+            # balance clips (mislabeling them as snipes also mistreats fees).
+
             reason = "straddle-balance"
         else:
             reason = "paper-fill"

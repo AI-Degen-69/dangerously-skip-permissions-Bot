@@ -144,7 +144,7 @@ Run a statistical hypothesis test between a **baseline** run and a **candidate**
 ### 4. Config (`/config`) — Setup & Risk Guardrails
 Select the active strategy setup and adjust its parameters. `STRATEGY_SETUPS` in `bot/constants.py` is the source of truth: its `signature`, `description`, and `configHighlights` are generated from the entry numbers, so the setup cards stay in sync with the engine. All values are validated and clamped.
 
-- **Strategy setup selector:** choose among the versioned registry entries—`hapcs-v1`, `dangerously-skip-permissions` and `v2.1`–`v2.7`, and the `hydrogen-v1.0`–`v2.0` line (currently `hydrogen-v2.0`). The active id is written to `bot/config.json` and served by `/api/bot/strategy-setups`.
+- **Strategy setup selector:** choose among the versioned registry entries—`hapcs-v1`, `dangerously-skip-permissions` and `v2.6`–`v2.7`, and `hydrogen-v1.0`, `hydrogen-v1.9`, and `hydrogen-v2.0` (currently `hydrogen-v2.0`). The active id is written to `bot/config.json` and served by `/api/bot/strategy-setups`.
 - **Microstructure ladder & dip curve:** `levelsPerSide` and `levelSpacing` (off-touch levels, e.g. 1 level at −1¢), `clipSchedule` (e.g. 5 shares flat), `wholeLadderClips`, `dipCurve` (`hump` or `{lo, hi, sharesLo, sharesHi}` anchors), plus `minFillPrice` / `maxFillPrice`, `minSpacingMoveSec`, `minSpacingStaticSec`, and `staticRequoteSec`.
 - **Pair-cost caps:** `targetPairCost` (~$0.960), `maxPairCost` (~$0.990) and `rescuePairCostMax` (~$1.02, the late-rescue ceiling). A pair leg opens only when the opposite ask completes it under the applicable cap.
 - **Unhedged inventory caps:** `maxUnhedgedShares` and `maxUnhedgedUsd` bound the light-side lead between hedges.

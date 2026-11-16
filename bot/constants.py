@@ -80,77 +80,6 @@ STRATEGY_SETUPS = {
             "maxDepthShares": 0.0,
         },
     },
-    "dangerously-skip-permissions-v2.3": {
-        "id": "dangerously-skip-permissions-v2.3",
-        "symbol": "⚡ DSP-v2.3",
-        "name": "Dangerously Skip Permissions v2.3 (Constant-Risk Sizing)",
-        "signature": (
-            "Constant Dollar-Risk Sizing ($4.50) · Dip Buys ≤45¢ (10–45 sh) · "
-            "Single Gap-Veto Knob (20 sh, max hold 19) · Total Paired Volume Uncapped · Strict Sub-$1.00 Pair Cap"
-        ),
-        "description": (
-            "Constant dollar-risk candidate: Buys dips at 45¢ or cheaper only, sizing each dip as $4.50 / price "
-            "(10 sh at 45¢ up to 45 sh at 10¢) so no single dip risks more than $4.50. Unhedged gap vetoed at 20 sh "
-            "(never held; max hold 19), total paired volume uncapped: choppy windows re-trigger Dip -> Equalize micro-cycles "
-            "(Dip Up -> Equalize Down -> Dip Down -> Equalize Up) to compound hundreds of paired shares. "
-            "No pre-flight gate and no heavy 60-share fills — entries are governed by strict sub-$1.00 pair-cost gates "
-            "(≤$0.965 fresh, ≤$0.985 closing a deficit, rescue ≤$0.995)."
-        ),
-        "entry": {
-            "startAfterOpenSec": 4,
-            "stopBeforeCloseSec": 75,
-            "clipSharesDefault": 10.0,
-            "maxShares": 45.0,
-            "minFillPrice": 0.07,
-            "maxFillPrice": 0.45,
-            "benchmarkPairCost": 0.965,
-            "targetPairCost": 0.965,
-            "maxPairCost": 0.985,
-            "rescuePairCostMax": 0.995,
-            "rescueCeilingPrice": 0.985,
-            "minSpacingMoveSec": 0.5,
-            "minSpacingStaticSec": 2.5,
-            "includeTakerFee": True,
-            "wholeLadderClips": True,
-            "maxDepthShares": 0.0,
-        },
-    },
-    "dangerously-skip-permissions-v2.4": {
-        "id": "dangerously-skip-permissions-v2.4",
-        "symbol": "⚡ DSP-v2.4",
-        "name": "Dangerously Skip Permissions v2.4 (Single-Knob Gap Veto)",
-        "signature": (
-            "Constant Dollar-Risk Sizing ($4.50) · Dip Buys ≤45¢ (10–45 sh) · "
-            "Single Gap-Veto Knob (11 sh, max hold 10) · Total Paired Volume Uncapped · Strict Sub-$1.00 Pair Cap"
-        ),
-        "description": (
-            "Single-knob candidate: identical to v2.3 except the unhedged-gap veto knob is 11 sh "
-            "(never held; max hold 10), so the worst strand is ~$4.50 instead of ~$8.70. Buys dips at 45¢ "
-            "or cheaper only, sizing each dip as $4.50 / price (10 sh at 45¢ up to 45 sh at 10¢). "
-            "Total paired volume uncapped: choppy windows re-trigger Dip -> Equalize micro-cycles "
-            "(Dip Up -> Equalize Down -> Dip Down -> Equalize Up) to compound hundreds of paired shares. "
-            "No pre-flight gate and no heavy 60-share fills — entries are governed by strict sub-$1.00 pair-cost gates "
-            "(≤$0.965 fresh, ≤$0.985 closing a deficit, rescue ≤$0.995)."
-        ),
-        "entry": {
-            "startAfterOpenSec": 4,
-            "stopBeforeCloseSec": 75,
-            "clipSharesDefault": 10.0,
-            "maxShares": 45.0,
-            "minFillPrice": 0.07,
-            "maxFillPrice": 0.45,
-            "benchmarkPairCost": 0.965,
-            "targetPairCost": 0.965,
-            "maxPairCost": 0.985,
-            "rescuePairCostMax": 0.995,
-            "rescueCeilingPrice": 0.985,
-            "minSpacingMoveSec": 0.5,
-            "minSpacingStaticSec": 2.5,
-            "includeTakerFee": True,
-            "wholeLadderClips": True,
-            "maxDepthShares": 0.0,
-        },
-    },
     "dangerously-skip-permissions-v2.6": {
         "id": "dangerously-skip-permissions-v2.6",
         "symbol": "⚡ DSP-v2.6",
@@ -342,18 +271,6 @@ _SETUP_FEATURES = {
     "dangerously-skip-permissions": {
         "sizing": "ladder", "preflightGate": False, "heavyAtomic": False,
         "sweep": False, "pairedVolumeCapped": True, "blurb": "deep-dip grid with tiered rescue pairing",
-    },
-    "dangerously-skip-permissions-v2.3": {
-        "sizing": "constant-risk", "dollarRisk": 4.50, "preflightGate": False,
-        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
-        "blurb": "every dip sized as $4.50 / price, net gap capped while total paired volume compounds",
-    },
-    "dangerously-skip-permissions-v2.4": {
-        # Ladder sizing, not constant-risk: the engine keys constant-risk on
-        # strategy_id.endswith("v2.3"), so v2.4 falls through to the ladder.
-        "sizing": "ladder", "preflightGate": False,
-        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
-        "blurb": "flat 10-share ladder with passive sweep and uncapped paired volume (no share veto; dollar-capped unhedged risk)",
     },
     "dangerously-skip-permissions-v2.6": {
         "sizing": "inverse-curve", "preflightGate": False, "patientHedge": True,

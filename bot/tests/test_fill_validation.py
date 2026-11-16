@@ -286,7 +286,7 @@ class MakerBookCrossTests(unittest.TestCase):
 
 class SetupCopyTests(unittest.TestCase):
     def test_depth_mention_only_when_on(self):
-        base = dict(C.STRATEGY_SETUPS['dangerously-skip-permissions-v2.4'])
+        base = dict(C.STRATEGY_SETUPS['dangerously-skip-permissions-v2.6'])
         base['entry'] = dict(base['entry'])
         base['entry']['maxDepthShares'] = 0.0
         _, desc_off, hl_off = C.describe_setup(base)

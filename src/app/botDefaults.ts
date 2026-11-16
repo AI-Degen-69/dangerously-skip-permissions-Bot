@@ -100,62 +100,12 @@ export const STRATEGY_PRESETS = {
     },
     features: { sizing: 'ladder', preflightGate: false, heavyAtomic: false, sweep: false, pairedVolumeCapped: true },
   },
-  'dangerously-skip-permissions-v2.3': {
-    id: 'dangerously-skip-permissions-v2.3',
-    symbol: '⚡ DSP-v2.3',
-    name: 'Dangerously Skip Permissions v2.3 (Constant-Risk Sizing)',
-    signature: 'Constant Dollar-Risk ($4.50) · Dip Buys ≤45¢ (10–45 sh) · No Share Veto · Total Paired Volume Uncapped · Strict Sub-$1.00 Pair Cap',
-    description: 'Constant dollar-risk candidate: Buys dips at 45¢ or cheaper only, sizing each dip as $4.50 / price (10 at 45¢ up to 45 at 10¢) so no single dip risks more than $4.50. No share-denominated veto — unhedged risk is governed in dollars, not shares; total paired volume uncapped — choppy windows re-trigger dip then equalize cycles to stack paired wins. No pre-flight gate, no heavy 60-share fills — entries follow strict sub-$1.00 pair-cost gates.',
-    entry: {
-      clipSharesDefault: 10,
-      maxShares: 45,
-      minFillPrice: 0.07,
-      maxFillPrice: 0.45,
-      benchmarkPairCost: 0.965,
-      targetPairCost: 0.965,
-      maxPairCost: 0.985,
-      rescuePairCostMax: 0.995,
-      rescueCeilingPrice: 0.985,
-      startAfterOpenSec: 4,
-      stopBeforeCloseSec: 75,
-      minSpacingMoveSec: 0.5,
-      minSpacingStaticSec: 2.5,
-      includeTakerFee: true,
-      wholeLadderClips: true,
-    },
-    features: { sizing: 'constant-risk', dollarRisk: 4.50, preflightGate: false, heavyAtomic: false, sweep: true, pairedVolumeCapped: false },
-  },
-  'dangerously-skip-permissions-v2.4': {
-    id: 'dangerously-skip-permissions-v2.4',
-    symbol: '⚡ DSP-v2.4',
-    name: 'Dangerously Skip Permissions v2.4 (Flat Ladder, No Veto)',
-    signature: 'Flat 10 sh Ladder · Dip Buys ≤45¢ · No Share Veto · Total Paired Volume Uncapped · Strict Sub-$1.00 Pair Cap',
-    description: 'Flat-ladder candidate: uniform 10 sh dips at 45¢ or cheaper, no share-denominated veto — both sides stay eligible at every lead with the lagging side evaluated first. Total paired volume uncapped; entries follow strict sub-$1.00 pair-cost gates with rescue to $0.995.',
-    entry: {
-      clipSharesDefault: 10,
-      maxShares: 45,
-      minFillPrice: 0.07,
-      maxFillPrice: 0.45,
-      benchmarkPairCost: 0.965,
-      targetPairCost: 0.965,
-      maxPairCost: 0.985,
-      rescuePairCostMax: 0.995,
-      rescueCeilingPrice: 0.985,
-      startAfterOpenSec: 4,
-      stopBeforeCloseSec: 75,
-      minSpacingMoveSec: 0.5,
-      minSpacingStaticSec: 2.5,
-      includeTakerFee: true,
-      wholeLadderClips: true,
-    },
-    features: { sizing: 'constant-risk', dollarRisk: 4.50, preflightGate: false, heavyAtomic: false, sweep: true, pairedVolumeCapped: false },
-  },
   'dangerously-skip-permissions-v2.6': {
     id: 'dangerously-skip-permissions-v2.6',
     symbol: '⚡ DSP-v2.6',
     name: 'Dangerously Skip Permissions v2.6 (Patient Pair)',
     signature: 'Inverse-Dip Curve (33 sh @7c → 8 sh @45c) - Patient Pair (under $0.985) - Dollar Gap Cap ($5.00) - Under-$0.995 Cap',
-    description: 'The v2.6 dip curve replaces two placement rules: the first legThe first leg is placed at the touch near the money (the ledger\'s first fill is ~50c within 13s), and the hedge rests as a bid on the other side instead of crossing its ask, so the pair closes when a seller comes to it; it is crossed only in the sweep. Pairs measured -0.2c when the second leg was taken at a 0-5s lag and +1.6 to +2.7c at a 31-120s lag. Never 46 sh or more unhedged on one side, and never more than $5.00 of unhedged cost while total paired shares have no cap.',
+    description: 'v2.5\'s dip curve with two placement rules replaced. The first leg is placed at the touch near the money (the ledger\'s first fill is ~50c within 13s), and the hedge rests as a bid on the other side instead of crossing its ask, so the pair closes when a seller comes to it; it is crossed only in the sweep. Pairs measured -0.2c when the second leg was taken at a 0-5s lag and +1.6 to +2.7c at a 31-120s lag. Never 46 sh or more unhedged on one side, and never more than $5.00 of unhedged cost while total paired shares have no cap.',
     entry: {
       clipSharesDefault: 10,
       maxShares: 45,
@@ -231,6 +181,21 @@ export const STRATEGY_PRESETS = {
     },
     features: { sizing: 'hump', preflightGate: false, patientHedge: true, takerDip: true, heavyAtomic: false, sweep: true, pairedVolumeCapped: false },
   },
+  // Post-PR #56 CLOB/maker-hold engine build. Trading parameters are identical
+  // to Hydrogen v1.2 — the version bump isolates the fixed fill & order-hold
+  // behavior from the tainted pre-PR #56 v1.2 run, it is NOT a param change.
+  // Hydrogen v1.4: wallet-timed, wallet-sized. Same post-PR #56 engine and pair
+  // gates as v1.3, but entries open at T+4s (first fills ~T+6s, the wallet
+  // median) and clips follow the wallet's measured schedule: 30 sh at the
+  // open decaying to ~15 sh after T+120s. No share veto; dollar-capped risk.
+  // Hydrogen v1.5: concurrent two-sided accumulation (measured wallet grammar).
+  // Both sides quoted from T+4s, lighter side always bought first up to 85c,
+  // top-ups close at most half the gap, tilt to the cheaper side with 5 sh
+  // taker probes on wide books. No dip band, no rescue ladder, no pair-cost
+  // gate (reported vs the $0.977 wallet benchmark, never enforced).
+  // Hydrogen v1.8: 3-layer breakout defense on the 2-level off-touch split ladder.
+  // Heavy-Side Floor Gate (<45c when lead >= 10sh), pair-cost-unblocked
+  // rebalance-maker up to 85c, and emergency breakout rebalance-taker across 60-68c.
   // Hydrogen v1.9: Dynamic 3-layer architecture with 1-level 5.0 sh probe in [0.42, 0.49]
   // with T+150s / 40 sh cutoff, clamped maker rebalance (<= $0.990) with resting hygiene,
   // and patient 20s delayed L3 taker bailout (>= $1.07 marginal) with window freeze latch.
@@ -261,7 +226,7 @@ export const STRATEGY_PRESETS = {
       includeTakerFee: true,
       wholeLadderClips: true,
     },
-    features: { sizing: 'split-ladder-v19', preflightGate: false, patientHedge: false, takerDip: false, heavyAtomic: false, sweep: true, pairedVolumeCapped: false },
+    features: { sizing: 'split-ladder-v19', preflightGate: false, patientHedge: false, takerDip: false, heavyAtomic: false, sweep: true, pairedVolumeCapped: false, l3Mode: 'patient' },
   },
   'hydrogen-v2.0': {
     id: 'hydrogen-v2.0',
@@ -293,6 +258,6 @@ export const STRATEGY_PRESETS = {
       includeTakerFee: true,
       wholeLadderClips: true,
     },
-    features: { sizing: 'two-sided-dip-v20', preflightGate: false, patientHedge: false, takerDip: false, heavyAtomic: false, sweep: true, pairedVolumeCapped: false },
+    features: { sizing: 'two-sided-dip-v20', preflightGate: false, patientHedge: false, takerDip: false, heavyAtomic: false, sweep: true, pairedVolumeCapped: false, l3Mode: 'subpar' },
   },
 } as const
