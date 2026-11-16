@@ -103,6 +103,19 @@ class TestConcurrentAccumulation(unittest.TestCase):
         self.assertEqual(d.action, "fill")
         self.assertIsNotNone(d.projected_pair_cost)
 
+    def test_blocked_tilt_falls_through_to_lighter_side(self):
+        # Live 2026-11-16 window: 566 Up @ ~71c / 707 Down @ ~31c sat inside
+        # tolerance while the tilt side (Down, cheaper) was cap-blocked, and
+        # the loop skipped 27,984 straight evaluations without ever trying
+        # Up -- even as it dipped to 59c against a 31c Down basis (90c pairs
+        # that also balance the book). The tilt must never freeze the side
+        # that actually needs buying.
+        d = _dec(_q(0.59, 0.61, 0.28, 0.30),
+                 _inv(566, 401.3, 707, 217.8), fill_idx=200)
+        self.assertEqual((d.action, d.outcome, d.role),
+                         ("fill", "Up", "MAKER"))
+        self.assertEqual(d.price, 0.59)
+
     def test_sweep_stops_opening(self):
         d = _dec(_q(0.22, 0.24, 0.76, 0.78), _inv(30, 6.9, 0, 0),
                  in_sweep_phase=True)

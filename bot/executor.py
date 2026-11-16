@@ -319,69 +319,67 @@ def _evaluate_concurrent_accumulation(
     dn_ref = dn_bid if dn_bid is not None else dn_ask
     if up_ref is None and dn_ref is None:
         return _skip("no-liquidity", "no-liquidity", "Up" if fill_idx % 2 == 0 else "Down")
+    # Candidate sides: tilt toward the cheaper side first, but ALWAYS also
+    # try the other side. A blocked tilt (cap/ceiling/dust) must never freeze
+    # the side that actually needs buying.
     if up_ref is None:
-        side = "Down"
+        sides = ["Down"]
     elif dn_ref is None:
-        side = "Up"
+        sides = ["Up"]
     elif up_ref < dn_ref:
-        side = "Up"
+        sides = ["Up", "Down"]
     elif dn_ref < up_ref:
-        side = "Down"
+        sides = ["Down", "Up"]
     else:
-        side = "Up" if fill_idx % 2 == 0 else "Down"
-    bid, ask = _h15_side_prices(quotes, side)
-    spread = (ask - bid) if (ask is not None and bid is not None) else None
-    attempts: list[tuple[str, float, float]] = []
-    if ask is not None and (bid is None or (spread is not None and spread > H15_TAKER_SPREAD_MAX + 1e-9)):
-        # Uncertain book: 5-share taker probe at the ask for price discovery.
-        attempts.append(("TAKER", ask, min(H15_PROBE_SHARES, max_clip)))
-    if bid is not None:
-        attempts.append(("MAKER", bid, min(float(default_clip), max_clip)))
+        sides = ["Up", "Down"] if fill_idx % 2 == 0 else ["Down", "Up"]
+    preferred = sides[0]
     saw_dust = saw_ceiling = saw_unhedged = saw_depth = False
-    for role, px, want in attempts:
-        if px < min_fill:
-            saw_dust = True
-            continue
-        if px > max_ceiling:
-            saw_ceiling = True
-            continue
-        size = min(clip_shares(round(want, 1), max_clip), max_clip)
-        if size <= 0:
-            continue
-        est_usd, _fee = compute_fill_usd(size, px, role=role, include_fee=(role == "TAKER"))
-        if not _unhedged_ok(side, size, est_usd):
-            saw_unhedged = True
-            continue
-        size = _cap_maker(size, role, side)
-        if size <= 0:
-            saw_depth = True
-            continue
-        proj = _projected_pair_cost(inv, side, size, est_usd)
-        return MicrostructureDecision(
-            action="fill", outcome=side, price=round(px, 4), shares=size,
-            role=role, reason="clip-fill",
-            sub_reason="balance-probe" if role == "TAKER" else "balance-maker",
-            projected_pair_cost=proj,
-            share_deficit=0.0,
-        )
+    for side in sides:
+        bid, ask = _h15_side_prices(quotes, side)
+        spread = (ask - bid) if (ask is not None and bid is not None) else None
+        attempts: list[tuple[str, float, float]] = []
+        if ask is not None and (bid is None or (spread is not None and spread > H15_TAKER_SPREAD_MAX + 1e-9)):
+            # Uncertain book: 5-share taker probe at the ask for price discovery.
+            attempts.append(("TAKER", ask, min(H15_PROBE_SHARES, max_clip)))
+        if bid is not None:
+            attempts.append(("MAKER", bid, min(float(default_clip), max_clip)))
+        for role, px, want in attempts:
+            if px < min_fill:
+                saw_dust = True
+                continue
+            if px > max_ceiling:
+                saw_ceiling = True
+                continue
+            size = min(clip_shares(round(want, 1), max_clip), max_clip)
+            if size <= 0:
+                continue
+            est_usd, _fee = compute_fill_usd(size, px, role=role, include_fee=(role == "TAKER"))
+            if not _unhedged_ok(side, size, est_usd):
+                saw_unhedged = True
+                continue
+            size = _cap_maker(size, role, side)
+            if size <= 0:
+                saw_depth = True
+                continue
+            proj = _projected_pair_cost(inv, side, size, est_usd)
+            return MicrostructureDecision(
+                action="fill", outcome=side, price=round(px, 4), shares=size,
+                role=role, reason="clip-fill",
+                sub_reason="balance-probe" if role == "TAKER" else "balance-maker",
+                projected_pair_cost=proj,
+                share_deficit=0.0,
+            )
+        # No fill on this side: fall through and try the other side. Skips
+        # are reported once, after every candidate side has been tried.
     if saw_ceiling:
-        return _skip("extreme-price-skip", "ceiling-price-skip", side)
+        return _skip("extreme-price-skip", "ceiling-price-skip", preferred)
     if saw_dust:
-        return _skip("dust-quote", "below-price-floor", side)
+        return _skip("dust-quote", "below-price-floor", preferred)
     if saw_unhedged:
-        return _skip("unhedged-cap-skip", "unhedged-cap", side)
+        return _skip("unhedged-cap-skip", "unhedged-cap", preferred)
     if saw_depth:
-        return _skip("no-liquidity", "depth-cap", side)
-    other = "Down" if side == "Up" else "Up"
-    o_bid, o_ask = _h15_side_prices(quotes, other)
-    o_px = o_bid if o_bid is not None else o_ask
-    if o_px is None:
-        return _skip("no-liquidity", "no-liquidity", side)
-    if o_px < min_fill:
-        return _skip("dust-quote", "below-price-floor", other)
-    if o_px > max_ceiling:
-        return _skip("extreme-price-skip", "ceiling-price-skip", other)
-    return _skip("no-liquidity", "no-liquidity", other)
+        return _skip("no-liquidity", "depth-cap", preferred)
+    return _skip("no-liquidity", "no-liquidity", preferred)
 
 
 def _avg_cost(shares: float, cost: float) -> float | None:
