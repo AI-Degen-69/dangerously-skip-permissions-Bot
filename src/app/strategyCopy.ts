@@ -52,52 +52,57 @@ export function tweakCards(candidate: AbTestDistributionStats | null | undefined
   const preflight = f.preflightGate === true
   const sizing = f.sizing ?? ''
   const balanced = sizing === 'balanced'
+  const splitV18 = sizing === 'split-ladder-v18'
   const risk = num(f.dollarRisk, 4.5)
   const uncapped = f.pairedVolumeCapped === false
 
   const t1body = empty
     ? 'Waiting for a candidate run — its live gates will appear here.'
-    : balanced
-      ? `No pair-cost gate anywhere: the lighter side is always eligible up to the ${hiC}c ceiling, and pair cost is computed per fill and reported against the $0.977 wallet benchmark instead of enforced.`
-      : preflight
-        ? `Hard ceiling (${rescue}) + Pre-Flight Gate: never buys an unhedged dip unless the opposite ask allows an immediate hedge under ${rescue}.`
-        : `No pre-flight check. Fresh dips must project ${tgt} pair cost or better, deficit closes ${cap}, rescue ${rescue} — so entries keep flowing and equalize on the next swing.`
+    : splitV18
+      ? `Balanced rungs stay in 42–58¢ under $0.995 projected pair cost (Heavy-Side Floor Gate blocks <45¢ once heavy by >=10 sh); rebalance-maker bypasses pair-cost skips up to ${hiC}¢, and breakout rebalance-taker flattens deficits across 60–68¢ ask.`
+      : balanced
+        ? `No pair-cost gate anywhere: the lighter side is always eligible up to the ${hiC}c ceiling, and pair cost is computed per fill and reported against the $0.977 wallet benchmark instead of enforced.`
+        : preflight
+          ? `Hard ceiling (${rescue}) + Pre-Flight Gate: never buys an unhedged dip unless the opposite ask allows an immediate hedge under ${rescue}.`
+          : `No pre-flight check. Fresh dips must project ${tgt} pair cost or better, deficit closes ${cap}, rescue ${rescue} — so entries keep flowing and equalize on the next swing.`
 
   const t2body =
-    balanced
-      ? (hl.dipClips ?? `Both sides quoted together from the open; the lighter side is always bought first, top-ups close at most half the gap, size tilts to the cheaper side.`)
-      : (hl.dipClips ??
-    (empty
-      ? 'Waiting for a candidate run — its live sizing will appear here.'
-      : probe > 0
-        ? `Leg-1 fresh clips capped at ${probe} sh unhedged probe; unlocks full ${mx} sh on Leg 2 and paired fills. Additional unhedged fills on the same side require an ${step}¢ step down.`
-        : sizing === 'constant-risk'
-          ? `Every dip sized as $${risk.toFixed(2)} / price (${clip} at ${hiC}c up to ${mx} at 10c), dips at ${hiC}c or cheaper only. No heavy bulk fills; no share veto while total paired volume ${uncapped ? 'has no cap' : 'is capped'}.`
-          : sizing === 'confidence'
-            ? `Sizes heavy (${mx} sh) on 100% risk-free atomic pairs and deficit equalizations, while micro-sizing speculative dips to ${clip} sh.`
-            : `Dip clips of ${clip} sh (max ${mx} sh), dips at ${hiC}c or cheaper.`))
+    splitV18
+      ? (hl.dipClips ?? `2-level off-touch split ladder (-1¢, -2¢; ${clip}→${mx} sh) inside 42–58¢; unblocked rebalance-maker splits deficits up to ${mx} sh at bid while 60–68¢ breakout triggers taker equalization.`)
+      : balanced
+        ? (hl.dipClips ?? `Both sides quoted together from the open; the lighter side is always bought first, top-ups close at most half the gap, size tilts to the cheaper side.`)
+        : (hl.dipClips ??
+      (empty
+        ? 'Waiting for a candidate run — its live sizing will appear here.'
+        : probe > 0
+          ? `Leg-1 fresh clips capped at ${probe} sh unhedged probe; unlocks full ${mx} sh on Leg 2 and paired fills. Additional unhedged fills on the same side require an ${step}¢ step down.`
+          : sizing === 'constant-risk'
+            ? `Every dip sized as $${risk.toFixed(2)} / price (${clip} at ${hiC}c up to ${mx} at 10c), dips at ${hiC}c or cheaper only. No heavy bulk fills; no share veto while total paired volume ${uncapped ? 'has no cap' : 'is capped'}.`
+            : sizing === 'confidence'
+              ? `Sizes heavy (${mx} sh) on 100% risk-free atomic pairs and deficit equalizations, while micro-sizing speculative dips to ${clip} sh.`
+              : `Dip clips of ${clip} sh (max ${mx} sh), dips at ${hiC}c or cheaper.`))
 
   return [
     {
       kicker: 'Tweak 1 · Hard Gate',
-      badge: empty ? '—' : balanced ? `Max ${hiC}c, no gate` : preflight ? `Max ${rescue}` : `${tgt} fresh`,
-      title: balanced ? 'Balance Rule, No Price Gate' : preflight ? 'Pre-Flight Arb Check & Cap' : 'Pair-Cost Gate & Cap',
+      badge: empty ? '—' : splitV18 ? `3-Layer to ${hiC}c` : balanced ? `Max ${hiC}c, no gate` : preflight ? `Max ${rescue}` : `${tgt} fresh`,
+      title: splitV18 ? '3-Layer Breakout Defense' : balanced ? 'Balance Rule, No Price Gate' : preflight ? 'Pre-Flight Arb Check & Cap' : 'Pair-Cost Gate & Cap',
       body: t1body,
     },
     {
       kicker: 'Tweak 2 · Intake',
-      badge: empty ? '—' : balanced ? `${clip}-${mx} sh` : probe > 0 ? `${probe}-${mx} sh` : sizing === 'constant-risk' ? `${clip}-${mx} sh` : sizing === 'confidence' ? `${mx} sh / ${clip} sh` : `max ${mx} sh`,
-      title: balanced ? 'Concurrent Accumulation' : probe > 0 ? 'Probe Sizing & Step Gate' : sizing === 'constant-risk' ? 'Constant Dollar-Risk Sizing' : sizing === 'confidence' ? 'Bi-Modal Confidence Sizing' : 'Dip Intake',
+      badge: empty ? '—' : splitV18 ? `10-8 sh x 2 rungs` : balanced ? `${clip}-${mx} sh` : probe > 0 ? `${probe}-${mx} sh` : sizing === 'constant-risk' ? `${clip}-${mx} sh` : sizing === 'confidence' ? `${mx} sh / ${clip} sh` : `max ${mx} sh`,
+      title: splitV18 ? '2-Rung Split Ladder + Rebalance' : balanced ? 'Concurrent Accumulation' : probe > 0 ? 'Probe Sizing & Step Gate' : sizing === 'constant-risk' ? 'Constant Dollar-Risk Sizing' : sizing === 'confidence' ? 'Bi-Modal Confidence Sizing' : 'Dip Intake',
       body: t2body,
     },
     {
       kicker: 'Tweak 3 / Sweep',
       badge: empty ? '---' : `T-${cutoff}s / T-${sweep}s`,
-      title: balanced ? 'Stop + Sweep, No Rescue' : 'Stop + Sweep + Late Rescue',
+      title: (balanced || splitV18) ? 'Stop + Sweep, No Rescue' : 'Stop + Sweep + Late Rescue',
       body: empty
         ? 'Waiting for a candidate run.'
-        : balanced
-          ? `Stop opening at T-${cutoff}s; the sweep holds the balanced book to settlement down to T-${sweep}s. No rescue ladder — gaps are closed while small, never chased late.`
+        : (balanced || splitV18)
+          ? `Stop opening at T-${cutoff}s; the sweep holds the balanced book to settlement down to T-${sweep}s. No late chase ladder — breakout deficits equalize in 60–68¢ before stranding.`
           : `Stop opening at T-${cutoff}s, sweep deficits with resting maker orders down to T-${sweep}s, late rescue to ${lateMax} from T+${lateStart}s.`,
     },
   ]

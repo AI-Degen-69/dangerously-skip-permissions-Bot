@@ -44,7 +44,7 @@ from bot.runs import tape_segments
 WINDOW_S = int(C.WINDOW_S)
 STRATEGY_V26 = "dangerously-skip-permissions-v2.6"
 STRATEGY_V27 = "dangerously-skip-permissions-v2.7"
-STRATEGY_HYDROGEN = "hydrogen-v1.7"
+STRATEGY_HYDROGEN = "hydrogen-v1.8"
 BASELINE_RUN = "run_20261113_080232_paper_dsp_v2_6"
 LOOP_LOG = Path("bot/loop.log")
 

@@ -639,6 +639,45 @@ STRATEGY_SETUPS = {
             "maxDepthShares": 0.0,
         },
     },
+    "hydrogen-v1.8": {
+        "id": "hydrogen-v1.8",
+        "symbol": "H2 Hydrogen-v1.8",
+        "name": "Hydrogen v1.8",
+        "signature": "3-Layer Defense Split Ladder (10→8 sh) · Heavy Floor Gate · Unblocked Rebalance · Breakout Taker",
+        "description": (
+            "3-layer defense against breakout stranding: Heavy-Side Floor Gate in the 0.42..0.58 ATM band, "
+            "pair-cost-unblocked rebalance-maker up to 85c, and emergency breakout rebalance-taker in 60–68c."
+        ),
+        "configHighlights": {
+            "timing": "T+4s open, 10->8 clips",
+            "sizing": "2-level split ladder (-1c, -2c), unblocked rebalance-maker, 60–68c breakout taker",
+            "riskGates": "Heavy gate (>=10sh & <45c), unblocked rebalance to 85c, proj pair <= 0.995 balanced",
+        },
+        "entry": {
+            "startAfterOpenSec": 4,
+            "stopBeforeCloseSec": 30,
+            "sweepBeforeCloseSec": 12,
+            "clipSharesDefault": 5.0,
+            "maxShares": 10.0,
+            "maxClipShares": 10.0,
+            "clipSchedule": [[0, 10.0], [120, 8.0]],
+            "minFillPrice": 0.07,
+            "maxFillPrice": 0.85,
+            "levelsPerSide": 2,
+            "levelSpacing": 0.01,
+            "benchmarkPairCost": 0.960,
+            "targetPairCost": 0.960,
+            "maxPairCost": 0.985,
+            "maxUnhedgedShares": 25.0,
+            "maxUnhedgedUsd": 15.0,
+            "wholeLadderClips": True,
+            "minSpacingMoveSec": 0.5,
+            "minSpacingStaticSec": 2.5,
+            "staticRequoteSec": 2.5,
+            "includeTakerFee": True,
+            "maxDepthShares": 0.0,
+        },
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -721,6 +760,11 @@ _SETUP_FEATURES = {
         "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
         "blurb": "concurrent two-sided accumulation from T+4s (live-wallet grammar): both sides quoted at the touch in 30sh scheduled clips decaying to ~15sh, lighter side always bought first at any price up to 85c, top-ups close at most half the gap, tilt to the cheaper side with 5sh taker probes on wide books; no dip band, no rescue ladder, no pair-cost gate (reported vs $0.977 only); buy-only hold-to-settlement, $45/100-share caps",
     },
+    "hydrogen-v1.8": {
+        "sizing": "split-ladder-v18", "preflightGate": False, "patientHedge": False, "takerDip": False,
+        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
+        "blurb": "3-layer defense split ladder from T+4s (10→8 sh scheduled clips): heavy-side floor gate (<45c when lead >= 10 sh) prevents fresh overhang at the ATM edge, unblocked rebalance-maker bypasses pair-cost skips up to 85c, and emergency breakout rebalance-taker closes deficits across 60–68c ask",
+    },
 }
 
 
@@ -749,6 +793,7 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
     risk = float(f.get("dollarRisk", 4.50))
     sizing = f.get("sizing", "ladder")
     balanced = (sizing == "balanced")
+    split_v18 = (sizing == "split-ladder-v18")
     preflight = bool(f.get("preflightGate", False))
     hedge_now = bool(f.get("hedgeNowGate", False))
     patient = bool(f.get("patientHedge", False))
@@ -780,7 +825,14 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
             _sch_txt = (float(_sched[0][1]), float(_sched[-1][0]), float(_sched[-1][1]))
         except (TypeError, ValueError, IndexError):
             _sch_txt = None
-    if balanced and _sch_txt is not None:
+    if split_v18 and _sch_txt is not None:
+        _c0, _t1, _c1 = _sch_txt
+        dip_txt = (
+            f"2-level off-touch split ladder (-1c, -2c; {_c0:g} sh at the open decaying to {_c1:g} sh "
+            f"by T+{_t1:g}s) in the 42–58c ATM band with Heavy-Side Floor Gate (<45c when >=10 sh heavy)"
+        )
+        sig_size = f"3-Layer Split Ladder ({_c0:g}→{_c1:g} sh)"
+    elif balanced and _sch_txt is not None:
         _c0, _t1, _c1 = _sch_txt
         dip_txt = (f"scheduled clips ({_c0:g} sh at the open decaying to {_c1:g} sh "
                    f"by T+{_t1:g}s) quoting both sides together, the lighter side always bought first with top-ups "
@@ -829,7 +881,14 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         dip_txt = f"{clip:g} sh (max {mx:g} sh) in the {lo_c}c-{hi_c}c band"
         sig_size = f"Dip Grid [{lo_c}c-{hi_c}c]"
 
-    if balanced:
+    if split_v18:
+        gate_txt = (
+            f"a 3-layer breakout defense: balanced entries stay in 42–58c under ${cap:.3f} pair cost "
+            f"(heavy floor gate blocks <45c above 10 sh lead); rebalance-maker bypasses pair-cost skips up to "
+            f"{hi_c}c; breakout rebalance-taker flattens 60–68c ask deficits immediately"
+        )
+        sig_gate = "3-Layer Defense (Heavy Gate + Breakout Taker)"
+    elif balanced:
         gate_txt = (f"a balanced book: the lighter side is bought first at any price up to the {hi_c}c ceiling, "
                     f"top-ups close at most half the gap per fill, and pair cost is reported against the wallet "
                     f"benchmark instead of gated")
@@ -874,7 +933,7 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         f"Buys dips {dip_txt}; entries follow {gate_txt}; "
         f"never {gap_txt}.{sweep_txt}{heavy_txt}{depth_txt}"
     ).strip()
-    if balanced:
+    if balanced or split_v18:
         signature = f"{sig_size} - {sig_gate} - {gap_cap_txt} - Max Buy {hi_c}c"
         description = (
             f"Accumulates both sides from the open: {dip_txt}; {gate_txt}; "
@@ -895,7 +954,10 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         "maxBuy": f"{hi_c}c",
         "cutoff": f"{cutoff:g}s before close",
     }
-    if balanced:
+    if split_v18:
+        highlights["pairGates"] = "balanced <= $0.995; rebalance-maker unblocked to 85c; breakout taker 60-68c"
+        highlights["preflightGate"] = "Heavy Floor Gate (>=10sh & <45c) + Breakout Taker (60-68c)"
+    elif balanced:
         highlights["pairGates"] = "reported vs $0.977 wallet benchmark, never gated"
         highlights["preflightGate"] = "Off (lighter side always eligible to 85c)"
     return signature, description, highlights
@@ -953,8 +1015,9 @@ MAKER_FEE = 0.0                # 0% maker fee on resting limit orders
 PAPER_REBATE_TAKER_RATE = 0.50  # default modeled refund of taker fees
 PAPER_REBATE_TIER_RANGE = (0.32, 0.44, 0.50)  # low / mid / top volume tiers
 
-# Wallet Benchmark (measured 21-day median, docs/leaderboard-traders/reports/
-# dangerously-skip-permissions/strategy_2026-10-18_to_2026-11-08.md). This is a
+# Wallet Benchmark (measured 21-day median,
+# docs/leaderboard-traders/ledgers/dangerously-skip-permissions/reports/
+# strategy_2026-10-18_to_2026-11-08.md). This is a
 # REPORTING benchmark for realized pair cost, not a pairing gate: the bot
 # strives to pair under it and accepts above it — sub-$1.00 must emerge from
 # sizing, risk and position management, not from refusing to pair.

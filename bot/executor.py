@@ -644,6 +644,13 @@ H17_LADDER_SPACING = 0.01      # -1c and -2c off the touch
 H17_TAKER_SPREAD_MAX = 0.02
 H17_GAP_CLOSE_FRACTION = 0.5
 
+# Hydrogen v1.8 — 3-layer breakout defense layered onto v1.7 split ladder
+H18_HEAVY_FLOOR_DIFF = 10.0     # Layer 1: block heavy balanced rungs when lead >= 10 sh
+H18_HEAVY_FLOOR_BID = 0.45      # Layer 1: ...and that side's bid is below 45c
+H18_BREAKOUT_MIN_LEAD = 5.0     # Layer 2/3: minimum deficit outside ATM band or for breakout taker
+H18_BREAKOUT_ASK_MIN = 0.60     # Layer 3: breakout taker lower ask bound (beats 0.62 on replay)
+H18_BREAKOUT_ASK_MAX = 0.68     # Layer 3: breakout taker upper ask bound
+
 
 def _h17_tolerance(matched: float) -> float:
     """Dynamic lead tolerance: 15% of the matched book, clamped to 5..12 sh."""
@@ -670,14 +677,18 @@ def _evaluate_split_ladder(
     in_sweep_phase: bool,
     max_depth_shares: float = 0.0,
     resting_size: dict | None = None,
+    three_layer_defense: bool = False,
 ) -> MicrostructureDecision:
-    """Hydrogen v1.7 decision: ATM-only, pure-maker split ladder.
+    """Hydrogen v1.7/v1.8 decision: ATM split ladder with optional 3-layer defense.
 
-    Balanced mode (lead inside tolerance) quotes both sides as a 2-rung maker
-    ladder one cent apart under the touch, only while the side's bid sits in
-    the 0.42..0.58 coin-flip band. Over tolerance the lighter side is closed
-    at most half the gap per fill. Every fill must keep the projected pair
-    under its mode's ceiling and the unhedged gap under both caps.
+    When ``three_layer_defense=False`` (Hydrogen v1.7): ATM-only pure-maker
+    2-rung split ladder (0.42..0.58), over-tolerance rebalance up to half the
+    gap under ``H17_PAIR_FIRM`` (0.990).
+    When ``three_layer_defense=True`` (Hydrogen v1.8): adds (L1) Heavy-Side
+    Floor Gate (<0.45 when heavy lead >= 10 sh), (L2) unblocked passive
+    rebalance-maker up to ``max_ceiling`` (0.85) whenever over tolerance OR
+    outside ATM with >= 5 sh deficit, and (L3) emergency breakout taker
+    (0.60..0.68 ask) when deficit >= 5 sh.
     """
     up_sh = float((inv.get("Up") or {}).get("shares", 0.0))
     dn_sh = float((inv.get("Down") or {}).get("shares", 0.0))
@@ -734,9 +745,71 @@ def _evaluate_split_ladder(
         return _skip("sweep-balanced", "sweep-balanced",
                      light if light is not None else "Up")
 
-    # --- Rebalance mode: close at most half the gap, priced against a
+    if three_layer_defense and light is not None:
+        abs_lead = abs(lead)
+        l_bid, l_ask = _h15_side_prices(quotes, light)
+        outside_atm = (
+            (up_bid is not None and not _h17_atm(up_bid))
+            or (dn_bid is not None and not _h17_atm(dn_bid))
+        )
+        opp_sh = float((inv.get("Up" if light == "Down" else "Down") or {}).get("shares", 0.0))
+        deficit = round(max(0.0, opp_sh - float((inv.get(light) or {}).get("shares", 0.0))), 2)
+
+        # Layer 3: Emergency Breakout Equalizer Taker when deficit >= 5 sh and light ask hits 60-68c.
+        if (
+            abs_lead >= H18_BREAKOUT_MIN_LEAD - 1e-9
+            and l_ask is not None
+            and H18_BREAKOUT_ASK_MIN - 1e-9 <= l_ask <= H18_BREAKOUT_ASK_MAX + 1e-9
+        ):
+            if l_ask < min_fill:
+                return _skip("dust-quote", "below-price-floor", light)
+            if l_ask > max_ceiling:
+                return _skip("extreme-price-skip", "ceiling-price-skip", light)
+            take_size = min(clip_shares(round(min(float(max_clip), abs_lead), 1), max_clip), max_clip)
+            if take_size > 0:
+                est_usd, _fee = compute_fill_usd(take_size, l_ask, role="TAKER", include_fee=True)
+                if not _unhedged_ok(light, take_size, est_usd):
+                    return _skip("unhedged-cap-skip", "unhedged-cap", light)
+                proj = _projected_pair_cost(inv, light, take_size, est_usd)
+                return MicrostructureDecision(
+                    action="fill", outcome=light, price=round(l_ask, 4),
+                    shares=take_size, role="TAKER",
+                    reason="balance-topup", sub_reason="rebalance-taker",
+                    projected_pair_cost=proj, share_deficit=deficit,
+                )
+
+        # Layer 2: Unblocked passive rebalance-maker whenever over tolerance or outside ATM with >= 5 sh.
+        over_inside = abs_lead >= tol - 1e-9
+        rebal_outside = outside_atm and abs_lead >= H18_BREAKOUT_MIN_LEAD - 1e-9
+        if over_inside or rebal_outside:
+            want = min(float(max_clip), abs_lead)
+            size = min(clip_shares(round(want, 1), max_clip), max_clip)
+            if size <= 0 or l_bid is None:
+                return _skip("no-liquidity", "no-liquidity", light)
+            px = float(l_bid)
+            if px < min_fill:
+                return _skip("dust-quote", "below-price-floor", light)
+            if px > max_ceiling:
+                return _skip("extreme-price-skip", "ceiling-price-skip", light)
+            est_usd, _fee = compute_fill_usd(size, px, role="MAKER", include_fee=False)
+            proj = _projected_pair_cost(inv, light, size, est_usd)
+            if not _unhedged_ok(light, size, est_usd):
+                return _skip("unhedged-cap-skip", "unhedged-cap", light)
+            # Split across 2 ladder rungs so total resting size matches min(max_clip, abs_lead).
+            out_shares = round(max(1.0, size / H17_LADDER_LEVELS), 2)
+            out_shares = _cap_maker(out_shares, "MAKER", light)
+            if out_shares <= 0:
+                return _skip("no-liquidity", "depth-cap", light)
+            return MicrostructureDecision(
+                action="fill", outcome=light, price=round(px, 4),
+                shares=out_shares, role="MAKER",
+                reason="balance-topup", sub_reason="rebalance-maker",
+                projected_pair_cost=proj, share_deficit=deficit,
+            )
+
+    # --- v1.7 Rebalance mode: close at most half the gap, priced against a
     # stricter pair ceiling than the balanced ladder. ---
-    if over and light is not None:
+    elif over and light is not None:
         want = min(float(default_clip), math.ceil(abs(lead) * H17_GAP_CLOSE_FRACTION))
         size = min(clip_shares(round(want, 1), max_clip), max_clip)
         if size <= 0:
@@ -791,12 +864,19 @@ def _evaluate_split_ladder(
     else:
         sides = ["Up", "Down"] if fill_idx % 2 == 0 else ["Down", "Up"]
     preferred = sides[0]
-    saw_band = saw_dust = saw_ceiling = saw_unhedged = saw_depth = saw_pair = False
+    saw_band = saw_dust = saw_ceiling = saw_unhedged = saw_depth = saw_pair = saw_heavy = False
     for side in sides:
         bid, _ask = _h15_side_prices(quotes, side)
         if not _h17_atm(bid):
             saw_band = True
             continue
+        if three_layer_defense:
+            opp = "Down" if side == "Up" else "Up"
+            s_sh = float((inv.get(side) or {}).get("shares", 0.0))
+            o_sh = float((inv.get(opp) or {}).get("shares", 0.0))
+            if (s_sh - o_sh) >= H18_HEAVY_FLOOR_DIFF - 1e-9 and float(bid) < H18_HEAVY_FLOOR_BID - 1e-9:
+                saw_heavy = True
+                continue
         anchor = round(float(bid) - H17_LADDER_SPACING, 4)
         if anchor < min_fill:
             saw_dust = True
@@ -843,6 +923,8 @@ def _evaluate_split_ladder(
         return _skip("unhedged-cap-skip", "unhedged-cap", preferred)
     if saw_depth:
         return _skip("no-liquidity", "depth-cap", preferred)
+    if saw_heavy:
+        return _skip("heavy-floor-skip", "heavy-floor-gate", preferred)
     if saw_band:
         return _skip("off-atm-skip", "atm-band", preferred)
     return _skip("no-liquidity", "no-liquidity", preferred)
@@ -1083,7 +1165,7 @@ def evaluate_microstructure_ladder(
             resting_size=resting_size,
         )
 
-    if strategy_id == "hydrogen-v1.7":
+    if strategy_id in ("hydrogen-v1.7", "hydrogen-v1.8"):
         try:
             _v17_depth = float(max_depth_shares or 0.0)
         except Exception:
@@ -1097,6 +1179,7 @@ def evaluate_microstructure_ladder(
             in_sweep_phase=in_sweep_phase,
             max_depth_shares=_v17_depth,
             resting_size=resting_size,
+            three_layer_defense=(strategy_id == "hydrogen-v1.8"),
         )
 
     # 1. Phase 3: Resolution Certainty Snipe in Minute 4 [0.90, 0.975]

@@ -6,9 +6,9 @@
   "mode": "paper",
   "bankrollUsd": 1000,
   "strategy": {
-    "id": "hydrogen-v1.7",
-    "symbol": "H2 Hydrogen-v1.7",
-    "name": "Hydrogen v1.7"
+    "id": "hydrogen-v1.8",
+    "symbol": "H2 Hydrogen-v1.8",
+    "name": "Hydrogen v1.8"
   },
   "entry": {
     "startAfterOpenSec": 4,

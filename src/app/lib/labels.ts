@@ -17,6 +17,11 @@ export const LABELS: Record<string, string> = {
   'lean-up': 'Microprice lean Up',
   'lean-down': 'Microprice lean Down',
   'straddle-balance': 'Straddle balance fill',
+  'balance-topup': 'Light-side balance top-up',
+  'balance-build': 'Balanced book build',
+  'split-ladder-maker': '2-rung split maker ladder (-1¢/-2¢)',
+  'rebalance-maker': 'Passive maker rebalance (pair-cost bypass)',
+  'rebalance-taker': 'Emergency breakout equalizer (taker)',
   'm4-snipe': 'M4 late snipe filled',
   'paper-fill': 'Paper fill',
 
@@ -30,11 +35,17 @@ export const LABELS: Record<string, string> = {
 
   // Done: Window Trading Finished
   'holding-to-resolution': 'Window trading done — holding to resolution',
+  'sweep-balanced': 'Balanced book holding to settlement sweep',
 
   // Refusals: Conditions Refused
   'extreme-price-skip': 'Price outside active trading range',
   'ceiling-price-skip': 'Price exceeds maximum ceiling cap',
   'pair-cost-cap': 'Refused — projected pair cost exceeds cap',
+  'pair-cost-skip': 'Refused — projected pair cost exceeds cap',
+  'heavy-floor-skip': 'Heavy-side floor gate (<45¢ when ≥10 sh lead)',
+  'heavy-floor-gate': 'Heavy-side floor gate (<45¢ when ≥10 sh lead)',
+  'off-atm-skip': 'Outside 42¢–58¢ ATM coin-flip band',
+  'unhedged-cap-skip': 'Refused — unhedged share/USD cap reached',
   'share-lead-cap': 'Refused — share lead exceeds 90-share limit',
   'dust-quote': 'Dust quote refused (<1¢)',
   'no-liquidity': 'Quotes refused — no liquidity on this side',
@@ -133,6 +144,18 @@ export const REASON_METRICS: Record<string, MetricSpec[]> = {
   ],
   'working-fills': [{ key: 'fills', label: 'fills', unit: 'count' }],
   'clip-fill': [
+    { key: 'role' },
+    { key: 'price', label: 'price', unit: 'price' },
+    { key: 'shares', label: 'shares' },
+    { key: 'pairCost', label: 'pair', unit: 'usd' },
+  ],
+  'balance-topup': [
+    { key: 'role' },
+    { key: 'price', label: 'price', unit: 'price' },
+    { key: 'shares', label: 'shares' },
+    { key: 'pairCost', label: 'pair', unit: 'usd' },
+  ],
+  'balance-build': [
     { key: 'role' },
     { key: 'price', label: 'price', unit: 'price' },
     { key: 'shares', label: 'shares' },

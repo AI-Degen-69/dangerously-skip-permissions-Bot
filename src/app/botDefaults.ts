@@ -500,4 +500,37 @@ export const STRATEGY_PRESETS = {
     },
     features: { sizing: 'balanced', preflightGate: false, patientHedge: false, takerDip: false, heavyAtomic: false, sweep: true, pairedVolumeCapped: false },
   },
+  // Hydrogen v1.8: 3-layer breakout defense on the 2-level off-touch split ladder.
+  // Heavy-Side Floor Gate (<45c when lead >= 10sh), pair-cost-unblocked
+  // rebalance-maker up to 85c, and emergency breakout rebalance-taker across 60-68c.
+  'hydrogen-v1.8': {
+    id: 'hydrogen-v1.8',
+    symbol: 'H2 Hydrogen-v1.8',
+    name: 'Hydrogen v1.8',
+    signature: '3-Layer Split Ladder (10→8 sh) · 3-Layer Defense (Heavy Gate + Breakout Taker) · Dollar Gap Cap ($15.00) · Max Buy 85¢',
+    description: 'Accumulates both sides from the open: 2-level off-touch split ladder (-1c, -2c; 10 sh at the open decaying to 8 sh by T+120s) in the 42–58c ATM band with Heavy-Side Floor Gate (<45c when >=10 sh heavy); a 3-layer breakout defense: balanced entries stay in 42–58c under $0.985 pair cost (heavy floor gate blocks <45c above 10 sh lead); rebalance-maker bypasses pair-cost skips up to 85c; breakout rebalance-taker flattens 60–68c ask deficits immediately; never more than $15.00 of unhedged cost. Late gaps are swept with resting no-fee orders. No heavy bulk fills.',
+    entry: {
+      clipSharesDefault: 5,
+      maxShares: 10,
+      maxClipShares: 10,
+      clipSchedule: [[0, 10], [120, 8]],
+      minFillPrice: 0.07,
+      maxFillPrice: 0.85,
+      levelsPerSide: 2,
+      levelSpacing: 0.01,
+      benchmarkPairCost: 0.960,
+      targetPairCost: 0.960,
+      maxPairCost: 0.985,
+      maxUnhedgedShares: 25,
+      maxUnhedgedUsd: 15.0,
+      startAfterOpenSec: 4,
+      stopBeforeCloseSec: 30,
+      sweepBeforeCloseSec: 12,
+      minSpacingMoveSec: 0.5,
+      minSpacingStaticSec: 2.5,
+      includeTakerFee: true,
+      wholeLadderClips: true,
+    },
+    features: { sizing: 'split-ladder-v18', preflightGate: false, patientHedge: false, takerDip: false, heavyAtomic: false, sweep: true, pairedVolumeCapped: false },
+  },
 } as const
