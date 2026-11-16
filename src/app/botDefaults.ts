@@ -155,7 +155,7 @@ export const STRATEGY_PRESETS = {
     symbol: '⚡ DSP-v2.6',
     name: 'Dangerously Skip Permissions v2.6 (Patient Pair)',
     signature: 'Inverse-Dip Curve (33 sh @7c → 8 sh @45c) - Patient Pair (under $0.985) - Dollar Gap Cap ($5.00) - Under-$0.995 Cap',
-    description: 'v2.5\'s dip curve with two placement rules replaced. The first leg is placed at the touch near the money (the ledger\'s first fill is ~50c within 13s), and the hedge rests as a bid on the other side instead of crossing its ask, so the pair closes when a seller comes to it; it is crossed only in the sweep. Pairs measured -0.2c when the second leg was taken at a 0-5s lag and +1.6 to +2.7c at a 31-120s lag. Never 46 sh or more unhedged on one side, and never more than $5.00 of unhedged cost while total paired shares have no cap.',
+    description: 'The v2.6 dip curve replaces two placement rules: the first legThe first leg is placed at the touch near the money (the ledger\'s first fill is ~50c within 13s), and the hedge rests as a bid on the other side instead of crossing its ask, so the pair closes when a seller comes to it; it is crossed only in the sweep. Pairs measured -0.2c when the second leg was taken at a 0-5s lag and +1.6 to +2.7c at a 31-120s lag. Never 46 sh or more unhedged on one side, and never more than $5.00 of unhedged cost while total paired shares have no cap.',
     entry: {
       clipSharesDefault: 10,
       maxShares: 45,
@@ -293,6 +293,6 @@ export const STRATEGY_PRESETS = {
       includeTakerFee: true,
       wholeLadderClips: true,
     },
-    features: { sizing: 'two-sided-dip-v20', preflightGate: false, patientHedge: false, takerDip: false, heavyAtomic: false, sweep: true, pairedVolumeCapped: false, l3Mode: 'subpar' },
+    features: { sizing: 'two-sided-dip-v20', preflightGate: false, patientHedge: false, takerDip: false, heavyAtomic: false, sweep: true, pairedVolumeCapped: false },
   },
 } as const

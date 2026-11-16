@@ -321,7 +321,6 @@ STRATEGY_SETUPS = {
             "dipCurve": {"lo": 0.07, "hi": 0.45, "sharesLo": 33.0, "sharesHi": 8.0},
             "minSpacingMoveSec": 0.5,
             "minSpacingStaticSec": 2.5,
-            "staticRequoteSec": 2.5,
             "includeTakerFee": True,
             "wholeLadderClips": True,
             "maxDepthShares": 0.0,
