@@ -468,13 +468,18 @@ def update_maker_order(
     now_ts: float,
     inv: dict[str, dict[str, float]] | None = None,
     unhedged_step_cents: float | None = None,
+    order_key: str | None = None,
 ) -> tuple[bool, bool]:
     """Place or update a resting Maker bid without chasing falling prices downward.
 
     Returns (changed, repriced_or_new):
     - changed: True if an order was newly placed or modified.
     - repriced_or_new: True if a new order was placed or repriced upward.
+
+    `order_key` keeps a ladder rung in its own slot while the order still
+    reports its real side ("Up"/"Down"); it defaults to the side itself.
     """
+    key = order_key or outcome
     if inv is not None and unhedged_step_cents is not None and float(unhedged_step_cents) > 0:
         opp_outcome = "Down" if outcome == "Up" else "Up"
         if inv[opp_outcome]["shares"] <= 0 and inv[outcome]["shares"] > 0:
@@ -484,7 +489,7 @@ def update_maker_order(
                 if px > max_allowed:
                     return (False, False)
 
-    cur = open_orders.get(outcome)
+    cur = open_orders.get(key)
     if cur is not None:
         cur_px = float(cur["price"])
         if abs(cur_px - px) < 1e-9:
@@ -506,7 +511,7 @@ def update_maker_order(
     if cur is not None:
         cur.pop("_last_touch_ask_obs", None)
     q_val = float(ahead) if ahead is not None else 0.0
-    open_orders[outcome] = {
+    open_orders[key] = {
         "side": outcome,
         "price": px,
         "shares_left": shares,
@@ -519,6 +524,18 @@ def update_maker_order(
         "deficit": deficit,
     }
     return (True, True)
+
+
+def ladder_keys(open_orders: dict[str, dict], outcome: str) -> list[str]:
+    """Keys of every resting order on one side, best (highest) price first."""
+    keys = [k for k, o in open_orders.items() if o.get("side") == outcome]
+    return sorted(keys, key=lambda k: -float(open_orders[k]["price"]))
+
+
+def cancel_side_orders(open_orders: dict[str, dict], outcome: str) -> list[dict]:
+    """Pull every rung on one side; returns the pulled orders."""
+    pulled = [open_orders.pop(k) for k in ladder_keys(open_orders, outcome)]
+    return pulled
 
 
 def trade_window(
@@ -554,6 +571,18 @@ def trade_window(
         max_unhedged_usd = float(entry.get("maxUnhedgedUsd", C.MAX_UNHEDGED_USD))
     except (TypeError, ValueError):
         max_unhedged_usd = C.MAX_UNHEDGED_USD
+    try:
+        max_unhedged_shares = float(entry.get("maxUnhedgedShares", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        max_unhedged_shares = 0.0
+    try:
+        ladder_levels = max(1, int(entry.get("levelsPerSide", 1) or 1))
+    except (TypeError, ValueError):
+        ladder_levels = 1
+    try:
+        ladder_spacing = float(entry.get("levelSpacing", 0.02) or 0.02)
+    except (TypeError, ValueError):
+        ladder_spacing = 0.02
     dip_curve = entry.get("dipCurve") or None
     clip_schedule = entry.get("clipSchedule") or None
     rescue_ceiling = float(entry.get("rescueCeilingPrice", C.RESCUE_CEILING_PRICE))
@@ -813,7 +842,7 @@ def trade_window(
             trade_reason = "balance-topup"
             event_reason = "clip-fill"
             fill_kind = "hedge"
-        elif sub_reason in ("balance-maker", "balance-probe"):
+        elif sub_reason in ("balance-maker", "balance-probe", "split-ladder-maker"):
             # Hydrogen v1.5: concurrent accumulation tilt fill.
             trade_reason = "balance-build"
             event_reason = "clip-fill"
@@ -872,44 +901,55 @@ def trade_window(
             if pr_outcome is None:
                 continue
             for target_outcome in ("Up", "Down"):
-                order = open_orders.get(target_outcome)
-                if order is None:
-                    continue
-                hit = match_maker_print(order, {
-                    "outcome": pr_outcome,
-                    "side": getattr(pr, "side", ""),
-                    "price": getattr(pr, "price", 0.0),
-                    "size": getattr(pr, "size", 0.0),
-                })
-                if hit is not None:
-                    if unhedged_step_cents is not None and float(unhedged_step_cents) > 0:
-                        opp_outcome = "Down" if target_outcome == "Up" else "Up"
-                        if inv[opp_outcome]["shares"] <= 0 and inv[target_outcome]["shares"] > 0:
-                            low_px = inv[target_outcome].get("lowest_price")
-                            if low_px is not None:
-                                max_allowed = low_px - (float(unhedged_step_cents) / 100.0) + 1e-6
-                                if order["price"] > max_allowed:
-                                    open_orders.pop(target_outcome, None)
-                                    continue
-                    ts = float(getattr(pr, "ts", 0.0) or 0.0) or time.time()
-                    try:
-                        _placed_ms = int(float(order.get("placed_ts", 0.0)) * 1000) if order.get("placed_ts") else None
-                    except (TypeError, ValueError):
-                        _placed_ms = None
-                    _book_fill(target_outcome, order["price"], hit["fills"], "MAKER",
-                               _minute_of(ts),
-                               order["reason"], order["sub_reason"], hit["queueAhead"],
-                               order["deficit"], ts_ms=int(ts * 1000),
-                               placed_at_ms=_placed_ms,
-                               queue_ahead_at_place=order.get("queue_ahead_at_place", order.get("queue_ahead")))
-                if order["shares_left"] <= 0:
-                    open_orders.pop(target_outcome, None)
+                remaining = float(getattr(pr, "size", 0.0) or 0.0)
+                for order_key in ladder_keys(open_orders, target_outcome):
+                    if remaining <= 0:
+                        break
+                    order = open_orders.get(order_key)
+                    if order is None:
+                        continue
+                    q_before = max(0.0, float(order.get("queue_ahead") or 0.0))
+                    hit = match_maker_print(order, {
+                        "outcome": pr_outcome,
+                        "side": getattr(pr, "side", ""),
+                        "price": getattr(pr, "price", 0.0),
+                        "size": remaining,
+                    })
+                    q_used = max(0.0, q_before - max(0.0, float(order.get("queue_ahead") or 0.0)))
+                    if hit is not None:
+                        if unhedged_step_cents is not None and float(unhedged_step_cents) > 0:
+                            opp_outcome = "Down" if target_outcome == "Up" else "Up"
+                            if inv[opp_outcome]["shares"] <= 0 and inv[target_outcome]["shares"] > 0:
+                                low_px = inv[target_outcome].get("lowest_price")
+                                if low_px is not None:
+                                    max_allowed = low_px - (float(unhedged_step_cents) / 100.0) + 1e-6
+                                    if order["price"] > max_allowed:
+                                        open_orders.pop(order_key, None)
+                                        remaining = max(0.0, remaining - q_used)
+                                        continue
+                        remaining = max(0.0, remaining - (q_used + hit["fills"]))
+                        ts = float(getattr(pr, "ts", 0.0) or 0.0) or time.time()
+                        try:
+                            _placed_ms = int(float(order.get("placed_ts", 0.0)) * 1000) if order.get("placed_ts") else None
+                        except (TypeError, ValueError):
+                            _placed_ms = None
+                        _book_fill(target_outcome, order["price"], hit["fills"], "MAKER",
+                                   _minute_of(ts),
+                                   order["reason"], order["sub_reason"], hit["queueAhead"],
+                                   order["deficit"], ts_ms=int(ts * 1000),
+                                   placed_at_ms=_placed_ms,
+                                   queue_ahead_at_place=order.get("queue_ahead_at_place", order.get("queue_ahead")))
+                    else:
+                        remaining = max(0.0, remaining - q_used)
+                    if order["shares_left"] <= 0:
+                        open_orders.pop(order_key, None)
 
     def _drain_book_crosses(quotes_map: dict) -> None:
         """Fill resting Maker bids when live CLOB quotes cross or clear their limit."""
         if not open_orders:
             return
-        for outcome, order in list(open_orders.items()):
+        for order_key, order in list(open_orders.items()):
+            outcome = order["side"]
             q = dict(quotes_map.get(outcome) or {})
             if streamer is not None and "askSize" not in q and "ask_size" not in q:
                 try:
@@ -929,7 +969,7 @@ def trade_window(
                         if low_px is not None:
                             max_allowed = low_px - (float(unhedged_step_cents) / 100.0) + 1e-6
                             if order["price"] > max_allowed:
-                                open_orders.pop(outcome, None)
+                                open_orders.pop(order_key, None)
                                 continue
                 now_ts = time.time()
                 try:
@@ -943,7 +983,7 @@ def trade_window(
                            placed_at_ms=_placed_ms,
                            queue_ahead_at_place=order.get("queue_ahead_at_place", order.get("queue_ahead")))
             if order["shares_left"] <= 0:
-                open_orders.pop(outcome, None)
+                open_orders.pop(order_key, None)
 
     def _place_maker(outcome: str, px: float, shares: float, minute: int,
                      reason: str, sub_reason: str, deficit: float) -> None:
@@ -985,15 +1025,78 @@ def trade_window(
                           "strategy": strat_sym})
         _persist()
 
+    def _place_ladder(outcome: str, px: float, shares: float, minute: int,
+                      reason: str, sub_reason: str, deficit: float) -> None:
+        """Rest an N-rung maker ladder under one side (mirror of replay.place_levels).
+
+        Rungs live one spacing apart below the decision price, each carrying
+        the decision's per-level size. A rung whose price left the desired set
+        is pulled: an off-touch ladder has to follow the touch down, unlike a
+        single patient bid, which must never chase a falling price.
+        """
+        nonlocal orders_posted, orders_cancelled
+        desired = [round(px - i * ladder_spacing, 4) for i in range(ladder_levels)]
+        for key in ladder_keys(open_orders, outcome):
+            order = open_orders[key]
+            if not any(abs(float(order["price"]) - d) < 1e-9 for d in desired):
+                log(f"cancel {outcome} {order['shares_left']:.1f} @ {order['price']:.3f} (rung moved)")
+                open_orders.pop(key, None)
+                orders_cancelled += 1
+        token = spec.up_token_id if outcome == "Up" else spec.down_token_id
+        placed = False
+        for i, d in enumerate(desired):
+            if d < min_fill or d <= 0.0:
+                continue
+            key = outcome if i == 0 else f"{outcome}#{i}"
+            cur = open_orders.get(key)
+            ahead = None
+            if cur is None or abs(float(cur["price"]) - d) > 1e-9:
+                ahead = live_queue_ahead(streamer, token, d)
+            changed, repriced_or_new = update_maker_order(
+                open_orders=open_orders,
+                outcome=outcome,
+                px=d,
+                shares=shares,
+                minute=minute,
+                reason=reason,
+                sub_reason=sub_reason,
+                deficit=deficit,
+                ahead=ahead,
+                now_ts=time.time(),
+                inv=inv,
+                unhedged_step_cents=unhedged_step_cents,
+                order_key=key,
+            )
+            if not changed:
+                continue
+            order = open_orders[key]
+            placed = True
+            if repriced_or_new:
+                orders_posted += 1
+            shown = ahead if ahead is not None else "unknown"
+            log(f"M{minute} {outcome} rest {order['shares_left']:.1f} @ {order['price']:.3f} behind {shown} [MAKER · {sub_reason}]")
+            log_event("hold", "order-placed", slug, side=outcome,
+                      detail={"minute": f"M{minute}",
+                              "price": order["price"],
+                              "shares": round(order["shares_left"], 2),
+                              "role": "MAKER",
+                              "subReason": sub_reason,
+                              "queueAhead": round(float(order["queue_ahead"]), 1),
+                              "deficit": round(float(deficit), 2),
+                              "rung": i,
+                              "strategy": strat_sym})
+        if placed:
+            _persist()
+
     def _cancel_orders(why: str) -> None:
         nonlocal orders_cancelled
-        for side, order in list(open_orders.items()):
-            log(f"cancel {side} {order['shares_left']:.1f} @ {order['price']:.3f} ({why})")
-            log_event("refuse", "order-cancel", slug, side=side,
+        for key, order in list(open_orders.items()):
+            log(f"cancel {order['side']} {order['shares_left']:.1f} @ {order['price']:.3f} ({why})")
+            log_event("refuse", "order-cancel", slug, side=order["side"],
                       detail={"minute": f"M{order['minute']}", "price": order["price"],
                               "shares": round(order["shares_left"], 2), "why": why,
                               "strategy": strat_sym})
-            open_orders.pop(side, None)
+            open_orders.pop(key, None)
             orders_cancelled += 1
         _persist()
 
@@ -1079,6 +1182,7 @@ def trade_window(
                 target_pair_cost=target_pair_cost,
                 max_pair_cost=max_pair_cost,
                 max_unhedged_usd=max_unhedged_usd,
+                max_unhedged_shares=max_unhedged_shares,
                 dip_curve=dip_curve,
                 clip_schedule=clip_schedule,
                 in_sweep_phase=in_sweep_phase,
@@ -1144,7 +1248,7 @@ def trade_window(
                 # A taker order really does execute at the ask, so it is booked
                 # now. Crossing the spread and leaving a resting bid on the same
                 # side would be double exposure the desk never ordered.
-                open_orders.pop(outcome, None)
+                cancel_side_orders(open_orders, outcome)
                 _taker_book: dict = {}
                 try:
                     _tok = spec.up_token_id if outcome == "Up" else spec.down_token_id
@@ -1166,8 +1270,12 @@ def trade_window(
                            decision.reason, decision.sub_reason, None,
                            decision.share_deficit, taker_book=_taker_book)
             else:
-                _place_maker(outcome, px, shares, minute,
-                             decision.reason, decision.sub_reason, decision.share_deficit)
+                if ladder_levels > 1:
+                    _place_ladder(outcome, px, shares, minute,
+                                  decision.reason, decision.sub_reason, decision.share_deficit)
+                else:
+                    _place_maker(outcome, px, shares, minute,
+                                 decision.reason, decision.sub_reason, decision.share_deficit)
             streamer.wait_for_tick(timeout=0.25)
         closed_cleanly = True
     finally:

@@ -600,6 +600,45 @@ STRATEGY_SETUPS = {
             "maxDepthShares": 0.0,
         },
     },
+    "hydrogen-v1.7": {
+        "id": "hydrogen-v1.7",
+        "symbol": "H2 Hydrogen-v1.7",
+        "name": "Hydrogen v1.7",
+        "signature": "2-Level Split Ladder (5sh @ -1c, 5sh @ -2c) + ATM Balanced Band (0.42..0.58)",
+        "description": (
+            "2-level off-touch maker ladder with dynamic lead tolerance (5-12sh), "
+            "ATM coin-flip band gating (0.42..0.58), and strict projected pair cost enforcement."
+        ),
+        "configHighlights": {
+            "timing": "T+4s open, 10->8 clips",
+            "sizing": "2-level split ladder (5sh @ -1c, 5sh @ -2c), pure maker balanced mode",
+            "riskGates": "ATM band 0.42..0.58, proj pair <= 0.995 balanced / <= 0.99 rebalance",
+        },
+        "entry": {
+            "startAfterOpenSec": 4,
+            "stopBeforeCloseSec": 30,
+            "sweepBeforeCloseSec": 12,
+            "clipSharesDefault": 5.0,
+            "maxShares": 10.0,
+            "maxClipShares": 10.0,
+            "clipSchedule": [[0, 10.0], [120, 8.0]],
+            "minFillPrice": 0.07,
+            "maxFillPrice": 0.85,
+            "levelsPerSide": 2,
+            "levelSpacing": 0.01,
+            "benchmarkPairCost": 0.960,
+            "targetPairCost": 0.960,
+            "maxPairCost": 0.985,
+            "maxUnhedgedShares": 25.0,
+            "maxUnhedgedUsd": 15.0,
+            "wholeLadderClips": True,
+            "minSpacingMoveSec": 0.5,
+            "minSpacingStaticSec": 2.5,
+            "staticRequoteSec": 2.5,
+            "includeTakerFee": True,
+            "maxDepthShares": 0.0,
+        },
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -915,7 +954,7 @@ PAPER_REBATE_TAKER_RATE = 0.50  # default modeled refund of taker fees
 PAPER_REBATE_TIER_RANGE = (0.32, 0.44, 0.50)  # low / mid / top volume tiers
 
 # Wallet Benchmark (measured 21-day median, docs/leaderboard-traders/reports/
-# dangerously-skip-permissions_strategy_2026-10-18_to_2026-11-08.md). This is a
+# dangerously-skip-permissions/strategy_2026-10-18_to_2026-11-08.md). This is a
 # REPORTING benchmark for realized pair cost, not a pairing gate: the bot
 # strives to pair under it and accepts above it — sub-$1.00 must emerge from
 # sizing, risk and position management, not from refusing to pair.

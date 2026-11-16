@@ -44,7 +44,7 @@ from bot.runs import tape_segments
 WINDOW_S = int(C.WINDOW_S)
 STRATEGY_V26 = "dangerously-skip-permissions-v2.6"
 STRATEGY_V27 = "dangerously-skip-permissions-v2.7"
-STRATEGY_HYDROGEN = "hydrogen-v1.0"
+STRATEGY_HYDROGEN = "hydrogen-v1.7"
 BASELINE_RUN = "run_20261113_080232_paper_dsp_v2_6"
 LOOP_LOG = Path("bot/loop.log")
 
@@ -349,6 +349,10 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
         max_unhedged_usd = float(entry.get("maxUnhedgedUsd", 0.0) or 0.0)
     except (TypeError, ValueError):
         max_unhedged_usd = 0.0
+    try:
+        max_unhedged_shares = float(entry.get("maxUnhedgedShares", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        max_unhedged_shares = 0.0
     dip_curve = entry.get("dipCurve") or None
     clip_schedule = entry.get("clipSchedule") or None
     rescue_ceiling = float(entry.get("rescueCeilingPrice", C.RESCUE_CEILING_PRICE))
@@ -675,7 +679,9 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
             default_clip=clip_default, max_clip=max_shares,
             whole_ladder=True, target_pair_cost=target_pc,
             max_pair_cost=max_pc,
-            max_unhedged_usd=max_unhedged_usd, dip_curve=dip_curve,
+            max_unhedged_usd=max_unhedged_usd,
+            max_unhedged_shares=max_unhedged_shares,
+            dip_curve=dip_curve,
             clip_schedule=clip_schedule,
             in_sweep_phase=in_sweep, rescue_ceiling=rescue_ceiling,
             rescue_max_pair_cost=rescue_max,
@@ -1117,7 +1123,9 @@ def main(argv=None) -> int:
     # Ladder shape defaults come from the rule's entry (v2.7 stores
     # levelsPerSide/levelSpacing); explicit flags always win. Pre-v2.7
     # entries carry no ladder keys, so the historical 1 x 0.02 stands.
-    canon_for_defaults = C.STRATEGY_SETUPS[STRATEGY_V27 if args.rule == "v2.7" else STRATEGY_V26]["entry"]
+    canon_for_defaults = C.STRATEGY_SETUPS[
+        {"v2.7": STRATEGY_V27, "hydrogen": STRATEGY_HYDROGEN}.get(args.rule, STRATEGY_V26)
+    ]["entry"]
     levels = args.levels if args.levels is not None else int(canon_for_defaults.get("levelsPerSide", 1))
     spacing = args.spacing if args.spacing is not None else float(canon_for_defaults.get("levelSpacing", 0.02))
     results = run_rule(run_ids, args.rule, args.ceiling, levels,
