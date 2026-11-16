@@ -957,7 +957,6 @@ def _evaluate_hydrogen_v19(
     open_orders: dict | None = None,
     deficit_duration_sec: float = 0.0,
     window_bailout_latched: bool = False,
-    candidate_arm: str = "B",
     max_pair_cost: float = H19_L2_PAIR_CAP,
 ) -> MicrostructureDecision:
     """Hydrogen v1.9 microstructure decision engine.
@@ -966,10 +965,8 @@ def _evaluate_hydrogen_v19(
         Frozen once elapsed_sec >= 150.0 OR matched >= 40.0 OR window_bailout_latched.
     Layer 2 (Over, abs(lead) > 0.5 sh): Immediate sub-par clamped maker hedge
         at px = min(light_bid, floor(0.990 - heavy_avg)). Heavy resting orders cancelled.
-    Layer 3 (Over, abs(lead) > 0.5 sh): Taker bailout.
-        Arm A: Immediate on deficit if ask <= 0.72 & marginal >= 1.00.
-        Arm B (v1.9 core): 20s delayed after deficit opens, marginal >= 1.07 & ask <= 0.72.
-        Arm E: Pure maker (Layer 3 disabled).
+    Layer 3 (Over, abs(lead) > 0.5 sh): 20s delayed taker bailout once the
+        deficit opens, marginal pair >= 1.07 and ask <= 0.72.
     """
     up_sh = float((inv.get("Up") or {}).get("shares", 0.0))
     dn_sh = float((inv.get("Down") or {}).get("shares", 0.0))
@@ -1035,15 +1032,12 @@ def _evaluate_hydrogen_v19(
         l_bid, l_ask = _h15_side_prices(quotes, light)
 
         # Layer 3: Taker Equalizer
-        taker_fire = False
-        if candidate_arm == "A":
-            if l_ask is not None and l_ask <= H19_L3_ASK_MAX and (heavy_avg + l_ask >= 1.000):
-                taker_fire = True
-        elif candidate_arm == "B":
-            if (deficit_duration_sec >= H19_L3_PATIENCE_SEC and
-                    l_ask is not None and l_ask <= H19_L3_ASK_MAX and
-                    (heavy_avg + l_ask >= H19_L3_MARGINAL_MIN)):
-                taker_fire = True
+        taker_fire = (
+            deficit_duration_sec >= H19_L3_PATIENCE_SEC
+            and l_ask is not None
+            and l_ask <= H19_L3_ASK_MAX
+            and (heavy_avg + l_ask >= H19_L3_MARGINAL_MIN)
+        )
 
         if taker_fire and l_ask is not None:
             if l_ask < min_fill:
@@ -1089,34 +1083,6 @@ def _evaluate_hydrogen_v19(
     # --- BALANCED CONDITION: Layer 1 ---
     if l1_frozen:
         return _skip("window-frozen", "cutoff-reached", "Up" if fill_idx % 2 == 0 else "Down")
-
-    if candidate_arm == "E":
-        # Two-Sided Simultaneous Resting within [0.42, 0.48].
-        # A side rests only when its own bid implies a price inside the band;
-        # clamping an out-of-band bid up to 0.42 could cross the ask.
-        if up_bid is not None and dn_bid is not None:
-            up_in_band = 0.42 <= round(up_bid - 0.01, 2) <= 0.48
-            dn_in_band = 0.42 <= round(dn_bid - 0.01, 2) <= 0.48
-            up_base = min(max(round(up_bid - 0.01, 2), 0.42), 0.48)
-            dn_max = math.floor((0.990 - up_base + 1e-9) * 100.0) / 100.0
-            dn_base = min(max(round(dn_bid - 0.01, 2), 0.42), min(0.48, dn_max))
-            up_max = math.floor((0.990 - dn_base + 1e-9) * 100.0) / 100.0
-            up_base = min(up_base, min(0.48, up_max))
-
-            has_up = bool(open_orders and "Up" in open_orders)
-            has_dn = bool(open_orders and "Down" in open_orders)
-            if up_in_band and not has_up:
-                return MicrostructureDecision(
-                    action="fill", outcome="Up", price=up_base, shares=5.0,
-                    role="MAKER", reason="straddle-open", sub_reason="balance-maker",
-                    projected_pair_cost=None, share_deficit=0.0,
-                )
-            elif dn_in_band and not has_dn:
-                return MicrostructureDecision(
-                    action="fill", outcome="Down", price=dn_base, shares=5.0,
-                    role="MAKER", reason="straddle-open", sub_reason="balance-maker",
-                    projected_pair_cost=None, share_deficit=0.0,
-                )
 
     # Standard single probe: 5 sh within [0.42, 0.49]
     up_px = round(up_bid - 0.01, 2) if up_bid is not None else None
@@ -1746,16 +1712,11 @@ def evaluate_microstructure_ladder(
             open_orders=open_orders,
         )
 
-    if strategy_id in ("hydrogen-v1.9", "hydrogen-v1.9-arm-a", "hydrogen-v1.9-arm-e"):
+    if strategy_id == "hydrogen-v1.9":
         try:
             _v19_depth = float(max_depth_shares or 0.0)
         except Exception:
             _v19_depth = 0.0
-        arm_type = "B"
-        if "arm-a" in strategy_id:
-            arm_type = "A"
-        elif "arm-e" in strategy_id:
-            arm_type = "E"
         return _evaluate_hydrogen_v19(
             quotes=quotes, inv=inv, fill_idx=fill_idx,
             min_fill=min_fill, max_ceiling=max_fill,
@@ -1768,7 +1729,6 @@ def evaluate_microstructure_ladder(
             open_orders=open_orders,
             deficit_duration_sec=float(kwargs.get("deficit_duration_sec", 0.0) or 0.0),
             window_bailout_latched=bool(kwargs.get("window_bailout_latched", False)),
-            candidate_arm=arm_type,
             max_pair_cost=max_pair_cost,
         )
 

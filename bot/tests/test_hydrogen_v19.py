@@ -53,17 +53,19 @@ def _dec(quotes, inv, fill_idx=0, strategy_id="hydrogen-v1.9", **over):
 
 class TestHydrogenV19RegistryAndWiring(unittest.TestCase):
     def test_registry_entry_and_features(self):
-        for sid in ("hydrogen-v1.9", "hydrogen-v1.9-arm-a", "hydrogen-v1.9-arm-e"):
-            setup = C.STRATEGY_SETUPS[sid]
-            entry = setup["entry"]
-            self.assertEqual(entry["levelsPerSide"], 1)
-            self.assertEqual(entry["clipSharesDefault"], 5.0)
-            self.assertEqual(entry["maxShares"], 5.0)
-            self.assertEqual(entry["maxPairCost"], 0.990)
-            self.assertEqual(entry["maxUnhedgedShares"], 5.0)
-            self.assertEqual(entry["maxUnhedgedUsd"], 2.50)
-            self.assertEqual(setup["features"].get("sizing"), "split-ladder-v19")
-            self.assertIn(setup["features"].get("l3Mode"), ("patient", "immediate", "off"))
+        setup = C.STRATEGY_SETUPS["hydrogen-v1.9"]
+        entry = setup["entry"]
+        self.assertEqual(entry["levelsPerSide"], 1)
+        self.assertEqual(entry["clipSharesDefault"], 5.0)
+        self.assertEqual(entry["maxShares"], 5.0)
+        self.assertEqual(entry["maxPairCost"], 0.990)
+        self.assertEqual(entry["maxUnhedgedShares"], 5.0)
+        self.assertEqual(entry["maxUnhedgedUsd"], 2.50)
+        self.assertEqual(setup["features"].get("sizing"), "split-ladder-v19")
+        self.assertNotIn("l3Mode", setup["features"])
+        # The A/B arms were dropped as unprofitable; only the core setup remains.
+        for retired in ("hydrogen-v1.9-arm-a", "hydrogen-v1.9-arm-b", "hydrogen-v1.9-arm-e"):
+            self.assertNotIn(retired, C.STRATEGY_SETUPS)
 
     def test_describe_setup_v19(self):
         _sig, desc, highlights = C.describe_setup(C.STRATEGY_SETUPS["hydrogen-v1.9"])
@@ -79,28 +81,12 @@ class TestHydrogenV19RegistryAndWiring(unittest.TestCase):
             "hydrogen-v1.9",
         )
 
-    def test_arm_run_ids_map_to_own_arm(self):
-        self.assertEqual(
-            ab._run_strategy_id("run_20261116_160000_paper_hydrogen_v1_9_arm_a"),
-            "hydrogen-v1.9-arm-a",
-        )
-        # Legacy arm-B run ids resolve to the production setup: arm B is v1.9.
-        self.assertEqual(
-            ab._run_strategy_id("run_20261116_160000_paper_hydrogen_v1_9_arm_b"),
-            "hydrogen-v1.9",
-        )
-        self.assertEqual(
-            ab._run_strategy_id("run_20261116_160000_paper_hydrogen_v1_9_arm_e"),
-            "hydrogen-v1.9-arm-e",
-        )
-
-    def test_describe_setup_arm_text(self):
-        _sig_a, desc_a, _hl_a = C.describe_setup(C.STRATEGY_SETUPS["hydrogen-v1.9-arm-a"])
-        self.assertIn("Immediate", _sig_a)
-        self.assertIn("immediate taker equalizer", desc_a)
-        _sig_e, desc_e, _hl_e = C.describe_setup(C.STRATEGY_SETUPS["hydrogen-v1.9-arm-e"])
-        self.assertIn("Pure Maker", _sig_e)
-        self.assertIn("zero taker fills", desc_e)
+    def test_legacy_arm_run_ids_map_to_production(self):
+        for legacy in ("arm_a", "arm_b", "arm_e"):
+            self.assertEqual(
+                ab._run_strategy_id(f"run_20261116_160000_paper_hydrogen_v1_9_{legacy}"),
+                "hydrogen-v1.9",
+            )
 
 
 class TestHydrogenV19Layer1Probe(unittest.TestCase):
@@ -190,23 +176,6 @@ class TestHydrogenV19Layer3TakerBailout(unittest.TestCase):
         self.assertEqual(d.price, 0.65)
         self.assertEqual(d.shares, 5.0)
         self.assertEqual(d.sub_reason, "rebalance-taker")
-
-    def test_arm_a_fires_l3_immediately(self):
-        # Arm A fires immediately (deficit_duration_sec = 0.0) when ask <= 0.72 & marginal >= 1.00
-        d = _dec(_q(0.33, 0.35, 0.53, 0.60), _inv(5.0, 2.30, 0, 0),
-                 deficit_duration_sec=0.0, strategy_id="hydrogen-v1.9-arm-a")
-        self.assertEqual(d.action, "fill")
-        self.assertEqual(d.role, "TAKER")
-        self.assertEqual(d.price, 0.60)
-        self.assertEqual(d.sub_reason, "rebalance-taker")
-
-    def test_arm_e_never_fires_taker(self):
-        # Arm E is pure maker, even at 25s elapsed deficit with breakout ask
-        d = _dec(_q(0.33, 0.35, 0.53, 0.65), _inv(5.0, 2.30, 0, 0),
-                 deficit_duration_sec=25.0, strategy_id="hydrogen-v1.9-arm-e")
-        self.assertEqual(d.role, "MAKER")
-        self.assertEqual(d.sub_reason, "rebalance-maker")
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -702,77 +702,6 @@ STRATEGY_SETUPS = {
             "wholeLadderClips": True,
             "minSpacingMoveSec": 0.5,
             "minSpacingStaticSec": 2.5,
-            "staticRequoteSec": 2.5,
-            "includeTakerFee": True,
-            "maxDepthShares": 0.0,
-        },
-    },
-    "hydrogen-v1.9-arm-a": {
-        "id": "hydrogen-v1.9-arm-a",
-        "symbol": "H2 Hydrogen-v1.9-A",
-        "name": "Hydrogen v1.9 (Arm A - Immediate L3 Freeze)",
-        "signature": "Single Probe (5 sh) · Immediate L3 Taker Equalizer · Dollar Gap Cap ($2.50) · Max Buy 85¢",
-        "description": "A/B Test Candidate Arm A: Enforces tol = 0.5 sh with immediate Layer 3 taker bailout and permanent single-window freeze latch.",
-        "configHighlights": {
-            "timing": "T+4s open, 5 sh probe",
-            "sizing": "1-level probe, immediate taker bailout, window freeze latch",
-            "riskGates": "Immediate bailout latch, $0.00 unhedged residual bleed",
-        },
-        "entry": {
-            "startAfterOpenSec": 4,
-            "stopBeforeCloseSec": 30,
-            "sweepBeforeCloseSec": 12,
-            "clipSharesDefault": 5.0,
-            "maxShares": 5.0,
-            "maxClipShares": 5.0,
-            "minFillPrice": 0.05,
-            "maxFillPrice": 0.85,
-            "levelsPerSide": 1,
-            "levelSpacing": 0.01,
-            "benchmarkPairCost": 0.960,
-            "targetPairCost": 0.960,
-            "maxPairCost": 0.990,
-            "maxUnhedgedShares": 5.0,
-            "maxUnhedgedUsd": 2.50,
-            "wholeLadderClips": True,
-            "minSpacingMoveSec": 0.5,
-            "minSpacingStaticSec": 2.5,
-            "staticRequoteSec": 2.5,
-            "includeTakerFee": True,
-            "maxDepthShares": 0.0,
-        },
-    },
-    "hydrogen-v1.9-arm-e": {
-        "id": "hydrogen-v1.9-arm-e",
-        "symbol": "H2 Hydrogen-v1.9-E",
-        "name": "Hydrogen v1.9 (Arm E - Pure Maker Two-Sided)",
-        "signature": "Two-Sided Resting (5 sh) · Clamped Maker (≤$0.990) · Dollar Gap Cap ($2.50) · Max Buy 85¢",
-        "description": "A/B Test Candidate Arm E: Pure maker two-sided simultaneous resting within [42¢, 48¢] at sub-$0.990 pair cost with zero taker fills.",
-        "configHighlights": {
-            "timing": "T+4s open, two-sided resting from t=0",
-            "sizing": "Simultaneous 5 sh bids on both sides, clamped rebalance-maker",
-            "riskGates": "Zero taker fills, 5 sh max unhedged risk per window",
-        },
-        "entry": {
-            "startAfterOpenSec": 4,
-            "stopBeforeCloseSec": 30,
-            "sweepBeforeCloseSec": 12,
-            "clipSharesDefault": 5.0,
-            "maxShares": 5.0,
-            "maxClipShares": 5.0,
-            "minFillPrice": 0.05,
-            "maxFillPrice": 0.85,
-            "levelsPerSide": 1,
-            "levelSpacing": 0.01,
-            "benchmarkPairCost": 0.960,
-            "targetPairCost": 0.960,
-            "maxPairCost": 0.990,
-            "maxUnhedgedShares": 5.0,
-            "maxUnhedgedUsd": 2.50,
-            "wholeLadderClips": True,
-            "minSpacingMoveSec": 0.5,
-            "minSpacingStaticSec": 2.5,
-            "staticRequoteSec": 2.5,
             "includeTakerFee": True,
             "maxDepthShares": 0.0,
         },
@@ -897,22 +826,12 @@ _SETUP_FEATURES = {
     },
     "hydrogen-v1.9": {
         "sizing": "split-ladder-v19", "preflightGate": False, "patientHedge": False, "takerDip": False,
-        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False, "l3Mode": "patient",
+        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
         "blurb": "dynamic 3-layer architecture: 1-level 5sh probe in 42–49c ATM band with T+150s cutoff; clamped maker hedge (<= $0.990) on any lead > 0.5sh; patient 20s delayed taker bailout (>= $1.07 marginal pair, <= 72c ask) with single-window freeze latch",
-    },
-    "hydrogen-v1.9-arm-a": {
-        "sizing": "split-ladder-v19", "preflightGate": False, "patientHedge": False, "takerDip": False,
-        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False, "l3Mode": "immediate",
-        "blurb": "candidate Arm A: 5sh single probe, immediate Layer 3 taker bailout on deficit, and single-window freeze latch",
-    },
-    "hydrogen-v1.9-arm-e": {
-        "sizing": "split-ladder-v19", "preflightGate": False, "patientHedge": False, "takerDip": False,
-        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False, "l3Mode": "off",
-        "blurb": "candidate Arm E: two-sided simultaneous 5sh maker resting in 42–48c band with 0 taker fills and sub-$0.990 pair cost",
     },
     "hydrogen-v2.0": {
         "sizing": "two-sided-dip-v20", "preflightGate": False, "patientHedge": False, "takerDip": False,
-        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False, "l3Mode": "subpar",
+        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
         "blurb": "two-sided simultaneous resting (42-47c ATM & 7-45c inverse-dip curve, <=$6 unhedged USD) + clamped sub-$0.985 maker / <=$0.965 profit-lock taker",
     },
 }
@@ -977,14 +896,7 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
             _sch_txt = (float(_sched[0][1]), float(_sched[-1][0]), float(_sched[-1][1]))
         except (TypeError, ValueError, IndexError):
             _sch_txt = None
-    l3_mode = str(f.get("l3Mode", "patient"))
-    if split_v19 and l3_mode == "off":
-        dip_txt = (
-            f"two-sided simultaneous 5 sh maker resting in the 42–48c band at sub-$0.990 pair cost "
-            f"with zero taker fills and exact deficit sizing"
-        )
-        sig_size = "Two-Sided Resting (5 sh)"
-    elif split_v19:
+    if split_v19:
         dip_txt = (
             f"1-level single 5 sh probe in the 42–49c ATM band (frozen at T+150s / 40 sh matched) "
             f"with strict resting hygiene and exact deficit sizing"
@@ -1058,23 +970,7 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         dip_txt = f"{clip:g} sh (max {mx:g} sh) in the {lo_c}c-{hi_c}c band"
         sig_size = f"Dip Grid [{lo_c}c-{hi_c}c]"
 
-    if split_v19 and l3_mode == "immediate":
-        gate_txt = (
-            f"a 3-layer breakout defense: Layer 1 quotes only within [42¢, 49¢] under ${cap:.3f} pair cost; "
-            f"Layer 2 rebalances with sub-par clamped maker hedging (<= $0.990) on any lead > 0.5 sh; "
-            f"Layer 3 fires an immediate taker equalizer (>= $1.00 marginal pair, <= 72¢ ask) "
-            f"with single-window freeze latch"
-        )
-        sig_gate = "Clamped Maker (≤$0.990) + Immediate L3"
-    elif split_v19 and l3_mode == "off":
-        gate_txt = (
-            f"a 3-layer breakout defense: Layer 1 rests both sides within [42¢, 48¢] under ${cap:.3f} pair cost; "
-            f"Layer 2 rebalances with sub-par clamped maker hedging (<= $0.990) on any lead > 0.5 sh; "
-            f"Layer 3 taker bailout is disabled (pure maker execution) "
-            f"with single-window freeze latch"
-        )
-        sig_gate = "Clamped Maker (≤$0.990) + Pure Maker (No Taker)"
-    elif split_v19:
+    if split_v19:
         gate_txt = (
             f"a 3-layer breakout defense: Layer 1 quotes only within [42¢, 49¢] under ${cap:.3f} pair cost; "
             f"Layer 2 rebalances with sub-par clamped maker hedging (<= $0.990) on any lead > 0.5 sh; "
@@ -1164,13 +1060,7 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         "maxBuy": f"{hi_c}c",
         "cutoff": f"{cutoff:g}s before close",
     }
-    if split_v19 and l3_mode == "immediate":
-        highlights["pairGates"] = "balanced <= $0.990; clamped maker <= floor(0.990 - heavy_avg); immediate taker equalizer (>= $1.00)"
-        highlights["preflightGate"] = "Deficit Trigger (tol = 0.5 sh) + Window Freeze Latch"
-    elif split_v19 and l3_mode == "off":
-        highlights["pairGates"] = "balanced <= $0.990; clamped maker <= floor(0.990 - heavy_avg); no taker bailout (pure maker)"
-        highlights["preflightGate"] = "Deficit Trigger (tol = 0.5 sh) + Window Freeze Latch"
-    elif split_v19:
+    if split_v19:
         highlights["pairGates"] = "balanced <= $0.990; clamped maker <= floor(0.990 - heavy_avg); patient taker 20s delay (>= $1.07)"
         highlights["preflightGate"] = "Deficit Trigger (tol = 0.5 sh) + Window Freeze Latch"
     elif two_sided_v20:
