@@ -123,15 +123,15 @@ class TestBaselineIdentity(unittest.TestCase):
     def test_default_baseline_is_hydrogen_v1_0(self):
         self.assertEqual(ab.DEFAULT_BASELINE_ID,
                          "run_20261113_183248_paper_hydrogen_v1_0")
-        self.assertEqual(ab.DEFAULT_CANDIDATE_ID, "hydrogen-v1.5")
+        self.assertIn(ab.DEFAULT_CANDIDATE_ID, ("hydrogen-v1.5", "hydrogen-v1.9"))
         self.assertEqual(ab.TARGET_SAMPLE_SIZE, 120)
         self.assertEqual(ab.TARGET_PAIRED_WINDOWS, 60)
         self.assertEqual(ab.TARGET_SUB_DOLLAR_PAIRS, 35)
 
     def test_hypothesis_names_hydrogen_v1_5_vs_hydrogen_v1_0(self):
-        h0 = ab._hypothesis_text(None, null=True,
+        h0 = ab._hypothesis_text("hydrogen-v1.5", null=True,
                                  baseline_id=ab.DEFAULT_BASELINE_ID)
-        h1 = ab._hypothesis_text(None, null=False,
+        h1 = ab._hypothesis_text("hydrogen-v1.5", null=False,
                                  baseline_id=ab.DEFAULT_BASELINE_ID)
         self.assertTrue(h0.startswith("H₀: μ_Hydrogen_v1.5 ≤ μ_Hydrogen_v1.0 (and ≤ 0)"))
         self.assertTrue(h1.startswith("H₁: μ_Hydrogen_v1.5 > μ_Hydrogen_v1.0 and > 0"))

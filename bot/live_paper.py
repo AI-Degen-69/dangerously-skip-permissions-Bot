@@ -18,6 +18,7 @@ Usage:
 
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -469,6 +470,7 @@ def update_maker_order(
     inv: dict[str, dict[str, float]] | None = None,
     unhedged_step_cents: float | None = None,
     order_key: str | None = None,
+    max_hedge_px: float | None = None,
 ) -> tuple[bool, bool]:
     """Place or update a resting Maker bid without chasing falling prices downward.
 
@@ -500,13 +502,18 @@ def update_maker_order(
                 return (True, False)
             return (False, False)
         if px < cur_px - 1e-9:
-            # Falling bid: never lower an existing resting bid; preserve limit
-            # price, placed_ts, and queue priority so falling prices fill it.
-            if shares > float(cur["shares_left"]) + 1e-9:
-                cur["shares_left"] = shares
-                cur["deficit"] = deficit
-                return (True, False)
-            return (False, False)
+            # If an existing resting bid violates max_hedge_px, do NOT preserve it:
+            # let it fall through to be replaced by px.
+            if max_hedge_px is not None and cur_px > max_hedge_px + 1e-9:
+                pass
+            else:
+                # Falling bid: never lower an existing resting bid; preserve limit
+                # price, placed_ts, and queue priority so falling prices fill it.
+                if shares > float(cur["shares_left"]) + 1e-9:
+                    cur["shares_left"] = shares
+                    cur["deficit"] = deficit
+                    return (True, False)
+                return (False, False)
 
     if cur is not None:
         cur.pop("_last_touch_ask_obs", None)
@@ -793,7 +800,7 @@ def trade_window(
                    reason: str, sub_reason: str, queue_ahead, deficit: float,
                    ts_ms: int | None = None, placed_at_ms: int | None = None,
                    queue_ahead_at_place=None, taker_book: dict | None = None) -> None:
-        nonlocal cost, total_fees_usd, last_fill_ts, last_fill_px
+        nonlocal cost, total_fees_usd, last_fill_ts, last_fill_px, window_bailout_latched
         imbalance_before = abs(inv["Up"]["shares"] - inv["Down"]["shares"])
         usd, fee_usd = compute_fill_usd(shares, px, role=role, include_fee=include_taker_fee)
         inv[outcome]["shares"] += shares
@@ -811,6 +818,15 @@ def trade_window(
         # would read as "this pair cost X" and mislead.
         imbalance_after = abs(inv["Up"]["shares"] - inv["Down"]["shares"])
         pair_cost = _live_pair_cost() if imbalance_after < imbalance_before else None
+
+        if sub_reason in ("rebalance-taker", "rebalance-maker") and imbalance_after < imbalance_before:
+            opp_outcome = "Down" if outcome == "Up" else "Up"
+            if inv[opp_outcome]["shares"] > 0:
+                heavy_avg_cost = inv[opp_outcome]["cost"] / inv[opp_outcome]["shares"]
+                marginal_pair = heavy_avg_cost + px
+                if marginal_pair > 1.000:
+                    window_bailout_latched = True
+                    log(f"Window bailout latched: marginal_pair={marginal_pair:.4f} > 1.000")
 
         # Semantic trade tagging
         if len(fills) == 0:
@@ -988,6 +1004,14 @@ def trade_window(
     def _place_maker(outcome: str, px: float, shares: float, minute: int,
                      reason: str, sub_reason: str, deficit: float) -> None:
         nonlocal orders_posted
+        opp_side = "Down" if outcome == "Up" else "Up"
+        max_hedge_px = None
+        # v1.9-only resting hygiene: older strategies keep their own behavior.
+        if sub_reason == "rebalance-maker" and strat_id.startswith("hydrogen-v1.9"):
+            cancel_side_orders(open_orders, opp_side)
+            if inv[opp_side]["shares"] > 0:
+                heavy_avg = inv[opp_side]["cost"] / inv[opp_side]["shares"]
+                max_hedge_px = math.floor((max_pair_cost - heavy_avg + 1e-9) * 100.0) / 100.0
         cur = open_orders.get(outcome)
         ahead = None
         if cur is None or px > float(cur["price"]) + 1e-9:
@@ -1006,6 +1030,7 @@ def trade_window(
             now_ts=time.time(),
             inv=inv,
             unhedged_step_cents=unhedged_step_cents,
+            max_hedge_px=max_hedge_px,
         )
         if not changed:
             return
@@ -1035,6 +1060,14 @@ def trade_window(
         single patient bid, which must never chase a falling price.
         """
         nonlocal orders_posted, orders_cancelled
+        opp_side = "Down" if outcome == "Up" else "Up"
+        max_hedge_px = None
+        # v1.9-only resting hygiene: older strategies keep their own behavior.
+        if sub_reason == "rebalance-maker" and strat_id.startswith("hydrogen-v1.9"):
+            cancel_side_orders(open_orders, opp_side)
+            if inv[opp_side]["shares"] > 0:
+                heavy_avg = inv[opp_side]["cost"] / inv[opp_side]["shares"]
+                max_hedge_px = math.floor((max_pair_cost - heavy_avg + 1e-9) * 100.0) / 100.0
         desired = [round(px - i * ladder_spacing, 4) for i in range(ladder_levels)]
         for key in ladder_keys(open_orders, outcome):
             order = open_orders[key]
@@ -1066,6 +1099,7 @@ def trade_window(
                 inv=inv,
                 unhedged_step_cents=unhedged_step_cents,
                 order_key=key,
+                max_hedge_px=max_hedge_px,
             )
             if not changed:
                 continue
@@ -1109,6 +1143,8 @@ def trade_window(
         last_fill_px: float | None = None
         last_extreme_skip_ts: float = 0.0
         last_dust_skip_ts: float = 0.0
+        deficit_since_ts: float | None = None
+        window_bailout_latched: bool = False
 
         while True:
             now = int(time.time())
@@ -1120,6 +1156,12 @@ def trade_window(
                 continue
             _drain_prints()
             imbalance = abs(inv["Up"]["shares"] - inv["Down"]["shares"])
+            if imbalance > 0.5:
+                if deficit_since_ts is None:
+                    deficit_since_ts = float(now)
+            else:
+                deficit_since_ts = None
+            deficit_duration_sec = (float(now) - deficit_since_ts) if deficit_since_ts is not None else 0.0
             in_sweep_phase = (now >= end and now < sweep_end and imbalance > 0.0)
             if now >= end and open_orders:
                 # The strategy stops opening in the sweep; a bid left resting
@@ -1200,6 +1242,8 @@ def trade_window(
                 max_depth_shares=_depth_cap,
                 resting_size=_resting,
                 open_orders=open_orders,
+                deficit_duration_sec=deficit_duration_sec,
+                window_bailout_latched=window_bailout_latched,
             )
 
             # Uncensored decision journal: every evaluation (fill or skip) with

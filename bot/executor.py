@@ -651,6 +651,18 @@ H18_BREAKOUT_MIN_LEAD = 5.0     # Layer 2/3: minimum deficit outside ATM band or
 H18_BREAKOUT_ASK_MIN = 0.60     # Layer 3: breakout taker lower ask bound (beats 0.62 on replay)
 H18_BREAKOUT_ASK_MAX = 0.68     # Layer 3: breakout taker upper ask bound
 
+# Hydrogen v1.9 — 3-layer breakout defense with immediate deficit trigger (tol = 0.5 sh)
+H19_LEAD_TOLERANCE = 0.5        # Layer 2/3 trigger: any lead > 0.5 sh
+H19_L1_PROBE_SHARES = 5.0       # Layer 1: single 5-share probe
+H19_L1_PRICE_MIN = 0.42         # Layer 1: lower entry price bound
+H19_L1_PRICE_MAX = 0.49         # Layer 1: upper entry price bound
+H19_L1_CUTOFF_SEC = 150.0       # Layer 1: freeze new leads after T+150s
+H19_L1_CUTOFF_MATCHED = 40.0    # Layer 1: freeze new leads once >= 40.0 sh matched
+H19_L2_PAIR_CAP = 0.990         # Layer 2: maximum hedge pair cost
+H19_L3_PATIENCE_SEC = 20.0      # Layer 3: 20s delayed taker bailout (Arm B)
+H19_L3_MARGINAL_MIN = 1.070     # Layer 3: minimum marginal pair cost to fire L3
+H19_L3_ASK_MAX = 0.720          # Layer 3: upper ask bound for taker bailout
+
 
 def _h17_tolerance(matched: float) -> float:
     """Dynamic lead tolerance: 15% of the matched book, clamped to 5..12 sh."""
@@ -930,6 +942,219 @@ def _evaluate_split_ladder(
     return _skip("no-liquidity", "no-liquidity", preferred)
 
 
+def _evaluate_hydrogen_v19(
+    quotes: dict[str, dict[str, float | None]],
+    inv: dict[str, dict[str, float]],
+    fill_idx: int,
+    min_fill: float,
+    max_ceiling: float,
+    max_unhedged_usd: float,
+    max_unhedged_shares: float,
+    in_sweep_phase: bool,
+    elapsed_sec: float,
+    max_depth_shares: float = 0.0,
+    resting_size: dict | None = None,
+    open_orders: dict | None = None,
+    deficit_duration_sec: float = 0.0,
+    window_bailout_latched: bool = False,
+    candidate_arm: str = "B",
+    max_pair_cost: float = H19_L2_PAIR_CAP,
+) -> MicrostructureDecision:
+    """Hydrogen v1.9 microstructure decision engine.
+
+    Layer 1 (Flat, abs(lead) <= 0.5 sh): Single 5-share maker probe in 42-49c ATM band.
+        Frozen once elapsed_sec >= 150.0 OR matched >= 40.0 OR window_bailout_latched.
+    Layer 2 (Over, abs(lead) > 0.5 sh): Immediate sub-par clamped maker hedge
+        at px = min(light_bid, floor(0.990 - heavy_avg)). Heavy resting orders cancelled.
+    Layer 3 (Over, abs(lead) > 0.5 sh): Taker bailout.
+        Arm A: Immediate on deficit if ask <= 0.72 & marginal >= 1.00.
+        Arm B (v1.9 core): 20s delayed after deficit opens, marginal >= 1.07 & ask <= 0.72.
+        Arm E: Pure maker (Layer 3 disabled).
+    """
+    up_sh = float((inv.get("Up") or {}).get("shares", 0.0))
+    dn_sh = float((inv.get("Down") or {}).get("shares", 0.0))
+    matched = min(up_sh, dn_sh)
+    lead = up_sh - dn_sh
+    abs_lead = abs(lead)
+    over = abs_lead > H19_LEAD_TOLERANCE
+    heavy = "Up" if lead > 0 else "Down"
+    light = "Down" if lead > 0 else ("Up" if lead < 0 else None)
+    deficit = round(abs_lead, 2)
+
+    def _skip(reason: str, sub: str, pref: str | None) -> MicrostructureDecision:
+        return MicrostructureDecision(action="skip", outcome=pref, reason=reason, sub_reason=sub)
+
+    def _unhedged_ok(side: str, shares: float, est_usd: float) -> bool:
+        cur = inv.get(side) or {}
+        new_sh = float(cur.get("shares", 0.0)) + shares
+        opp = "Down" if side == "Up" else "Up"
+        lead_after = new_sh - float((inv.get(opp) or {}).get("shares", 0.0))
+        if lead_after <= 0 or new_sh <= 0:
+            return True
+        if max_unhedged_shares > 0 and lead_after > max_unhedged_shares + 1e-9:
+            return False
+        if max_unhedged_usd > 0:
+            new_cost = float(cur.get("cost", 0.0)) + est_usd
+            if (new_cost / new_sh) * lead_after > max_unhedged_usd:
+                return False
+        return True
+
+    def _cap_m(shares: float, role: str, side: str) -> float:
+        try:
+            dc = float(max_depth_shares or 0.0)
+        except Exception:
+            dc = 0.0
+        if dc <= 0 or role != "MAKER":
+            return shares
+        avail = resting_size.get(side) if isinstance(resting_size, dict) else None
+        try:
+            avail = float(avail) if avail is not None else None
+        except (TypeError, ValueError):
+            avail = None
+        if avail is None:
+            return shares
+        if avail <= 0:
+            return 0.0
+        return min(float(shares), float(avail))
+
+    if in_sweep_phase:
+        return _skip("sweep-balanced", "sweep-balanced", light if light is not None else "Up")
+
+    # Check Layer 1 freeze
+    l1_frozen = (elapsed_sec >= H19_L1_CUTOFF_SEC) or (matched >= H19_L1_CUTOFF_MATCHED) or window_bailout_latched
+
+    up_bid, up_ask = _h15_side_prices(quotes, "Up")
+    dn_bid, dn_ask = _h15_side_prices(quotes, "Down")
+
+    # --- OVER CONDITION: Layer 2 / Layer 3 ---
+    if over and light is not None:
+        heavy_inv = inv.get(heavy) or {}
+        heavy_cost = float(heavy_inv.get("cost", 0.0))
+        heavy_shares = float(heavy_inv.get("shares", 0.0))
+        heavy_avg = heavy_cost / max(heavy_shares, 1e-6)
+        l_bid, l_ask = _h15_side_prices(quotes, light)
+
+        # Layer 3: Taker Equalizer
+        taker_fire = False
+        if candidate_arm == "A":
+            if l_ask is not None and l_ask <= H19_L3_ASK_MAX and (heavy_avg + l_ask >= 1.000):
+                taker_fire = True
+        elif candidate_arm == "B":
+            if (deficit_duration_sec >= H19_L3_PATIENCE_SEC and
+                    l_ask is not None and l_ask <= H19_L3_ASK_MAX and
+                    (heavy_avg + l_ask >= H19_L3_MARGINAL_MIN)):
+                taker_fire = True
+
+        if taker_fire and l_ask is not None:
+            if l_ask < min_fill:
+                return _skip("dust-quote", "below-price-floor", light)
+            if l_ask > max_ceiling:
+                return _skip("extreme-price-skip", "ceiling-price-skip", light)
+            take_size = min(deficit, 10.0)
+            est_usd, _ = compute_fill_usd(take_size, l_ask, role="TAKER", include_fee=True)
+            if not _unhedged_ok(light, take_size, est_usd):
+                return _skip("unhedged-cap-skip", "unhedged-cap", light)
+            proj = _projected_pair_cost(inv, light, take_size, est_usd)
+            return MicrostructureDecision(
+                action="fill", outcome=light, price=round(l_ask, 4),
+                shares=take_size, role="TAKER",
+                reason="balance-topup", sub_reason="rebalance-taker",
+                projected_pair_cost=proj, share_deficit=deficit,
+            )
+
+        # Layer 2: Clamped Maker Rebalance (<= min(configured cap, 0.990))
+        max_hedge_px = math.floor((min(H19_L2_PAIR_CAP, max_pair_cost) - heavy_avg + 1e-9) * 100.0) / 100.0
+        if l_bid is None:
+            return _skip("no-liquidity", "no-liquidity", light)
+        px = min(float(l_bid), max_hedge_px)
+        if px < min_fill:
+            return _skip("dust-quote", "below-price-floor", light)
+        if px > max_ceiling:
+            return _skip("extreme-price-skip", "ceiling-price-skip", light)
+        size = round(deficit, 2)
+        size = _cap_m(size, "MAKER", light)
+        if size <= 0:
+            return _skip("no-liquidity", "depth-cap", light)
+        est_usd, _ = compute_fill_usd(size, px, role="MAKER", include_fee=False)
+        if not _unhedged_ok(light, size, est_usd):
+            return _skip("unhedged-cap-skip", "unhedged-cap", light)
+        proj = _projected_pair_cost(inv, light, size, est_usd)
+        return MicrostructureDecision(
+            action="fill", outcome=light, price=round(px, 4),
+            shares=size, role="MAKER",
+            reason="hedge-leg", sub_reason="rebalance-maker",
+            projected_pair_cost=proj, share_deficit=deficit,
+        )
+
+    # --- BALANCED CONDITION: Layer 1 ---
+    if l1_frozen:
+        return _skip("window-frozen", "cutoff-reached", "Up" if fill_idx % 2 == 0 else "Down")
+
+    if candidate_arm == "E":
+        # Two-Sided Simultaneous Resting within [0.42, 0.48].
+        # A side rests only when its own bid implies a price inside the band;
+        # clamping an out-of-band bid up to 0.42 could cross the ask.
+        if up_bid is not None and dn_bid is not None:
+            up_in_band = 0.42 <= round(up_bid - 0.01, 2) <= 0.48
+            dn_in_band = 0.42 <= round(dn_bid - 0.01, 2) <= 0.48
+            up_base = min(max(round(up_bid - 0.01, 2), 0.42), 0.48)
+            dn_max = math.floor((0.990 - up_base + 1e-9) * 100.0) / 100.0
+            dn_base = min(max(round(dn_bid - 0.01, 2), 0.42), min(0.48, dn_max))
+            up_max = math.floor((0.990 - dn_base + 1e-9) * 100.0) / 100.0
+            up_base = min(up_base, min(0.48, up_max))
+
+            has_up = bool(open_orders and "Up" in open_orders)
+            has_dn = bool(open_orders and "Down" in open_orders)
+            if up_in_band and not has_up:
+                return MicrostructureDecision(
+                    action="fill", outcome="Up", price=up_base, shares=5.0,
+                    role="MAKER", reason="straddle-open", sub_reason="balance-maker",
+                    projected_pair_cost=None, share_deficit=0.0,
+                )
+            elif dn_in_band and not has_dn:
+                return MicrostructureDecision(
+                    action="fill", outcome="Down", price=dn_base, shares=5.0,
+                    role="MAKER", reason="straddle-open", sub_reason="balance-maker",
+                    projected_pair_cost=None, share_deficit=0.0,
+                )
+
+    # Standard single probe: 5 sh within [0.42, 0.49]
+    up_px = round(up_bid - 0.01, 2) if up_bid is not None else None
+    dn_px = round(dn_bid - 0.01, 2) if dn_bid is not None else None
+    up_ok = (up_px is not None) and (H19_L1_PRICE_MIN <= up_px <= H19_L1_PRICE_MAX)
+    dn_ok = (dn_px is not None) and (H19_L1_PRICE_MIN <= dn_px <= H19_L1_PRICE_MAX)
+
+    if not up_ok and not dn_ok:
+        return _skip("off-atm-skip", "atm-band", "Up" if fill_idx % 2 == 0 else "Down")
+
+    if up_ok and dn_ok:
+        if up_px + dn_px <= 0.970:
+            pick = "Up" if fill_idx % 2 == 0 else "Down"
+        elif up_px <= dn_px:
+            pick = "Up"
+        else:
+            pick = "Down"
+    elif up_ok:
+        pick = "Up"
+    else:
+        pick = "Down"
+
+    target_px = up_px if pick == "Up" else dn_px
+    size = 5.0
+    size = _cap_m(size, "MAKER", pick)
+    if size <= 0:
+        return _skip("no-liquidity", "depth-cap", pick)
+    est_usd, _ = compute_fill_usd(size, target_px, role="MAKER", include_fee=False)
+    if not _unhedged_ok(pick, size, est_usd):
+        return _skip("unhedged-cap-skip", "unhedged-cap", pick)
+    return MicrostructureDecision(
+        action="fill", outcome=pick, price=round(target_px, 4),
+        shares=size, role="MAKER",
+        reason="straddle-open", sub_reason="balance-maker",
+        projected_pair_cost=None, share_deficit=0.0,
+    )
+
+
 def _avg_cost(shares: float, cost: float) -> float | None:
     return (cost / shares) if shares > 0 else None
 
@@ -1163,6 +1388,32 @@ def evaluate_microstructure_ladder(
             in_sweep_phase=in_sweep_phase,
             max_depth_shares=_v16_depth,
             resting_size=resting_size,
+        )
+
+    if strategy_id in ("hydrogen-v1.9", "hydrogen-v1.9-arm-a", "hydrogen-v1.9-arm-b", "hydrogen-v1.9-arm-e"):
+        try:
+            _v19_depth = float(max_depth_shares or 0.0)
+        except Exception:
+            _v19_depth = 0.0
+        arm_type = "B"
+        if "arm-a" in strategy_id:
+            arm_type = "A"
+        elif "arm-e" in strategy_id:
+            arm_type = "E"
+        return _evaluate_hydrogen_v19(
+            quotes=quotes, inv=inv, fill_idx=fill_idx,
+            min_fill=min_fill, max_ceiling=max_fill,
+            max_unhedged_usd=max_unhedged_usd,
+            max_unhedged_shares=max_unhedged_shares,
+            in_sweep_phase=in_sweep_phase,
+            elapsed_sec=_elapsed or 0.0,
+            max_depth_shares=_v19_depth,
+            resting_size=resting_size,
+            open_orders=open_orders,
+            deficit_duration_sec=float(kwargs.get("deficit_duration_sec", 0.0) or 0.0),
+            window_bailout_latched=bool(kwargs.get("window_bailout_latched", False)),
+            candidate_arm=arm_type,
+            max_pair_cost=max_pair_cost,
         )
 
     if strategy_id in ("hydrogen-v1.7", "hydrogen-v1.8"):
