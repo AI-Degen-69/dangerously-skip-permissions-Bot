@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PR #56 — ההזמנה נשארת על המחיר שלה, והמילוי באמת נספר</title>
+<style>
+  :root{
+    --paper:#f7f4ec; --panel:#fffdf7; --ink:#16211b; --muted:#5f6d64; --faint:#8b978d;
+    --line:#e0d8c8; --line-2:#d3c9b5;
+    --green:#1a6b52; --green-soft:#e3efe8;
+    --rust:#a8452a; --rust-soft:#f6e7e0;
+    --gold:#b8892f;
+    --shadow:0 1px 2px rgba(22,33,27,.05), 0 14px 34px rgba(22,33,27,.07);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    color:var(--ink);
+    background:var(--paper);
+    font:16px/1.68 system-ui,-apple-system,"Segoe UI",Roboto,"Heebo",Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  main{max-width:1180px;margin:auto;padding:24px 20px 60px}
+  a{color:var(--green);text-underline-offset:3px}
+  code,.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.86em;direction:ltr;unicode-bidi:isolate}
+  code{background:#efe9dc;border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+
+  .topbar{display:flex;flex-wrap:wrap;gap:10px 20px;align-items:center;justify-content:space-between;
+    font-size:.8rem;color:var(--muted);border-bottom:1px solid var(--line-2);padding-bottom:13px}
+  .chip{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line-2);border-radius:999px;
+    padding:3px 11px;background:var(--panel);color:var(--muted)}
+  .chip .dot{width:7px;height:7px;border-radius:50%;background:var(--green)}
+
+  .split{display:grid;grid-template-columns:minmax(0,0.86fr) minmax(0,1.14fr);gap:34px;margin-top:30px;align-items:start}
+  h1{font-size:clamp(1.62rem,3.3vw,2.35rem);line-height:1.2;letter-spacing:-.015em;margin:0 0 14px;font-weight:700}
+  .lede{margin:0;color:#33433a;font-size:1rem;max-width:52ch}
+  .lede b{font-weight:600;color:var(--ink)}
+
+  h2.sec{font-size:.78rem;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);
+    margin:30px 0 12px;font-weight:600}
+
+  ol.changes{list-style:none;margin:0;padding:0;display:grid;gap:16px;counter-reset:c}
+  ol.changes > li{counter-increment:c;position:relative;padding-inline-start:34px}
+  ol.changes > li::before{content:counter(c);position:absolute;inset-inline-start:0;top:2px;
+    width:23px;height:23px;border-radius:50%;border:1px solid var(--line-2);background:var(--panel);
+    color:var(--muted);font-size:.76rem;font-weight:700;display:grid;place-items:center}
+  ol.changes h3{margin:0 0 3px;font-size:.98rem;font-weight:650;line-height:1.4}
+  ol.changes p{margin:0;font-size:.89rem;color:var(--muted);line-height:1.6}
+
+  .cross{margin-top:11px;display:grid;gap:7px;font-size:.8rem}
+  .cross-row{display:flex;align-items:center;gap:9px}
+  .cross-row .bar{display:flex;height:16px;border-radius:4px;overflow:hidden;border:1px solid var(--line-2);
+    direction:ltr;flex:0 0 auto}
+  .cross-row .bar i{display:block;height:100%}
+  .cross-row .bar i.ours{background:#cfe0d7}
+  .cross-row .bar i.hers{background:#e6d3bd}
+  .cross-row .bar i.full{background:var(--green);opacity:.72}
+  .cross-row .sum{direction:ltr;font-variant-numeric:tabular-nums;color:var(--muted);font-size:.78rem;white-space:nowrap}
+  .cross-row .out{font-size:.76rem;font-weight:650;white-space:nowrap}
+  .out.yes{color:var(--green)} .out.no{color:var(--rust)}
+
+  .figure{background:var(--panel);border:1px solid var(--line-2);border-radius:16px;box-shadow:var(--shadow);
+    overflow:hidden;position:sticky;top:18px}
+  .fig-head{padding:16px 18px 0}
+  .fig-head h2{margin:0;font-size:1rem;font-weight:650}
+  .fig-head p{margin:4px 0 0;font-size:.83rem;color:var(--muted)}
+  .panes{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);margin-top:15px;
+    border-block:1px solid var(--line)}
+  .pane{background:var(--panel);padding:14px 15px 16px;min-width:0;transition:background .18s ease}
+  .pane.old{background:#fbf7f1}
+  .pane-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:12px}
+  .tag{font-size:.73rem;font-weight:700;letter-spacing:.05em;padding:2px 9px;border-radius:999px;border:1px solid}
+  .tag.old{color:var(--rust);border-color:#e5c9bd;background:var(--rust-soft)}
+  .tag.new{color:var(--green);border-color:#c3dccd;background:var(--green-soft)}
+  .pane-head .note{font-size:.72rem;color:var(--faint);text-align:end;line-height:1.35}
+
+  .kv{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:4px 0;
+    border-bottom:1px dotted var(--line-2);font-size:.84rem}
+  .kv:last-of-type{border-bottom:0}
+  .kv .k{color:var(--muted)}
+  .kv .v{font-family:ui-monospace,Consolas,monospace;font-weight:700;font-size:.95rem;
+    font-variant-numeric:tabular-nums;direction:ltr}
+  .kv .v.pinned{color:var(--green)}
+  .kv .v.sliding{color:var(--rust)}
+
+  .qwrap{margin-top:9px}
+  .qlabel{display:flex;justify-content:space-between;font-size:.74rem;color:var(--faint);margin-bottom:5px}
+  .qbar{height:7px;border-radius:999px;background:#ece5d6;overflow:hidden;direction:ltr}
+  .qbar > i{display:block;height:100%;background:#c3b9a3;border-radius:999px;
+    transition:width .3s ease}
+  .qbar.front > i{background:var(--green)}
+
+  .verdict{margin-top:11px;font-size:.79rem;line-height:1.45;min-height:2.2em;color:var(--muted)}
+  .verdict.filled{color:var(--green);font-weight:650}
+  .verdict.lost{color:var(--rust);font-weight:650}
+
+  .jrow{margin-top:11px;border:1px solid var(--line-2);border-radius:8px;background:#fdfaf2;
+    padding:7px 9px;display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:.75rem;
+    min-height:36px}
+  .jrow.none{background:#faf6ef;color:var(--faint);border-style:dashed;justify-content:center}
+  .badge{font-size:.68rem;font-weight:700;letter-spacing:.04em;text-transform:lowercase;
+    border-radius:4px;padding:1px 6px;background:#e8e2d4;color:#5a5445}
+  .mchip{font-size:.68rem;border:1px solid var(--line-2);border-radius:999px;padding:0 7px;
+    color:var(--muted);background:#fff;direction:ltr;font-variant-numeric:tabular-nums}
+  .jtitle{font-weight:600;color:var(--ink)}
+
+  .controls{display:flex;flex-wrap:wrap;align-items:center;gap:9px;padding:14px 18px}
+  button{font:inherit;font-size:.85rem;font-weight:600;border-radius:9px;padding:8px 15px;cursor:pointer;
+    border:1px solid var(--green);background:var(--green);color:#f7fbf8;transition:opacity .15s ease,transform .1s ease}
+  button:hover:not(:disabled){opacity:.9}
+  button:active:not(:disabled){transform:translateY(1px)}
+  button:disabled{opacity:.4;cursor:default}
+  button.ghost{background:transparent;color:var(--muted);border-color:var(--line-2)}
+  .stepcount{font-size:.76rem;color:var(--faint);margin-inline-start:auto;font-variant-numeric:tabular-nums}
+  .caption{border-top:1px solid var(--line);padding:10px 18px 13px;font-size:.75rem;color:var(--faint);
+    background:#fbf8f1;line-height:1.5}
+
+  .walk{margin-top:34px;background:var(--panel);border:1px solid var(--line-2);border-radius:16px;
+    padding:22px 24px;box-shadow:var(--shadow)}
+  .walk h2{margin:0 0 4px;font-size:1.02rem;font-weight:650}
+  .walk > p{margin:0 0 16px;font-size:.85rem;color:var(--muted)}
+  ol.steps{margin:0;padding-inline-start:19px;display:grid;gap:12px;font-size:.9rem;line-height:1.6}
+  ol.steps li::marker{color:var(--green);font-weight:700}
+  ol.steps b{font-weight:650}
+  .where{display:inline-block;font-size:.72rem;font-weight:700;letter-spacing:.03em;color:var(--green);
+    background:var(--green-soft);border:1px solid #c3dccd;border-radius:5px;padding:0 6px;
+    margin-inline-end:4px;white-space:nowrap}
+  .ltr{direction:ltr;unicode-bidi:isolate;display:inline-block}
+  .pre{margin:14px 0 0;padding:10px 12px;border-radius:9px;background:#f1ece0;border:1px solid var(--line);
+    font-size:.8rem;color:var(--muted);line-height:1.7}
+
+  footer{margin-top:26px;padding-top:14px;border-top:1px solid var(--line-2);color:var(--faint);
+    font-size:.78rem;display:flex;flex-wrap:wrap;gap:8px 18px;justify-content:space-between}
+
+  @media (max-width:900px){
+    .split{grid-template-columns:1fr;gap:24px}
+    .figure{position:static}
+  }
+  @media (max-width:560px){
+    .panes{grid-template-columns:1fr;border-block:0;gap:0}
+    .pane + .pane{border-top:1px solid var(--line)}
+    main{padding:18px 14px 44px}
+    .walk{padding:18px 16px}
+  }
+  @media (prefers-reduced-motion: reduce){
+    .pane,.qbar > i,button{transition:none}
+  }
+</style>
+</head>
+<body>
+<main>
+
+  <div class="topbar">
+    <span class="chip"><span class="dot"></span>השינוי עלה לאוויר ב־<span class="ltr">main</span></span>
+    <span><span class="ltr">dangerously-skip-permissions-Bot</span> · <a href="https://github.com/AI-Degen-69/dangerously-skip-permissions-Bot/pull/56">PR #56</a></span>
+  </div>
+
+  <div class="split">
+
+    <div>
+      <h1>ההזמנה כבר לא רודפת אחרי המחיר.<br>היא נשארת במקומה — ושם היא מתמלאת.</h1>
+
+      <p class="lede">
+        כשהמחיר ירד, העסקה של הבוט בוטלה והוגשה שוב נמוך יותר, שוב ושוב, וכך איבדה את מקומה בתור.
+        במקביל, הוא ספר מילוי רק כשרשמה מישהו מוכר בדיוק במחיר שלו — והתעלם משני מצבים שקורים כל הזמן:
+        הזמנה שמישהו קונה בצד השני של אותה שאלה, וספר שהמחיר פשוט חצה אותו.
+        <b>עכשיו ההזמנה עומדת על המחיר שלה, המילויים שמתרחשים באמת נספרים, והיומן מראה שהיא מונחת.</b>
+      </p>
+
+      <h2 class="sec">מה השתנה בפועל</h2>
+
+      <ol class="changes">
+        <li>
+          <h3>ההזמנה מחזיקה את המחיר הגבוה</h3>
+          <p>
+            ירידת מחיר כבר לא גורמת לביטול ולהוראה מחדש נמוך יותר. ההזמנה נשארת על המחיר שלה,
+            עם ותק התור שלה, עד שמישהו יורד אליה. במסך זה נראה כ־<span class="ltr mono">front of queue</span>
+            במקום מספר שמתאפס בכל טיק.
+          </p>
+        </li>
+        <li>
+          <h3>מילוי נספר גם בלי מכירה בצד שלך</h3>
+          <p>
+            בשאלה בינארית, קנייה של הצד השני במחיר שמשלים את שלך ל־<span class="ltr mono">$1.00</span>
+            היא אותה עסקה בדיוק. גם ספר שהמחיר שלו חצה את ההזמנה שלך הוא מילוי.
+          </p>
+          <div class="cross" aria-label="שני סכומים: חצה או לא חצה">
+            <div class="cross-row">
+              <span class="bar"><i class="ours" style="width:68px"></i><i class="hers" style="width:32px"></i></span>
+              <span class="sum">$0.68 + $0.32 = $1.00</span>
+              <span class="out yes">נפגשו</span>
+            </div>
+            <div class="cross-row">
+              <span class="bar"><i class="ours" style="width:68px"></i><i class="hers" style="width:28px"></i></span>
+              <span class="sum">$0.68 + $0.28 = $0.96</span>
+              <span class="out no">לא נפגשו</span>
+            </div>
+          </div>
+        </li>
+        <li>
+          <h3>היומן רושם את ההזמנה — ולא מוחק את סיבת הדחייה</h3>
+          <p>
+            רשומה אחת כשההזמנה מונחת או משנה מחיר, לא הצפה בכל טיק. וכשהסיבה האמיתית לדחייה היא
+            שהזוג יקר מדי, היא נשארת <span class="ltr mono">Refused — pair cost exceeds cap</span>
+            ולא מוחלפת ב־<span class="ltr mono">Price exceeds ceiling cap</span>.
+          </p>
+        </li>
+      </ol>
+    </div>
+
+    <section class="figure" aria-labelledby="demo-title">
+      <div class="fig-head">
+        <h2 id="demo-title">לחץ ולחץ: המחיר יורד מדרגה</h2>
+        <p>אותה הזמנה, שני מצבים — <span class="ltr mono">10 sh</span> על <span class="ltr mono">Up</span> ב־<span class="ltr mono">68¢</span></p>
+      </div>
+
+      <div class="panes">
+        <div class="pane old">
+          <div class="pane-head">
+            <span class="tag old">לפני</span>
+            <span class="note">ההזמנה רדפה<br>אחרי השוק</span>
+          </div>
+          <div class="kv"><span class="k">המחיר בשוק</span><span class="v" id="b-bid">68¢</span></div>
+          <div class="kv"><span class="k">ההזמנה שלנו</span><span class="v sliding" id="b-ours">68¢</span></div>
+          <div class="qwrap">
+            <div class="qlabel"><span>לפניך בתור</span><span class="ltr mono" id="b-qlab">40 sh ahead</span></div>
+            <div class="qbar"><i id="b-q" style="width:100%"></i></div>
+          </div>
+          <div class="verdict lost" id="b-verdict">הונחה ב־68¢</div>
+          <div class="jrow none" id="b-j">ביומן: אין רשומה על ההזמנה</div>
+        </div>
+
+        <div class="pane new">
+          <div class="pane-head">
+            <span class="tag new">עכשיו</span>
+            <span class="note">ההזמנה עומדת<br>על המחיר שלה</span>
+          </div>
+          <div class="kv"><span class="k">המחיר בשוק</span><span class="v" id="a-bid">68¢</span></div>
+          <div class="kv"><span class="k">ההזמנה שלנו</span><span class="v pinned" id="a-ours">68¢</span></div>
+          <div class="qwrap">
+            <div class="qlabel"><span>לפניך בתור</span><span class="ltr mono" id="a-qlab">12 sh ahead</span></div>
+            <div class="qbar" id="a-qbar"><i id="a-q" style="width:30%"></i></div>
+          </div>
+          <div class="verdict" id="a-verdict">הונחה ב־68¢ וממתינה</div>
+          <div class="jrow" id="a-j">
+            <span class="badge">hold</span>
+            <span class="jtitle ltr">Resting maker bid placed</span>
+            <span class="mchip">bid 68¢</span>
+            <span class="mchip">shares 10</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button type="button" id="drop">המחיר יורד מדרגה</button>
+        <button type="button" class="ghost" id="reset">איפוס</button>
+        <span class="stepcount" id="count">צעד 1 מתוך 4</span>
+      </div>
+
+      <div class="caption">
+        הדגמה של המנגנון, לא נתון מהריצה. המחירים והתור הם המספרים שהשינוי נבדק עליהם.
+      </div>
+    </section>
+
+  </div>
+
+  <section class="walk">
+    <h2>איך לבדוק את זה בעצמך, במערכת עצמה</h2>
+    <p>שש פעולות, שלוש דקות. הכל במסך <span class="ltr mono">Live bot</span> של הדשבורד.</p>
+
+    <ol class="steps">
+      <li>
+        פותחים את הדשבורד: <code>bun run dev</code> ואז <span class="ltr">http://localhost:5173</span>.
+        אם המסך ריק — מפעילים גם את הבוט עצמו, <code>python bot/api.py</code>.
+      </li>
+      <li>
+        <span class="where">ניווט</span> לוחצים על <b><span class="ltr">Live bot</span></b> בתפריט הצד.
+      </li>
+      <li>
+        <span class="where">Decision journal</span> בוחרים בכרטיסייה <b><span class="ltr">Holds</span></b>.
+        מחפשים שורה <b><span class="ltr">Resting maker bid placed</span></b> עם הצ׳יפים
+        <span class="ltr mono">bid</span> ו־<span class="ltr mono">shares</span>.
+        מה שמעיד שהצליח: <b>שורה אחת לכל הנחה או שינוי מחיר</b> — ולא שורה חדשה בכל רבע שנייה.
+      </li>
+      <li>
+        <span class="where">Resting orders</span> מסתכלים בפאנל <b><span class="ltr">UP ↗</span></b>
+        (או <span class="ltr">DN ↘</span>). המחיר נשאר קבוע והשדה <span class="ltr mono">X sh ahead</span>
+        יורד עד <b><span class="ltr">front of queue</span></b>, בעוד <span class="ltr mono">resting Ns</span>
+        ממשיך לגדול. אם המחיר בשוק יורד וההזמנה נשארת על אותו מחיר — זה בדיוק השינוי.
+      </li>
+      <li>
+        <span class="where">Orders &amp; Fills</span> כשמישהו קונה את הצד השני במחיר שמשלים ל־$1.00,
+        או כשהספר חוצה את ההזמנה, מופיעה שורת מילוי בטבלה — עמודות <b><span class="ltr">Side</span></b>,
+        <b><span class="ltr">Size</span></b>, <b><span class="ltr">Price</span></b> — במחיר של ההזמנה שעמדה,
+        ולא במחיר שהשוק זז אליו.
+      </li>
+      <li>
+        <span class="where">Decision journal</span> עוברים ל־<b><span class="ltr">Refusals</span></b>.
+        דחייה שמניעה אותה עלות זוג גבוהה מדי נכתבת
+        <b><span class="ltr">Refused — pair cost exceeds cap</span></b>,
+        ולא <span class="ltr mono">Price exceeds ceiling cap</span>. קודם היא הייתה נדרסת.
+      </li>
+    </ol>
+
+    <p class="pre">
+      אין מה ללחוץ כדי ליזום ירידת מחיר — הבוט פועל על חלון של חמש דקות בזמן אמת.
+      אם אין כרגע חלון פעיל, המסך ימלא את עצמו ברגע שהחלון הבא ייפתח.
+    </p>
+  </section>
+
+  <footer>
+    <span><span class="ltr">PR #56</span> · מוזג ל־<span class="ltr">main</span></span>
+    <span>העמוד הזה הוא תצוגה בלבד — שום קוד מוצר לא שונה בשבילו.</span>
+  </footer>
+
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  var TICKS = [
+    { bid: 0.68, ask: 0.70, oldQueue: 40, newQueue: 12, oldPx: 0.68, newPx: 0.68, filled: false },
+    { bid: 0.66, ask: 0.70, oldQueue: 40, newQueue: 9,  oldPx: 0.66, newPx: 0.68, filled: false },
+    { bid: 0.64, ask: 0.66, oldQueue: 40, newQueue: 0,  oldPx: 0.64, newPx: 0.68, filled: true  },
+    { bid: 0.62, ask: 0.64, oldQueue: 40, newQueue: 0,  oldPx: 0.62, newPx: 0.68, filled: true  }
+  ];
+
+  var MAXQ = 40;
+  var step = 0;
+
+  var el = {
+    bBid: document.getElementById('b-bid'),
+    bOurs: document.getElementById('b-ours'),
+    bQ: document.getElementById('b-q'),
+    bQlab: document.getElementById('b-qlab'),
+    bVerdict: document.getElementById('b-verdict'),
+    bJ: document.getElementById('b-j'),
+    aBid: document.getElementById('a-bid'),
+    aOurs: document.getElementById('a-ours'),
+    aQ: document.getElementById('a-q'),
+    aQbar: document.getElementById('a-qbar'),
+    aQlab: document.getElementById('a-qlab'),
+    aVerdict: document.getElementById('a-verdict'),
+    aJ: document.getElementById('a-j'),
+    drop: document.getElementById('drop'),
+    reset: document.getElementById('reset'),
+    count: document.getElementById('count')
+  };
+
+  function cents(px) {
+    return Math.round(px * 100) + '\u00A2';
+  }
+
+  function render() {
+    var t = TICKS[step];
+
+    el.bBid.textContent = cents(t.bid);
+    el.bOurs.textContent = cents(t.oldPx);
+    el.bQ.style.width = Math.round((t.oldQueue / MAXQ) * 100) + '%';
+    el.bQlab.textContent = t.oldQueue + ' sh ahead';
+
+    if (step === 0) {
+      el.bVerdict.textContent = 'הונחה ב\u2011' + cents(t.oldPx);
+      el.bJ.className = 'jrow none';
+      el.bJ.textContent = 'ביומן: אין רשומה על ההזמנה';
+    } else {
+      el.bVerdict.textContent = 'בוטלה והוגשה שוב ב\u2011' + cents(t.oldPx) + ' — מקום התור אבד שוב';
+      el.bVerdict.className = 'verdict lost';
+      el.bJ.className = 'jrow none';
+      el.bJ.textContent = 'ביומן: אין רשומה על ההזמנה';
+    }
+
+    el.aBid.textContent = cents(t.bid);
+    el.aOurs.textContent = cents(t.newPx);
+
+    if (t.filled) {
+      el.aQ.style.width = '0%';
+      el.aQbar.className = 'qbar front';
+      el.aQlab.textContent = 'front of queue';
+      el.aVerdict.className = 'verdict filled';
+      el.aVerdict.textContent = 'המחיר חצה את ' + cents(t.newPx) + ' \u2192 התמלאה: 10 sh @ ' + cents(t.newPx) + ' \u00B7 MAKER';
+      el.aJ.className = 'jrow';
+      el.aJ.innerHTML = '<span class="badge">hold</span>'
+        + '<span class="jtitle ltr">Resting maker bid placed</span>'
+        + '<span class="mchip">bid ' + cents(t.newPx) + '</span>'
+        + '<span class="mchip">shares 10</span>';
+    } else {
+      el.aQ.style.width = Math.round((t.newQueue / MAXQ) * 100) + '%';
+      el.aQbar.className = 'qbar';
+      el.aQlab.textContent = t.newQueue + ' sh ahead';
+      el.aVerdict.className = 'verdict';
+      el.aVerdict.textContent = (step === 0 ? 'הונחה ב\u2011' + cents(t.newPx) + ' וממתינה' : 'עומדת על ' + cents(t.newPx) + ' — התור שלה מתקצר');
+      el.aJ.className = 'jrow';
+      el.aJ.innerHTML = '<span class="badge">hold</span>'
+        + '<span class="jtitle ltr">Resting maker bid placed</span>'
+        + '<span class="mchip">bid ' + cents(t.newPx) + '</span>'
+        + '<span class="mchip">shares 10</span>';
+    }
+
+    el.count.textContent = 'צעד ' + (step + 1) + ' מתוך ' + TICKS.length;
+    el.drop.disabled = step >= TICKS.length - 1;
+    el.drop.textContent = step >= TICKS.length - 1 ? 'סוף החלון' : 'המחיר יורד מדרגה';
+  }
+
+  el.drop.addEventListener('click', function () {
+    if (step < TICKS.length - 1) {
+      step += 1;
+      render();
+    }
+  });
+
+  el.reset.addEventListener('click', function () {
+    step = 0;
+    render();
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
