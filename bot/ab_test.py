@@ -2,7 +2,12 @@
 
 Compares the frozen, measured Hydrogen v1.0 baseline run
 (DEFAULT_BASELINE_ID, `run_20261113_183248_paper_hydrogen_v1_0`) against the
-Hydrogen v1.2 candidate (`hydrogen-v1.2`).
+Hydrogen v1.3 candidate (`hydrogen-v1.3`, the post-PR #56 CLOB/maker-hold
+engine build with trading parameters identical to v1.2).
+
+Archived runs (`run_meta.json` status starting with "archived") are never
+picked up as baseline or candidate, so the tainted pre-PR #56 v1.2 runs stay
+out of the A/B comparison.
 
 The statistical sample is ACTIVE traded windows only (`fills > 0`): zero-fill
 windows never inflate N or dilute variance. Welch's one-tailed two-sample
@@ -25,8 +30,8 @@ from bot.fill_audit import role_of
 ROOT = Path(__file__).resolve().parent.parent
 RUNS_DIR = ROOT / "bot" / "runs"
 DEFAULT_BASELINE_ID = "run_20261113_183248_paper_hydrogen_v1_0"
-DEFAULT_CANDIDATE_ID = "hydrogen-v1.2"
-CANDIDATE_DISPLAY_NAME = "Hydrogen v1.2"
+DEFAULT_CANDIDATE_ID = "hydrogen-v1.3"
+CANDIDATE_DISPLAY_NAME = "Hydrogen v1.3"
 BASELINE_DISPLAY_NAME = "Hydrogen v1.0"
 AB_STATE_PATH = ROOT / "bot" / "ab_test_state.json"
 
@@ -413,6 +418,8 @@ def _run_strategy_id(run_id: str | None) -> str:
         return "hydrogen-v1.0"
     if "hydrogen_v1_1" in str(run_id).lower() or "hydrogen-v1.1" in str(run_id).lower():
         return "hydrogen-v1.1"
+    if "hydrogen_v1_3" in str(run_id).lower() or "hydrogen-v1.3" in str(run_id).lower():
+        return "hydrogen-v1.3"
     if "hydrogen_v1_2" in str(run_id).lower() or "hydrogen-v1.2" in str(run_id).lower():
         return "hydrogen-v1.2"
     if "hydrogen" in str(run_id).lower():
@@ -450,11 +457,13 @@ def _version_tag(strategy_id: str) -> str:
 
 def _hypothesis_text(candidate_id: str | None, *, null: bool,
                      baseline_id: str | None = None) -> str:
-    """Formal Hydrogen v1.2 vs Hydrogen v1.0 hypothesis over active-window PnL."""
+    """Formal Hydrogen v1.3 vs Hydrogen v1.0 hypothesis over active-window PnL."""
     strat_id = _run_strategy_id(candidate_id)
     base_strat_id = _run_strategy_id(baseline_id or DEFAULT_BASELINE_ID)
 
-    if "hydrogen-v1.2" in str(strat_id).lower() or "v1_2" in str(strat_id).lower() or "v1.2" in str(strat_id).lower():
+    if "hydrogen-v1.3" in str(strat_id).lower() or "v1_3" in str(strat_id).lower() or "v1.3" in str(strat_id).lower():
+        cand_label = "Hydrogen_v1.3"
+    elif "hydrogen-v1.2" in str(strat_id).lower() or "v1_2" in str(strat_id).lower() or "v1.2" in str(strat_id).lower():
         cand_label = "Hydrogen_v1.2"
     elif "hydrogen-v1.1" in str(strat_id).lower() or "v1_1" in str(strat_id).lower() or "v1.1" in str(strat_id).lower():
         cand_label = "Hydrogen_v1.1"
@@ -518,6 +527,36 @@ def _run_info(run_id: str | None) -> dict[str, Any]:
     }
 
 
+def _is_archived_run(run_id: str | None) -> bool:
+    """True when a run's `run_meta.json` status starts with "archived".
+
+    Archived runs (e.g. the tainted pre-PR #56 `hydrogen_v1_2` sessions) are
+    excluded from baseline/candidate lookup so substring matches on the run
+    folder name can never resurrect them into the A/B comparison.
+    """
+    if not run_id:
+        return False
+    try:
+        meta_p = RUNS_DIR / run_id / "run_meta.json"
+        if meta_p.exists():
+            m = json.loads(meta_p.read_text(encoding="utf-8"))
+            return str(m.get("status", "")).startswith("archived")
+    except Exception:
+        pass
+    return False
+
+
+# Arm A was measured under the pre-PR #56 engine (no maker-hold / book-cross /
+# complementary-fill handling). It stays frozen as the baseline, but the UI
+# surfaces this caveat next to the comparison.
+BASELINE_ENGINE_WARNING = (
+    "Arm A (Hydrogen v1.0) was measured under the pre-PR #56 engine, before "
+    "the maker-hold / CLOB book-cross / complementary-fill fix. Treat the "
+    "A-vs-B gap as directional until the baseline is re-measured on the "
+    "fixed engine."
+)
+
+
 def get_ab_test_data() -> dict[str, Any]:
     """Return full state for the A/B Test Dashboard."""
     # Read persistent A/B state if present
@@ -531,16 +570,25 @@ def get_ab_test_data() -> dict[str, Any]:
     baseline_id = state.get("baselineRunId", DEFAULT_BASELINE_ID)
     candidate_id = state.get("candidateRunId")
 
+    # Archived runs are never valid arms: a persisted pointer at a tainted
+    # pre-PR #56 run is dropped so the dashboard starts the new candidate
+    # from zero instead of inheriting 126 stale windows.
+    if _is_archived_run(baseline_id):
+        baseline_id = DEFAULT_BASELINE_ID
+    if _is_archived_run(candidate_id):
+        candidate_id = None
+
     # Prefer the live active run when the persisted candidate is stale:
     # if ab_test_state.json points to a strategy that no longer matches
     # DEFAULT_CANDIDATE_ID but active_run.json points to one that does,
     # follow active_run.json so the dashboard stays in sync with the loop.
+    # Archived active runs are ignored for the same reason as above.
     active_meta_path = RUNS_DIR / "active_run.json"
     try:
         if active_meta_path.exists():
             ar = json.loads(active_meta_path.read_text(encoding="utf-8"))
             act_id = ar.get("activeRunId")
-            if act_id and act_id != baseline_id:
+            if act_id and act_id != baseline_id and not _is_archived_run(act_id):
                 if not candidate_id:
                     meta_p = RUNS_DIR / act_id / "run_meta.json"
                     if meta_p.exists():
@@ -698,6 +746,7 @@ def get_ab_test_data() -> dict[str, Any]:
             "verdict": verdict,
             "verdictTone": verdict_tone,
         },
+        "baselineWarning": BASELINE_ENGINE_WARNING,
         "hypotheses": {
             "nullHypothesis": _hypothesis_text(candidate_id, null=True, baseline_id=baseline_id),
             "altHypothesis": _hypothesis_text(candidate_id, null=False, baseline_id=baseline_id),
