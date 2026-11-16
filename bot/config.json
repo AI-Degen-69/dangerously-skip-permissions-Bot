@@ -25,7 +25,6 @@
     "benchmarkPairCost": 0.96,
     "targetPairCost": 0.96,
     "maxPairCost": 0.985,
-    "maxShareLead": 11.0,
     "maxUnhedgedShares": 100.0,
     "maxUnhedgedUsd": 45.0,
     "dipCurve": "hump",
@@ -45,6 +44,10 @@
     "rescuePairCostMax": 1.02,
     "rescueCeilingPrice": 0.985,
     "maxDepthShares": 0.0
+  },
+  "rebate": {
+    "takerRate": 0.5,
+    "note": "Paper-modeled refund of each window's taker-fee total (measured wallet: 50% at top tier, 32-44% at lower tiers). Paper cannot earn rebates; the simulator credits the configured rate so paper P&L stays comparable to live economics."
   },
   "risk": {
     "maxFillsPerWindow": 500,

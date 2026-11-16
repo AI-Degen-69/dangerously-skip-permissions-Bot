@@ -23,7 +23,6 @@ def _decide(max_unhedged_usd=0.0):
         whole_ladder=True,
         target_pair_cost=0.965,
         max_pair_cost=0.985,
-        max_share_lead=46.0,
         max_unhedged_usd=max_unhedged_usd,
         in_sweep_phase=False,
         rescue_ceiling=0.985,
@@ -32,7 +31,7 @@ def _decide(max_unhedged_usd=0.0):
 
 
 class TestUnhedgedUsdCap(unittest.TestCase):
-    """The share knob (maxShareLead) counts shares; this knob counts dollars."""
+    """The dollar cap is now the only unhedged control (the share veto is gone)."""
 
     def test_off_by_default_is_unchanged(self):
         dec = _decide()
@@ -89,7 +88,6 @@ class TestDipCurveSizing(unittest.TestCase):
             whole_ladder=True,
             target_pair_cost=0.965,
             max_pair_cost=0.985,
-            max_share_lead=46.0,
             dip_curve=self.CURVE,
             in_sweep_phase=False,
             rescue_ceiling=0.985,
@@ -113,7 +111,6 @@ class TestDipCurveSizing(unittest.TestCase):
             whole_ladder=True,
             target_pair_cost=0.965,
             max_pair_cost=0.985,
-            max_share_lead=46.0,
             dip_curve=self.CURVE,
             in_sweep_phase=False,
             rescue_ceiling=0.985,

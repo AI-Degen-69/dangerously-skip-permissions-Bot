@@ -25,7 +25,7 @@ python bot/live_paper.py --slot <epoch>
   `clipSharesDefault` 30 (30.4% signature), `maxShares` 50,
   `minFillPrice` 0.07 (dust floor), `maxFillPrice` 0.95 (favorite cap),
   `targetPairCost` 0.965 ($0.9654 measured median), `maxPairCost` 0.990 (sub-$1.00 hard cap),
-  `maxShareLead` 90 (anti-runaway lead cap),
+  no share veto (unhedged risk is dollar-capped via `maxUnhedgedUsd`),
   `minSpacingMoveSec` 0.5, `minSpacingStaticSec` 2.5,
   `includeTakerFee` true, `wholeLadderClips` true.
 - `risk`: `maxFillsPerWindow` 500,

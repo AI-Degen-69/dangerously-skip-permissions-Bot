@@ -146,7 +146,6 @@ export interface StrategySetup {
     benchmarkPairCost: number
     targetPairCost: number
     maxPairCost: number
-    maxShareLead: number
     maxUnhedgedUsd?: number
     dipCurve?: { lo: number; hi: number; sharesLo: number; sharesHi: number }
     rescuePairCostMax?: number
@@ -470,7 +469,6 @@ export interface BotConfigView {
     maxFillPrice?: number
     targetPairCost?: number
     maxPairCost?: number
-    maxShareLead?: number
     minSpacingMoveSec?: number
     minSpacingStaticSec?: number
     includeTakerFee?: boolean

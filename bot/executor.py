@@ -207,7 +207,6 @@ def evaluate_microstructure_ladder(
     whole_ladder: bool = True,
     benchmark_pair_cost: float = C.BENCHMARK_PAIR_COST,
     max_pair_cost: float = C.PAIR_COST_MAX,
-    max_share_lead: float = C.MAX_SHARE_LEAD,
     max_unhedged_usd: float = 0.0,
     dip_curve: dict | None = None,
     target_pair_cost: float | None = None,
@@ -304,17 +303,10 @@ def evaluate_microstructure_ladder(
     is_v22 = strategy_id.endswith("v2.2")
     is_v23 = strategy_id.endswith("v2.3")
     is_confidence = is_v22 or is_v23
-    # SINGLE unhedged-gap knob: max_share_lead is a strict veto, identical for
-    # every strategy version. A fill that would leave this side's lead AT OR
-    # ABOVE max_share_lead is skipped, so unhedged inventory strictly never
-    # reaches the knob value (knob 20 -> at most 19 sh held, 20 unreachable).
-    # This caps the NET difference only, NOT total paired volume, so choppy
-    # windows can re-trigger Dip -> Equalize micro-cycles indefinitely
-    # while unhedged risk at any second stays strictly below the knob.
-    # (There used to be a hidden +5.0 overshoot allowance here that let the
-    # gap land on lead_cap+5; it is gone. What the dashboard shows is what
-    # the engine enforces.)
-    lead_cap = max_share_lead
+    # No share-denominated veto: unhedged inventory is NOT capped by share
+    # count. The measured wallet holds triple-digit residuals, so a share
+    # veto only suppresses fills without buying safety. Unhedged risk is
+    # governed by the dollar cap (max_unhedged_usd) instead.
 
     # --- v2.7 knob resolution (all optional; absent = pre-v2.7 behavior) ---
     def _fnum(v):
@@ -540,18 +532,10 @@ def evaluate_microstructure_ladder(
             return MicrostructureDecision(action="skip", outcome=preferred, reason="extreme-price-skip", sub_reason="pair-cost-cap")
         return MicrostructureDecision(action="skip", outcome=preferred, reason="sweep-balanced", sub_reason="sweep-balanced")
 
-    # Anti-Runaway Deficit Lock & Strict Leading-Side Freeze:
-    # If one side leads by >= the single gap knob (max_share_lead), STRICTLY
-    # FREEZE buying the leading side! Candidates must ONLY be the lagging
-    # side until balance is restored. (The old separate freezeLead setting was
-    # merged into max_share_lead: one setting does all of this.)
-    fl = max_share_lead
-    min_clip = min(10.0, default_clip, max_clip)
-    if up_def >= fl or (saw_pair_cap and up_def > 0 and up_def + min_clip >= fl):
-        candidates = ("Up",)   # Down leads -> ONLY Up allowed!
-    elif down_def >= fl or (saw_pair_cap and down_def > 0 and down_def + min_clip >= fl):
-        candidates = ("Down",) # Up leads -> ONLY Down allowed!
-    elif up_def > 0:
+    # Candidate order: the lagging (deficit) side goes first so pairing is
+    # preferred, but neither side is ever frozen out. Both sides stay eligible
+    # on every evaluation.
+    if up_def > 0:
         candidates = ("Up", "Down")
     elif down_def > 0:
         candidates = ("Down", "Up")
@@ -620,10 +604,7 @@ def evaluate_microstructure_ladder(
                 if low_p is not None and ask > (low_p - (_step_cents / 100.0) + 1e-6):
                     saw_unhedged_step = True
                     t_ok = False
-            if t_ok and (lead + t_shares >= lead_cap):
-                saw_unhedged_cap = True
-                t_ok = False
-            elif t_ok and max_unhedged_usd > 0:
+            if t_ok and max_unhedged_usd > 0:
                 t_new_sh = inv[side]["shares"] + t_shares
                 t_new_cost = inv[side]["cost"] + t_est
                 t_lead_after = t_new_sh - inv[opp]["shares"]
@@ -690,19 +671,10 @@ def evaluate_microstructure_ladder(
             )
             est_usd, _ = compute_fill_usd(shares, px, role=role, include_fee=(role == "TAKER"))
             proj_pc = _projected_pair_cost(inv, side, shares, est_usd)
-            # Strict hard ceiling on one-sided lead: a fill that would leave
-            # this side's lead at or above the knob is vetoed, so the knob
-            # value itself is unreachable (set 20 -> 20 never held).
-            # v2.2 atomic pairs bypass this (one-shot 60/60 then hold).
-            atomic_bypass = bool(is_atomic and is_v22)
-            if not atomic_bypass and (lead + shares >= lead_cap):
-                saw_unhedged_cap = True
-                continue
-            # Dollar-denominated unhedged cap (opt-in; 0 = off). max_share_lead
-            # counts SHARES, so it vetoes a big cheap clip ("33 >= 11") while
-            # saying nothing about dollars at risk. This knob caps the dollars
-            # exposed instead: average cost of this side's inventory x the net
-            # unhedged lead it would leave behind.
+            # Dollar-denominated unhedged cap (opt-in; 0 = off). This knob caps
+            # the dollars exposed instead of counting shares: average cost of
+            # this side's inventory x the net unhedged lead it would leave
+            # behind.
             if max_unhedged_usd > 0:
                 new_sh = inv[side]["shares"] + shares
                 new_cost = inv[side]["cost"] + est_usd

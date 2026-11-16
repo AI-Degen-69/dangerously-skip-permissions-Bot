@@ -38,7 +38,6 @@ export function tweakCards(candidate: AbTestDistributionStats | null | undefined
   const clip = num(e.clipSharesDefault, 10)
   const mx = num(e.maxShares, 45)
   const hiC = cents(e.maxFillPrice, 0.45)
-  const lead = num(e.maxShareLead, 15)
   const tgt = money(e.targetPairCost ?? e.benchmarkPairCost, 0.965)
   const cap = money(e.maxPairCost, 0.985)
   const rescue = money(e.rescuePairCostMax, 0.995)
@@ -68,7 +67,7 @@ export function tweakCards(candidate: AbTestDistributionStats | null | undefined
       : probe > 0
         ? `Leg-1 fresh clips capped at ${probe} sh unhedged probe; unlocks full ${mx} sh on Leg 2 and paired fills. Additional unhedged fills on the same side require an ${step}¢ step down.`
         : sizing === 'constant-risk'
-          ? `Every dip sized as $${risk.toFixed(2)} / price (${clip} at ${hiC}c up to ${mx} at 10c), dips at ${hiC}c or cheaper only. No heavy bulk fills; unhedged gap vetoed at ${lead} while total paired volume ${uncapped ? 'has no cap' : 'is capped'}.`
+          ? `Every dip sized as $${risk.toFixed(2)} / price (${clip} at ${hiC}c up to ${mx} at 10c), dips at ${hiC}c or cheaper only. No heavy bulk fills; no share veto while total paired volume ${uncapped ? 'has no cap' : 'is capped'}.`
           : sizing === 'confidence'
             ? `Sizes heavy (${mx} sh) on 100% risk-free atomic pairs and deficit equalizations, while micro-sizing speculative dips to ${clip} sh.`
             : `Dip clips of ${clip} sh (max ${mx} sh), dips at ${hiC}c or cheaper.`)

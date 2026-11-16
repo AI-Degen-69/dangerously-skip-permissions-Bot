@@ -163,7 +163,6 @@ function specRows(picked: StrategySetup) {
   const e = picked.entry
   const sizing = sizingLine(picked)
   const gapUsd = Number(e.maxUnhedgedUsd ?? 0)
-  const lead = Number(e.maxShareLead)
   const rescuePx = e.rescueCeilingPrice
   const rescuePc = e.rescuePairCostMax
   return [
@@ -189,10 +188,10 @@ function specRows(picked: StrategySetup) {
     },
     {
       key: 'Unhedged gap cap',
-      value: gapUsd > 0 ? `≤ ${usd(gapUsd, 2)} net unhedged cost · ≤ ${sh(lead)} lead` : `never ${sh(lead)} on one side`,
+      value: gapUsd > 0 ? `≤ ${usd(gapUsd, 2)} net unhedged cost · no share veto` : 'no share veto · size uncapped by shares',
       note: gapUsd > 0
-        ? `Both vetoes are live: the ${usd(gapUsd, 2)} cap refuses a clip that would leave more than that in net unhedged cost, and the ${sh(lead)} share knob refuses a clip that would push the leading side to it. The knob binds first on deep dips — a second ${sh(e.dipCurve?.sharesLo ?? e.clipSharesDefault)} clip at ${cents(e.dipCurve?.lo ?? e.minFillPrice)} costs only $${(2 * Number(e.dipCurve?.sharesLo ?? e.clipSharesDefault) * Number(e.dipCurve?.lo ?? e.minFillPrice)).toFixed(2)} but would leave ${2 * Number(e.dipCurve?.sharesLo ?? e.clipSharesDefault)} shares unhedged. Paired volume stays uncapped.`
-        : `The share knob is a strict veto, so the largest unhedged lead ever held is ${sh(lead - 1)}.`,
+        ? `The ${usd(gapUsd, 2)} cap refuses a clip that would leave more than that in net unhedged cost. There is deliberately no share-denominated veto: the measured wallet holds triple-digit residuals, so unhedged risk is governed in dollars, not shares. Paired volume stays uncapped.`
+        : `No share-denominated veto and no dollar cap: unhedged size is governed by pair-cost gates and position management, not by a share count.`,
     },
     {
       key: 'Rescue hedge ceiling',
@@ -386,9 +385,6 @@ export function Strategy() {
   const profile = picked ? curveProfile(picked) : null
   const rescuePx = entry?.rescueCeilingPrice
   const rescuePc = entry?.rescuePairCostMax
-  // Deepest-dip clip, used for the "knob binds first" example.
-  const loPx = Number(entry?.dipCurve?.lo ?? entry?.minFillPrice ?? 0)
-  const loSh = Number(entry?.dipCurve?.sharesLo ?? entry?.clipSharesDefault ?? 0)
 
   return (
     <div className="mx-auto max-w-[1180px] p-5 sm:p-8">
@@ -470,12 +466,12 @@ export function Strategy() {
                 <ShieldCheck className="size-3.5 text-warning" /> Unhedged cap
               </span>
               <p className="mt-1.5 font-mono text-[16px] font-bold text-fg">
-                {gapUsd > 0 ? usd(gapUsd, 2) : `${entry.maxShareLead} sh`}
+                {gapUsd > 0 ? usd(gapUsd, 2) : 'No share veto'}
               </p>
               <p className="text-[11.5px] text-muted">
                 {gapUsd > 0
-                  ? `net cost at risk · ${entry.maxShareLead} sh knob also live`
-                  : 'net lead never reaches the knob'}
+                  ? 'net cost at risk · no share-denominated veto'
+                  : 'unhedged size governed by pair-cost gates, not shares'}
               </p>
             </div>
 
@@ -625,20 +621,15 @@ export function Strategy() {
                       {gapUsd > 0 ? (
                         <>
                           A fill that would leave more than <code className="font-mono">{usd(gapUsd, 2)}</code> of net
-                          unhedged cost is vetoed, and so is one that would push the leading side to{' '}
-                          <code className="font-mono">{entry?.maxShareLead} sh</code>. At deep dips the share knob binds
-                          first: a second <code className="font-mono">{loSh}</code> clip at{' '}
-                          <code className="font-mono">{cents(loPx)}</code> costs only{' '}
-                          <code className="font-mono">${(2 * loSh * loPx).toFixed(2)}</code> but would leave{' '}
-                          <code className="font-mono">{2 * loSh} sh</code>{' '}
-                          unhedged. Below that knob both sides stay eligible; once one side reaches it, only the
-                          lagging side may be bought. Total paired volume is uncapped.
+                          unhedged cost is vetoed — in dollars, not shares. Both sides stay eligible at every lead:
+                          the lagging side is simply evaluated first so pairing is preferred. Total paired volume is
+                          uncapped.
                         </>
                       ) : (
                         <>
-                          A fill that would leave the leading side at or above{' '}
-                          <code className="font-mono">{entry?.maxShareLead} sh</code> is vetoed, so that lead is never
-                          held. Once a side reaches the knob, only the lagging side may be bought.
+                          There is no share-denominated veto and no dollar cap: both sides stay eligible at every
+                          lead, the lagging side evaluated first so pairing is preferred. Unhedged size is governed
+                          by pair-cost gates and position management, not by a share count.
                         </>
                       )}
                     </p>
@@ -813,7 +804,7 @@ export function Strategy() {
                   <h3 className="font-heading text-base font-semibold text-foreground">4. Risks &amp; what bounds them</h3>
                 </div>
                 <Badge tone="warning">
-                  {gapUsd > 0 ? `${usd(gapUsd, 2)} max unhedged cost` : `${entry?.maxShareLead ?? 90} sh max unhedged lead`}
+                  {gapUsd > 0 ? `${usd(gapUsd, 2)} max unhedged cost` : 'No unhedged cap'}
                 </Badge>
               </div>
 
@@ -851,12 +842,12 @@ export function Strategy() {
                 <div className="rounded-tile border border-line bg-surface p-3.5">
                   <span className="font-mono text-[11px] uppercase text-faint">Unhedged exposure</span>
                   <p className="mt-1 text-[15.5px] font-bold text-fg">
-                    {gapUsd > 0 ? usd(gapUsd, 2) : `${entry?.maxShareLead ?? 90} sh`}
+                    {gapUsd > 0 ? usd(gapUsd, 2) : 'No share veto'}
                   </p>
                   <p className="text-[12px] text-muted">
                     {gapUsd > 0
-                      ? `Net unhedged cost vetoed above the cap; the ${entry?.maxShareLead} sh knob is a second, independent veto`
-                      : 'A fill leaving the leader at the knob is vetoed, so the knob is never held'}
+                      ? 'Net unhedged cost vetoed above the cap in dollars — no share-denominated veto'
+                      : 'Unhedged size governed by pair-cost gates, not shares'}
                   </p>
                 </div>
 

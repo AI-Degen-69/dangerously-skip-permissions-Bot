@@ -116,6 +116,18 @@ def cfg_entry(key: str, default):
     return load_cfg().get("entry", {}).get(key, default)
 
 
+def paper_rebate_rate() -> float:
+    """Configured paper taker-rebate rate (0 = off), clamped to [0, 1]."""
+    try:
+        raw = load_cfg().get("rebate", {}).get("takerRate", C.PAPER_REBATE_TAKER_RATE)
+        rate = float(raw)
+    except (TypeError, ValueError, AttributeError):
+        return C.PAPER_REBATE_TAKER_RATE
+    if rate != rate:  # NaN guard
+        return C.PAPER_REBATE_TAKER_RATE
+    return min(1.0, max(0.0, rate))
+
+
 def run_tape_dir():
     """The run's tape dir, always recorded: the desk audits every fill against it,
     so a run without a tape produces numbers nobody can check. Raises OSError when
@@ -538,7 +550,6 @@ def trade_window(
     max_shares = float(entry.get("maxShares", C.MAX_SHARES))
     target_pair_cost = float(entry.get("targetPairCost", C.TARGET_PAIR_COST))
     max_pair_cost = float(entry.get("maxPairCost", C.PAIR_COST_MAX))
-    max_share_lead = float(entry.get("maxShareLead", C.MAX_SHARE_LEAD))
     try:
         max_unhedged_usd = float(entry.get("maxUnhedgedUsd", C.MAX_UNHEDGED_USD))
     except (TypeError, ValueError):
@@ -1056,7 +1067,6 @@ def trade_window(
                 whole_ladder=whole_ladder,
                 target_pair_cost=target_pair_cost,
                 max_pair_cost=max_pair_cost,
-                max_share_lead=max_share_lead,
                 max_unhedged_usd=max_unhedged_usd,
                 dip_curve=dip_curve,
                 in_sweep_phase=in_sweep_phase,
@@ -1275,10 +1285,19 @@ def settle_slug(slug: str, snap: dict, origin: str | None, budget_s: int = 900) 
             print(f"[{slug}] resolve poll: {type(ex).__name__}", flush=True)
     payout = None
     net = None
+    # Paper-modeled taker rebate: the measured wallet is refunded ~50% of its
+    # taker fees (32-44% at lower volume tiers). Paper cannot earn a rebate,
+    # so the simulator credits the configured rate on the window's taker-fee
+    # total to keep paper P&L comparable to live economics.
+    rebate_rate = paper_rebate_rate()
+    taker_fees_usd = round(float(snap.get("fees_usd") or 0.0), 2)
+    rebate_usd = 0.0
     if winner:
         wshares = sum(f["shares"] for f in fills if f["outcome"] == winner)
         payout = round(wshares * 1.0, 2)
         net = round(payout - cost, 2)
+        rebate_usd = round(rebate_rate * taker_fees_usd, 2)
+    net_rebated_usd = round(net + rebate_usd, 2) if net is not None else None
 
     # The definitive read of the fills: a maker fill only counts when the tape
     # shows enough taker selling behind the queue that was actually resting.
@@ -1308,6 +1327,9 @@ def settle_slug(slug: str, snap: dict, origin: str | None, budget_s: int = 900) 
         "cost_usd": cost,
         "payout_usd": payout,
         "net_usd": net,
+        "rebate_usd": rebate_usd,
+        "rebate_rate": rebate_rate,
+        "net_rebated_usd": net_rebated_usd,
         "winner": winner,
         "resolvedAt": datetime.now(timezone.utc).isoformat(),
         "fills": fills,
@@ -1347,8 +1369,9 @@ def settle_slug(slug: str, snap: dict, origin: str | None, budget_s: int = 900) 
             pass
     log_event("settle", "paper-resolve", slug,
               detail={"winner": winner, "fills": len(fills), "cost": cost,
-                      "payout": payout, "net": net})
-    print(f"[{slug}] resolved: winner={winner} payout=${payout:.2f} net=${net:.2f}", flush=True)
+                      "payout": payout, "net": net,
+                      "rebate": rebate_usd, "netRebated": net_rebated_usd})
+    print(f"[{slug}] resolved: winner={winner} payout=${payout:.2f} net=${net:.2f} rebate=${rebate_usd:.2f} netRebated=${net_rebated_usd if net_rebated_usd is not None else float('nan'):.2f}", flush=True)
     if origin:
         try:
             post_result(origin, result)

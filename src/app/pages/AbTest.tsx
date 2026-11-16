@@ -118,19 +118,16 @@ function specRows(entry: Record<string, unknown> | undefined): SpecRow[] {
   }
   const clip = num(e.clipSharesDefault, 10)
   const maxClip = num(e.maxClipShares ?? e.maxShares, 45)
-  const lead = num(e.maxShareLead, 15)
   const taker = e.takerDipEntryMax != null ? `${round(num(e.takerDipEntryMax, 0.36) * 100)}c` : '—'
   const tgt = num(e.targetPairCost ?? e.benchmarkPairCost, 0.965)
   const cap = num(e.maxPairCost, 0.985)
   const gapUsd = num(e.maxUnhedgedUsd, 0)
-  const gapSh = num(e.maxUnhedgedShares ?? lead, lead)
   const rescue = num(e.rescuePairCostMax ?? e.lateRescueMaxPairCost, 0.995)
   return [
     { key: 'clips', label: 'Clips', value: `${clip} to ${maxClip} sh` },
-    { key: 'lead', label: 'Lead Veto', value: `${lead} sh` },
     { key: 'taker', label: 'Taker Dip', value: taker },
     { key: 'pairCap', label: 'Pair Cap', value: `$${tgt.toFixed(3)} / $${cap.toFixed(3)}` },
-    { key: 'gapCap', label: 'Gap Cap', value: gapUsd > 0 ? `$${gapUsd.toFixed(0)}` : `${gapSh} sh` },
+    { key: 'gapCap', label: 'Gap Cap', value: gapUsd > 0 ? `$${gapUsd.toFixed(0)}` : 'No veto' },
     { key: 'rescue', label: 'Rescue', value: `$${rescue.toFixed(3)}` },
   ]
 }

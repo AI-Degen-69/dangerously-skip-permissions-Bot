@@ -12,11 +12,11 @@ class TestStrategySetups(unittest.TestCase):
         
         self.assertEqual(hapcs["entry"]["maxFillPrice"], 0.975)
         self.assertEqual(hapcs["entry"]["stopBeforeCloseSec"], 12)
-        self.assertEqual(hapcs["entry"]["maxShareLead"], 90.0)
-        
+        self.assertNotIn("maxShareLead", hapcs["entry"])
+
         self.assertEqual(dsp["entry"]["maxFillPrice"], 0.880)
         self.assertEqual(dsp["entry"]["stopBeforeCloseSec"], 75)
-        self.assertEqual(dsp["entry"]["maxShareLead"], 45.0)
+        self.assertNotIn("maxShareLead", dsp["entry"])
         self.assertEqual(dsp["entry"]["targetPairCost"], 0.965)
         self.assertEqual(dsp["entry"]["maxPairCost"], 0.985)
 
@@ -43,7 +43,6 @@ class TestStrategySetups(unittest.TestCase):
             max_clip=50.0,
             benchmark_pair_cost=0.965,
             max_pair_cost=0.985,
-            max_share_lead=45.0,
         )
         self.assertEqual(dec.action, "fill")
         self.assertEqual(dec.outcome, "Up")
@@ -90,8 +89,8 @@ class TestStrategySetups(unittest.TestCase):
         self.assertEqual(dec_hapcs.outcome, "Up")
         self.assertEqual(dec_hapcs.reason, "m4-snipe")
 
-    def test_dsp_max_share_lead_ceiling(self):
-        """Verify that DSP enforces the tighter 45-share lead ceiling."""
+    def test_dsp_deficit_side_goes_first_without_freeze(self):
+        """No share veto, no freeze: the lagging side is simply evaluated first."""
         inv = {
             "Up": {"shares": 60.0, "cost": 20.0},
             "Down": {"shares": 15.0, "cost": 5.0},
@@ -101,7 +100,6 @@ class TestStrategySetups(unittest.TestCase):
             "Up": {"bid": 0.40, "ask": 0.41},
             "Down": {"bid": 0.40, "ask": 0.41},
         }
-        # With max_share_lead=45.0, candidates will strictly refuse to add to Up
         dec = evaluate_microstructure_ladder(
             quotes=quotes,
             inv=inv,
@@ -110,14 +108,14 @@ class TestStrategySetups(unittest.TestCase):
             strategy_id="dangerously-skip-permissions",
             min_fill=0.07,
             max_fill=0.88,
-            max_share_lead=45.0,
         )
-        # It must only consider Down (the lagging side)
+        # Down has the deficit, so it is evaluated first and fills.
+        self.assertEqual(dec.action, "fill")
         self.assertEqual(dec.outcome, "Down")
 
-    def test_v23_unhedged_gap_veto_is_strict(self):
-        """The gap knob is a strict veto: lead + shares >= knob is skipped, so the knob value itself is never held."""
-        def decide(up_sh, down_sh, knob=20.0):
+    def test_v23_no_gap_veto(self):
+        """The share veto is gone: pair-gated fills happen at any lead."""
+        def decide(up_sh, down_sh):
             inv = {
                 "Up": {"shares": float(up_sh), "cost": round(up_sh * 0.44, 2)},
                 "Down": {"shares": float(down_sh), "cost": round(down_sh * 0.50, 2)},
@@ -135,22 +133,17 @@ class TestStrategySetups(unittest.TestCase):
                 max_clip=45.0,
                 benchmark_pair_cost=0.965,
                 max_pair_cost=0.985,
-                max_share_lead=knob,
             )
-        # A flat book: the 10-share clip is all the unhedged lead it would create.
+        # A flat book fills the opening dip with no veto.
         dec_ok = decide(0, 0)
         self.assertEqual(dec_ok.action, "fill")
         self.assertEqual(dec_ok.outcome, "Up")
-        # The clip would reach the knob exactly, and the knob value is never held.
-        dec_no = decide(0, 0, knob=10.0)
-        self.assertEqual(dec_no.action, "skip")
-        self.assertEqual(dec_no.sub_reason, "unhedged-cap")
-        # A real gap is closed, never widened: 20/10 buys the lagging Down instead.
+        # A real gap is closed first: 20/10 buys the lagging Down instead.
         dec_gap = decide(20, 10)
         self.assertEqual(dec_gap.outcome, "Down")
 
-    def test_v24_knob_11_fits_10_share_clips(self):
-        """v2.4 knob 11: a fresh 10 sh clip fills (0+10<11); a 10 sh gap is hedged, not widened."""
+    def test_v24_no_gap_veto(self):
+        """v2.4: a fresh 10 sh clip fills; a 10 sh gap is hedged, not widened."""
         def decide(up_sh, down_sh):
             inv = {
                 "Up": {"shares": float(up_sh), "cost": round(up_sh * 0.44, 2)},
@@ -169,7 +162,6 @@ class TestStrategySetups(unittest.TestCase):
                 max_clip=45.0,
                 benchmark_pair_cost=0.965,
                 max_pair_cost=0.985,
-                max_share_lead=11.0,
             )
         dec_open = decide(0, 0)
         self.assertEqual(dec_open.action, "fill")
@@ -184,13 +176,13 @@ class TestStrategySetups(unittest.TestCase):
         self.assertEqual(select_ladder_clip(deficit=35.0, price=0.60), 35.0)
         self.assertEqual(select_ladder_clip(deficit=70.0, price=0.60, max_clip=50.0), 50.0)
 
-    def test_strict_leading_side_freeze(self):
-        """Verify that when one side leads by >= the single gap knob, the leading side is frozen."""
+    def test_no_freeze_deficit_hedge_goes_first(self):
+        """Without the veto there is no freeze: the deficit hedge is simply evaluated first."""
         inv = {
-            "Up": {"shares": 50.0, "cost": 17.50},  # Up leads by 20 shares (>= knob 20)
+            "Up": {"shares": 50.0, "cost": 17.50},  # Up leads by 20 shares
             "Down": {"shares": 30.0, "cost": 12.00},
         }
-        # Up quote is in the dip (0.35), Down quote is NOT in the dip (0.55)
+        # Up quote is in the dip (0.35); Down hedge at 0.54 pairs at 0.81.
         quotes = {
             "Up": {"bid": 0.35, "ask": 0.36},
             "Down": {"bid": 0.54, "ask": 0.55},
@@ -201,11 +193,11 @@ class TestStrategySetups(unittest.TestCase):
             fill_idx=10,
             minute=1,
             strategy_id="dangerously-skip-permissions",
-            max_share_lead=20.0,
         )
-        # Even though Up is at a cheap dip price (0.35), it must NOT buy Up!
-        # It must either skip or target Down (the lagging side).
-        self.assertNotEqual(dec.outcome, "Up")
+        # Down has the deficit so it is evaluated first, and the 0.81 pair
+        # clears the gates — the hedge fills instead of widening the lead.
+        self.assertEqual(dec.action, "fill")
+        self.assertEqual(dec.outcome, "Down")
 
     def test_rescue_equalizer_on_high_price_deficit(self):
         """Verify that when holding a deficit, higher rescue prices (up to 0.92, pc up to 1.025) are accepted."""
@@ -299,7 +291,7 @@ class TestStrategySetups(unittest.TestCase):
             self.assertEqual(reloaded["entry"]["maxFillPrice"], 0.880)
             self.assertEqual(reloaded["entry"]["stopBeforeCloseSec"], 75)
             self.assertEqual(reloaded["entry"]["maxPairCost"], 0.985)
-            self.assertEqual(reloaded["entry"]["maxShareLead"], 45.0)
+            self.assertNotIn("maxShareLead", reloaded["entry"])
 
             # 2. Switch back to hapcs-v1
             hapcs_setup = C.STRATEGY_SETUPS["hapcs-v1"]
@@ -316,7 +308,7 @@ class TestStrategySetups(unittest.TestCase):
             self.assertEqual(reloaded_hapcs["entry"]["maxFillPrice"], 0.975)
             self.assertEqual(reloaded_hapcs["entry"]["stopBeforeCloseSec"], 12)
             self.assertEqual(reloaded_hapcs["entry"]["maxPairCost"], 0.990)
-            self.assertEqual(reloaded_hapcs["entry"]["maxShareLead"], 90.0)
+            self.assertNotIn("maxShareLead", reloaded_hapcs["entry"])
         finally:
             CONFIG_PATH.write_text(orig_content, encoding="utf-8")
 

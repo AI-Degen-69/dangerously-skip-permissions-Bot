@@ -3,7 +3,6 @@
 from .constants import (
     CLIP_SHARES_DEFAULT,
     MAX_SHARES,
-    MAX_SHARE_LEAD,
     NUM_WINDOWS_24H,
     STRATEGY_ID,
     STRATEGY_NAME,
@@ -14,7 +13,6 @@ from .signal import DumbLean
 __all__ = [
     "CLIP_SHARES_DEFAULT",
     "MAX_SHARES",
-    "MAX_SHARE_LEAD",
     "NUM_WINDOWS_24H",
     "STRATEGY_ID",
     "STRATEGY_NAME",

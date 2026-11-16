@@ -345,7 +345,6 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
     max_shares = float(entry.get("maxShares", C.MAX_SHARES))
     target_pc = float(entry.get("targetPairCost", C.TARGET_PAIR_COST))
     max_pc = float(entry.get("maxPairCost", C.PAIR_COST_MAX))
-    max_lead = float(entry.get("maxShareLead", C.MAX_SHARE_LEAD))
     try:
         max_unhedged_usd = float(entry.get("maxUnhedgedUsd", 0.0) or 0.0)
     except (TypeError, ValueError):
@@ -674,7 +673,7 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
             strategy_id=strategy_id, min_fill=min_fill, max_fill=max_fill,
             default_clip=clip_default, max_clip=max_shares,
             whole_ladder=True, target_pair_cost=target_pc,
-            max_pair_cost=max_pc, max_share_lead=max_lead,
+            max_pair_cost=max_pc,
             max_unhedged_usd=max_unhedged_usd, dip_curve=dip_curve,
             in_sweep_phase=in_sweep, rescue_ceiling=rescue_ceiling,
             rescue_max_pair_cost=rescue_max,

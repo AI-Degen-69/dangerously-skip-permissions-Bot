@@ -163,23 +163,6 @@ const GROUPS: { title: string; note?: string; icon: typeof Coins; tone: Tone; fi
         ),
         step: 0.01,
       },
-      {
-        path: 'entry.maxShareLead',
-        label: 'Max one-sided lead (shares)',
-        hint: '90 shares = 3x 30sh clips',
-        tip: (
-          <EdgeTip
-            title="Max Share Lead"
-            gist="Prevents runaway one-sided accumulation when a dipping token trends down without rebounding."
-            lowLabel="30"
-            lowText="Locks immediately after 1 unhedged clip."
-            highLabel="180"
-            highText="Allows high directional exposure before hedging."
-            foot="Default 90 shares · range 10–300"
-          />
-        ),
-        step: 10,
-      },
     ],
   },
   {

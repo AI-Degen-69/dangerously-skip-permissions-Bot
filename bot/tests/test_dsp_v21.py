@@ -4,8 +4,8 @@ from bot.executor import evaluate_microstructure_ladder
 
 
 class TestDspV21Family(unittest.TestCase):
-    def test_v21_is_treated_as_dsp_and_never_adds_to_naked_leader(self):
-        """Regression: v2.1 id must get DSP rules (lead freeze) — it once fell through to HAPCS rules."""
+    def test_v21_is_treated_as_dsp(self):
+        """Regression: v2.1 id must get DSP rules — it once fell through to HAPCS rules."""
         inv = {
             "Up": {"shares": 30.0, "cost": 8.4},
             "Down": {"shares": 0.0, "cost": 0.0},
@@ -25,7 +25,6 @@ class TestDspV21Family(unittest.TestCase):
             max_fill=0.88,
             max_pair_cost=0.985,
             rescue_max_pair_cost=0.995,
-            max_share_lead=30.0,
         )
         self.assertNotEqual((dec.action, dec.outcome), ("fill", "Up"))
 

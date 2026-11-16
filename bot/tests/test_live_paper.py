@@ -458,10 +458,10 @@ class LivePaperLoopTests(unittest.TestCase):
         # Refuses the 1.03 hedge-equalizer and instead dips Up at 0.20 (which lowers Up avg to 0.233 -> pair = 0.993) or skips
         self.assertNotEqual(dec_lose.sub_reason, "hedge-equalizer")
 
-    def test_anti_runaway_deficit_freeze(self):
+    def test_no_deficit_freeze_leading_side_dip_fills(self):
         from bot.executor import evaluate_microstructure_ladder
-        # When Up leads Down by >= max_share_lead (e.g. 120 Up, 30 Down = 90 lead),
-        # Up is strictly frozen in the Dip Ladder even if Up is at deep discount (e.g. 0.15).
+        # No share veto and no freeze: a pair-gated dip on the leading side
+        # still fills (unhedged risk is governed by the dollar cap, not shares).
         inv_lead = {
             "Up": {"shares": 120.0, "cost": 40.0},
             "Down": {"shares": 30.0, "cost": 15.0},
@@ -471,9 +471,8 @@ class LivePaperLoopTests(unittest.TestCase):
             "Down": {"bid": 0.82, "ask": 0.84},
         }
         dec = evaluate_microstructure_ladder(quotes, inv_lead, fill_idx=5, minute=1, lean=LeanSignal(0.0, 1.0))
-        # The engine must NOT buy Up (the leading underdog) and instead skips
-        self.assertNotEqual(dec.outcome, "Up")
-        self.assertEqual(dec.action, "skip")
+        self.assertEqual(dec.action, "fill")
+        self.assertEqual(dec.outcome, "Up")
 
     def test_live_markets_m4_snipe_verdict(self):
         import bot.api as api
@@ -633,8 +632,8 @@ class LivePaperLoopTests(unittest.TestCase):
         dec = evaluate_microstructure_ladder(
             quotes=quotes, inv=inv, fill_idx=1, minute=0,
             strategy_id="hydrogen-v1.2", min_fill=0.07, max_fill=0.48,
-            default_clip=10.0, max_clip=10.0, max_pair_cost=0.985,
-            max_share_lead=11.0, leg1_max_price=0.48, leg2_max_price=0.75,
+            default_clip=10.0, max_clip=10.0,             max_pair_cost=0.985,
+            leg1_max_price=0.48, leg2_max_price=0.75,
             open_orders=open_orders,
         )
         self.assertEqual(dec.action, "fill")
@@ -663,13 +662,13 @@ class LivePaperLoopTests(unittest.TestCase):
         }
         quotes_74 = {
             "Up": {"bid": 0.73, "ask": 0.74},
-            "Down": {"bid": 0.25, "ask": 0.26},
+            "Down": {"bid": None, "ask": None},
         }
         dec = evaluate_microstructure_ladder(
             quotes=quotes_74, inv=inv, fill_idx=1, minute=0,
             strategy_id="hydrogen-v1.2", min_fill=0.07, max_fill=0.48,
-            default_clip=10.0, max_clip=10.0, max_pair_cost=0.985,
-            max_share_lead=11.0, leg1_max_price=0.48, leg2_max_price=0.75,
+            default_clip=10.0, max_clip=10.0,             max_pair_cost=0.985,
+            leg1_max_price=0.48, leg2_max_price=0.75,
         )
         self.assertEqual(dec.action, "skip")
         self.assertEqual(dec.outcome, "Up")
@@ -679,13 +678,13 @@ class LivePaperLoopTests(unittest.TestCase):
         # Up at 0.85 exceeds leg2_max_price=0.75 -> still reports ceiling-price-skip.
         quotes_85 = {
             "Up": {"bid": 0.84, "ask": 0.85},
-            "Down": {"bid": 0.14, "ask": 0.15},
+            "Down": {"bid": None, "ask": None},
         }
         dec_ceil = evaluate_microstructure_ladder(
             quotes=quotes_85, inv=inv, fill_idx=1, minute=0,
             strategy_id="hydrogen-v1.2", min_fill=0.07, max_fill=0.48,
-            default_clip=10.0, max_clip=10.0, max_pair_cost=0.985,
-            max_share_lead=11.0, leg1_max_price=0.48, leg2_max_price=0.75,
+            default_clip=10.0, max_clip=10.0,             max_pair_cost=0.985,
+            leg1_max_price=0.48, leg2_max_price=0.75,
         )
         self.assertEqual(dec_ceil.action, "skip")
         self.assertEqual(dec_ceil.sub_reason, "ceiling-price-skip")
@@ -715,7 +714,6 @@ class LivePaperLoopTests(unittest.TestCase):
                 "clipSharesDefault": 10.0,
                 "maxShares": 10.0,
                 "maxPairCost": 0.985,
-                "maxShareLead": 11.0,
                 "takerDipEntryMax": 0.36,
                 "takerDipBalancedOnly": True,
                 "minSpacingStaticSec": 0.0,

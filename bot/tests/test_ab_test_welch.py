@@ -153,6 +153,7 @@ class TestBaselineIdentity(unittest.TestCase):
         e = reg["entry"]
         self.assertEqual(e["startAfterOpenSec"], 15)
         self.assertEqual(e["stopBeforeCloseSec"], 30)
+        self.assertNotIn("maxShareLead", e)
         self.assertEqual(e["sweepBeforeCloseSec"], 12)
         self.assertEqual(e["minFillPrice"], 0.07)
         self.assertEqual(e["maxLeg1Price"], 0.48)
@@ -161,7 +162,6 @@ class TestBaselineIdentity(unittest.TestCase):
         self.assertEqual(e["levelsPerSide"], 2)
         self.assertEqual(e["levelSpacing"], 0.01)
         self.assertEqual(e["maxClipShares"], 10.0)
-        self.assertEqual(e["maxShareLead"], 11.0)
         self.assertTrue(e["takerDipBalancedOnly"])
         self.assertEqual(e["maxUnhedgedShares"], 100.0)
         self.assertEqual(e["maxUnhedgedUsd"], 45.0)

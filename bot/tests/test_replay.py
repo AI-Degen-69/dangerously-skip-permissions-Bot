@@ -13,7 +13,7 @@ def _entry(**over):
          "clipSharesDefault": 10.0, "maxShares": 45.0,
          "minFillPrice": 0.07, "maxFillPrice": 0.55,
          "targetPairCost": 0.965, "maxPairCost": 0.985,
-         "maxShareLead": 46.0, "maxUnhedgedUsd": 6.0,
+         "maxUnhedgedUsd": 6.0,
          "dipCurve": {"lo": 0.07, "hi": 0.45, "sharesLo": 33.0, "sharesHi": 8.0},
          "rescuePairCostMax": 0.995, "rescueCeilingPrice": 0.985,
          "minSpacingMoveSec": 0.5, "minSpacingStaticSec": 2.5,
@@ -100,7 +100,6 @@ class MultiLevelTests(unittest.TestCase):
             "clipSharesDefault": 10.0,
             "maxShares": 10.0,
             "maxPairCost": 0.985,
-            "maxShareLead": 11.0,
             "takerDipEntryMax": 0.36,
             "takerDipBalancedOnly": True,
             "minSpacingStaticSec": 0.0,
@@ -208,7 +207,7 @@ class DeterminismTests(unittest.TestCase):
 
 
 def _v27base(**over):
-    e = dict(min_fill=0.07, max_fill=0.48, max_share_lead=100.0,
+    e = dict(min_fill=0.07, max_fill=0.48,
              max_unhedged_usd=45.0, target_pair_cost=0.960,
              max_pair_cost=0.985, leg1_max_price=0.48,
              leg2_max_price=0.75, elapsed_sec=10.0,

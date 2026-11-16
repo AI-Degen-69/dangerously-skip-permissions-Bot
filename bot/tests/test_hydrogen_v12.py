@@ -10,7 +10,7 @@ V12_KNOBS = dict(
     default_clip=10.0,
     max_clip=10.0,
     dip_curve="hump",
-    max_share_lead=11.0,
+
     max_unhedged_usd=45.0,
     taker_dip_max=0.36,
     taker_dip_balanced_only=True,
@@ -51,23 +51,23 @@ class TestHydrogenV12Registry(unittest.TestCase):
         self.assertEqual(e["lateRescueStartSec"], 210)
         self.assertEqual(e["lateRescueMaxPairCost"], 1.02)
         self.assertEqual(e["maxUnhedgedUsd"], 45.0)
-        # ... but the 25-share ratchet is gone: every leg is 10sh and the
-        # strict veto (lead + shares >= 11) caps directional lead at 10.
+        # ... but the 25-share ratchet is gone: every leg is 10sh, and there
+        # is no share veto at all — unhedged risk is dollar-capped.
         self.assertEqual(e["clipSharesDefault"], 10.0)
         self.assertEqual(e["maxShares"], 10.0)
         self.assertEqual(e["maxClipShares"], 10.0)
-        self.assertEqual(e["maxShareLead"], 11.0)
+        self.assertNotIn("maxShareLead", e)
         self.assertTrue(e["takerDipBalancedOnly"])
 
     def test_v11_frozen_setup_untouched(self):
         reg = C.STRATEGY_SETUPS.get("hydrogen-v1.1")
         self.assertIsNotNone(reg)
         self.assertEqual(reg["entry"]["maxShares"], 25.0)
-        self.assertEqual(reg["entry"]["maxShareLead"], 100.0)
+        self.assertNotIn("maxShareLead", reg["entry"])
         self.assertNotIn("takerDipBalancedOnly", reg["entry"])
 
 
-class TestHydrogenV12LeadCap(unittest.TestCase):
+class TestHydrogenV12NoLeadVeto(unittest.TestCase):
     def test_flat_book_opens_exactly_10(self):
         dec = evaluate_microstructure_ladder(
             quotes={"Up": {"bid": 0.33, "ask": 0.34},
@@ -80,19 +80,21 @@ class TestHydrogenV12LeadCap(unittest.TestCase):
         self.assertEqual(dec.action, "fill")
         self.assertEqual(dec.shares, 10.0)
 
-    def test_lead_cannot_exceed_10_shares(self):
-        # Up 10 / Down 0: adding 10 more Up would reach lead 20 >= 11, so the
-        # engine must NOT add to Up (hedges Down or skips instead).
+    def test_no_veto_leading_side_dip_still_fills(self):
+        # Up 10 / Down 0: with no share veto, a pair-gated Up dip fills even
+        # though it widens the lead (Down is priced above the leg-2 hedge
+        # ceiling, so no deficit hedge is available).
         dec = evaluate_microstructure_ladder(
-            quotes={"Up": {"bid": 0.33, "ask": 0.34},
-                    "Down": {"bid": 0.60, "ask": 0.62}},
+            quotes={"Up": {"bid": 0.25, "ask": 0.26},
+                    "Down": {"bid": 0.80, "ask": 0.82}},
             inv=_inv(10, 3.4, 0, 0, up_low=0.34),
             fill_idx=1,
             minute=1,
             **V12_KNOBS,
         )
-        self.assertFalse(dec.action == "fill" and dec.outcome == "Up",
-                         f"lead cap bypassed: {dec}")
+        self.assertEqual(dec.action, "fill")
+        self.assertEqual(dec.outcome, "Up")
+        self.assertEqual(dec.shares, 10.0)
 
     def test_balanced_book_scales_in_10x10_increments(self):
         # Balanced 10/10 with an Up dip: deficit == 0 and lead == 0, so a
@@ -108,24 +110,23 @@ class TestHydrogenV12LeadCap(unittest.TestCase):
         self.assertEqual(dec.action, "fill")
         self.assertEqual(dec.outcome, "Up")
         self.assertEqual(dec.shares, 10.0)
-        # ... but the very next Up dip is frozen: lead 10 + 10 >= 11.
+        # ... and the next Up dip fills too: no freeze, no veto (Down still
+        # priced out of the hedge, so the dip path is what fills).
         dec2 = evaluate_microstructure_ladder(
             quotes={"Up": {"bid": 0.30, "ask": 0.31},
-                    "Down": {"bid": 0.60, "ask": 0.62}},
+                    "Down": {"bid": 0.80, "ask": 0.82}},
             inv=_inv(20, 6.8, 10, 6.0, up_low=0.33, down_low=0.60),
             fill_idx=3,
             minute=1,
             **{**V12_KNOBS, "max_clip": 10.0},
         )
-        self.assertFalse(dec2.action == "fill" and dec2.outcome == "Up",
-                         f"lead cap bypassed: {dec2}")
+        self.assertEqual(dec2.action, "fill")
+        self.assertEqual(dec2.outcome, "Up")
 
 
 class TestHydrogenV12BalancedOnlyTakerDip(unittest.TestCase):
-    # Loose caps here so ONLY the balanced-only gate decides (v1.2's own
-    # maxShareLead=11 would veto these 25sh hump clips via the share cap).
-    LOOSE = dict(V12_KNOBS, max_clip=25.0, max_share_lead=100.0,
-                 max_unhedged_usd=0.0)
+    # Loose caps here so ONLY the balanced-only gate decides.
+    LOOSE = dict(V12_KNOBS, max_clip=25.0, max_unhedged_usd=0.0)
 
     def _heavy_quotes(self):
         # Up heavy (20/10); Down hedge priced out so the lagging side skips

@@ -38,7 +38,6 @@ STRATEGY_SETUPS = {
             "benchmarkPairCost": 0.965,
             "targetPairCost": 0.965,
             "maxPairCost": 0.990,
-            "maxShareLead": 90.0,
             "rescuePairCostMax": 1.080,
             "rescueCeilingPrice": 0.985,
             "minSpacingMoveSec": 0.5,
@@ -72,7 +71,6 @@ STRATEGY_SETUPS = {
             "benchmarkPairCost": 0.965,
             "targetPairCost": 0.965,
             "maxPairCost": 0.985,
-            "maxShareLead": 45.0,
             "rescuePairCostMax": 1.080,
             "rescueCeilingPrice": 0.985,
             "minSpacingMoveSec": 0.5,
@@ -105,7 +103,6 @@ STRATEGY_SETUPS = {
             "benchmarkPairCost": 0.965,
             "targetPairCost": 0.965,
             "maxPairCost": 0.985,
-            "maxShareLead": 45.0,
             "rescuePairCostMax": 0.995,
             "rescueCeilingPrice": 0.985,
             "minSpacingMoveSec": 0.5,
@@ -138,7 +135,6 @@ STRATEGY_SETUPS = {
             "benchmarkPairCost": 0.965,
             "targetPairCost": 0.965,
             "maxPairCost": 0.985,
-            "maxShareLead": 30.0,
             "rescuePairCostMax": 0.995,
             "rescueCeilingPrice": 0.985,
             "minSpacingMoveSec": 0.5,
@@ -174,7 +170,6 @@ STRATEGY_SETUPS = {
             "benchmarkPairCost": 0.965,
             "targetPairCost": 0.965,
             "maxPairCost": 0.985,
-            "maxShareLead": 20.0,
             "rescuePairCostMax": 0.995,
             "rescueCeilingPrice": 0.985,
             "minSpacingMoveSec": 0.5,
@@ -211,7 +206,6 @@ STRATEGY_SETUPS = {
             "benchmarkPairCost": 0.965,
             "targetPairCost": 0.965,
             "maxPairCost": 0.985,
-            "maxShareLead": 11.0,
             "rescuePairCostMax": 0.995,
             "rescueCeilingPrice": 0.985,
             "minSpacingMoveSec": 0.5,
@@ -237,7 +231,6 @@ STRATEGY_SETUPS = {
             "maxPairCost": 0.985,
             # Share veto left free (46) because the dollar cap does the work:
             # a 33-share clip at 7c is $2.31 of risk, not "33 >= 11 shares".
-            "maxShareLead": 46.0,
             "maxUnhedgedUsd": 5.0,
             # Inverse-dip curve: 33 shares at 7c -> 8 shares at 45c, linear in price.
             "dipCurve": {"lo": 0.07, "hi": 0.45, "sharesLo": 33.0, "sharesHi": 8.0},
@@ -268,7 +261,6 @@ STRATEGY_SETUPS = {
             "benchmarkPairCost": 0.965,
             "targetPairCost": 0.965,
             "maxPairCost": 0.985,
-            "maxShareLead": 46.0,
             # v2.5's $5.00 vetoed the curve's own mid-band (20 sh at 26c is
             # $5.20, and the curve peaks at $5.37), so those dips never opened.
             # $6.00 is the smallest round cap that covers the curve.
@@ -303,7 +295,6 @@ STRATEGY_SETUPS = {
             "benchmarkPairCost": 0.960,
             "targetPairCost": 0.960,
             "maxPairCost": 0.985,
-            "maxShareLead": 100.0,
             "maxUnhedgedShares": 100.0,
             "maxUnhedgedUsd": 45.0,
             # Hump sizing: 30 sh at <=10c -> ~48.7 sh at 40-50c -> 30 sh at >=70c.
@@ -344,7 +335,6 @@ STRATEGY_SETUPS = {
             "benchmarkPairCost": 0.960,
             "targetPairCost": 0.960,
             "maxPairCost": 0.985,
-            "maxShareLead": 100.0,
             "maxUnhedgedShares": 100.0,
             "maxUnhedgedUsd": 45.0,
             "dipCurve": "hump",
@@ -382,7 +372,6 @@ STRATEGY_SETUPS = {
             "benchmarkPairCost": 0.960,
             "targetPairCost": 0.960,
             "maxPairCost": 0.985,
-            "maxShareLead": 100.0,
             "maxUnhedgedShares": 100.0,
             "maxUnhedgedUsd": 45.0,
             "dipCurve": "hump",
@@ -408,10 +397,11 @@ STRATEGY_SETUPS = {
         "symbol": "H2 Hydrogen-v1.3",
         "name": "Hydrogen v1.3",
         # Post-PR #56 CLOB/Maker-hold engine build. Trading parameters are
-        # intentionally identical to hydrogen-v1.2 (maxShareLead=11,
-        # takerDipBalancedOnly=True, ...): the v1.2 -> v1.3 bump isolates the
-        # fixed fill & order-hold behavior from the tainted pre-PR #56 v1.2
-        # run, it is NOT a parameter change.
+        # intentionally identical to hydrogen-v1.2 (takerDipBalancedOnly=True,
+        # ...): the v1.2 -> v1.3 bump isolates the fixed fill & order-hold
+        # behavior from the tainted pre-PR #56 v1.2 run, it is NOT a
+        # parameter change. No share-denominated veto: unhedged risk is
+        # governed by the dollar cap (maxUnhedgedUsd).
         "entry": {
             "startAfterOpenSec": 15,
             "stopBeforeCloseSec": 30,
@@ -427,7 +417,6 @@ STRATEGY_SETUPS = {
             "benchmarkPairCost": 0.960,
             "targetPairCost": 0.960,
             "maxPairCost": 0.985,
-            "maxShareLead": 11.0,
             "maxUnhedgedShares": 100.0,
             "maxUnhedgedUsd": 45.0,
             "dipCurve": "hump",
@@ -468,7 +457,6 @@ STRATEGY_SETUPS = {
             "benchmarkPairCost": 0.960,
             "targetPairCost": 0.960,
             "maxPairCost": 0.985,
-            "maxShareLead": 11.0,
             "maxUnhedgedShares": 100.0,
             "maxUnhedgedUsd": 45.0,
             "dipCurve": "hump",
@@ -560,7 +548,7 @@ _SETUP_FEATURES = {
     "hydrogen-v1.3": {
         "sizing": "hump", "preflightGate": False, "patientHedge": True, "takerDip": True,
         "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
-        "blurb": "post-PR #56 CLOB/maker-hold build: uniform 10sh clips under an 11-share lead veto with balanced-or-light-only taker dip entry to 36c, 8c unhedged step, leg-2 ceiling 75c, and late rescue to $1.02 from T+210s",
+        "blurb": "post-PR #56 CLOB/maker-hold build: uniform 10sh clips with balanced-or-light-only taker dip entry to 36c, 8c unhedged step, leg-2 ceiling 75c, and late rescue to $1.02 from T+210s (no share veto; dollar-capped unhedged risk)",
     },
 }
 
@@ -579,7 +567,6 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
     mx = e.get("maxShares", 45)
     lo_c = round(float(e.get("minFillPrice", 0.07)) * 100)
     hi_c = round(float(e.get("maxFillPrice", 0.45)) * 100)
-    lead = e.get("maxShareLead", 15)
     tgt = float(e.get("targetPairCost", e.get("benchmarkPairCost", 0.965)))
     cap = float(e.get("maxPairCost", 0.985))
     rescue = float(e.get("rescuePairCostMax", 0.995))
@@ -588,7 +575,6 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         depth_cap = float(e.get("maxDepthShares", 0.0) or 0.0)
     except Exception:
         depth_cap = 0.0
-    exposure = float(lead) * float(e.get("maxFillPrice", 0.45))
     risk = float(f.get("dollarRisk", 4.50))
     sizing = f.get("sizing", "ladder")
     preflight = bool(f.get("preflightGate", False))
@@ -597,9 +583,6 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
     heavy = bool(f.get("heavyAtomic", False))
     sweep = bool(f.get("sweep", False))
     uncapped = bool(f.get("pairedVolumeCapped", True)) is False
-    # A fill that would leave the leading side at or above maxShareLead is vetoed,
-    # so the largest clip that can ever fill unhedged is lead - 1.
-    reachable = min(mx, max(0.0, float(lead) - 1.0))
 
     if sizing == "hump":
         probe = e.get("unhedgedProbeShares")
@@ -623,18 +606,11 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
             dip_txt = f"{s_lo:g} sh at {c_lo}c falling to {s_hi:g} sh at {c_hi}c"
             sig_size = f"Inverse-Dip Curve ({s_lo:g} sh @{c_lo}c → {s_hi:g} sh @{c_hi}c)"
     elif sizing == "constant-risk":
-        if reachable <= clip:
-            dip_txt = (
-                f"a flat {clip:g} sh per dip: the ${risk:.2f}/price rule wants up to "
-                f"{mx:g} sh, but the {lead:g}-share gap veto caps every unhedged clip at {reachable:g}"
-            )
-            sig_size = f"Flat {clip:g} sh Dips (Gap Veto Caps Sizing)"
-        else:
-            dip_txt = (
-                f"${risk:.2f} risk per dip ({clip:g}-{reachable:g} sh by price, "
-                f"gap-veto capped below {mx:g} sh, dips under {hi_c}c)"
-            )
-            sig_size = f"Capped ${risk:.2f} Per Dip ({clip:g}-{reachable:g} sh)"
+        dip_txt = (
+            f"${risk:.2f} risk per dip ({clip:g}-{mx:g} sh by price, "
+            f"dips under {hi_c}c)"
+        )
+        sig_size = f"Capped ${risk:.2f} Per Dip ({clip:g}-{mx:g} sh)"
     elif sizing == "confidence":
         dip_txt = f"{mx:g} sh on risk-free pairs, {clip:g} sh micro dips"
         sig_size = f"{mx:g} sh Atomic / {clip:g} sh Micro"
@@ -642,11 +618,7 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         dip_txt = f"shrinking dip clips (max {mx:g} sh)"
         sig_size = f"Shrinking Dip Clips (max {mx:g} sh)"
     else:
-        cap_txt = (
-            f", gap veto caps the {mx:g} sh ladder at {reachable:g}"
-            if reachable < mx else ""
-        )
-        dip_txt = f"{clip:g} sh (max {mx:g} sh) in the {lo_c}c-{hi_c}c band{cap_txt}"
+        dip_txt = f"{clip:g} sh (max {mx:g} sh) in the {lo_c}c-{hi_c}c band"
         sig_size = f"Dip Grid [{lo_c}c-{hi_c}c]"
 
     if preflight:
@@ -670,15 +642,9 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         sig_gate = f"Pair Gates (fresh under ${tgt:.3f})"
 
     dollar_cap = float(e.get("maxUnhedgedUsd", 0.0) or 0.0)
-    share_cap_txt = (
-        f"{lead:g} sh or more unhedged on one side, ever"
-        # The $-at-ceiling figure is fake precision when a dollar cap binds first.
-        + ("" if dollar_cap > 0
-           else f" (about ${exposure:.2f} if {lead:g} sh bought at the {hi_c}c ceiling)")
-    )
     gap_txt = (
-        share_cap_txt
-        + (f", and never more than ${dollar_cap:.2f} of unhedged cost" if dollar_cap > 0 else "")
+        (f"more than ${dollar_cap:.2f} of unhedged cost on one side" if dollar_cap > 0
+         else "unhedged size without limit")
         + (" while total paired-up shares have no cap" if uncapped else "")
     )
     sweep_txt = (
@@ -688,7 +654,7 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
     heavy_txt = " No heavy bulk fills." if not heavy else ""
     depth_txt = f" Maker clips capped to resting depth ({depth_cap:g} sh max)." if depth_cap > 0 else ""
 
-    gap_cap_txt = f"Dollar Gap Cap (${dollar_cap:.2f})" if dollar_cap > 0 else f"Gap Cap ({lead:g} sh)"
+    gap_cap_txt = f"Dollar Gap Cap (${dollar_cap:.2f})" if dollar_cap > 0 else "No Gap Cap"
     signature = f"{sig_size} - {sig_gate} - {gap_cap_txt} - Under-${rescue:.3f} Cap"
     description = (
         f"Buys dips {dip_txt}; entries follow {gate_txt}; "
@@ -703,8 +669,8 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
                                (f"On (leg + opposite ask + taker fee under ${cap:.3f})" if hedge_now
                                 else "Off (pair-cost gates only)")),
         "heavyFills": ("%g sh atomic pairs" % mx) if heavy else "None",
-        "netGapCap": (f"never ${dollar_cap:.2f} of unhedged cost" if dollar_cap > 0
-                      else f"never {lead:g} sh+ (~${exposure:.2f} at ceiling)") + ("; paired volume uncapped" if uncapped else ""),
+        "netGapCap": (f"never more than ${dollar_cap:.2f} of unhedged cost" if dollar_cap > 0
+                      else "unhedged size uncapped") + ("; paired volume uncapped" if uncapped else ""),
         "depthCap": (f"{depth_cap:g} sh" if depth_cap > 0 else "Off"),
         "maxBuy": f"{hi_c}c",
         "cutoff": f"{cutoff:g}s before close",
@@ -732,7 +698,6 @@ ACTIVE_WINDOW_SBC = (HARD_CUTOFF_SBC, WINDOW_S + PRE_OPEN_PIPELINE_S)
 CLIP_SHARES_DEFAULT = 30.0     # 30.0 shares = dominant order signature (31.0% of tape)
 MAX_SHARES = 50.0              # 50.0 shares = deficit catch-up cap
 TARGET_DOLLAR_RISK_USD = 4.50  # DSP-v2.3 constant dollar-risk ceiling per unhedged dip clip
-MAX_SHARE_LEAD = 90.0          # strict unhedged-gap veto: a fill leaving lead >= this is skipped, so this value is never held
 MAX_UNHEDGED_USD = 0.0         # dollar-denominated unhedged-gap veto (0 = off): caps dollars exposed, not shares
 
 # Microstructure Price Bands ($)
@@ -756,6 +721,21 @@ MEAN_PAIR_COST = 0.9462        # Measured mean pair cost on tape
 # Exchange Fee Model
 TAKER_FEE_COEFF = 0.07         # Polymarket parabolic taker fee: 0.07 * p * (1 - p)
 MAKER_FEE = 0.0                # 0% maker fee on resting limit orders
+
+# Paper Rebate Model (modeled after the measured wallet's economics:
+# TAKER_REBATE(D) ~= 50% of day D-1 taker fees at the top volume tier, with
+# lower tiers observed at 32-44% across the 16-week history. Paper cannot
+# earn rebates, so the simulator credits the configured rate on every
+# window's taker-fee total to keep paper P&L comparable to live.)
+PAPER_REBATE_TAKER_RATE = 0.50  # default modeled refund of taker fees
+PAPER_REBATE_TIER_RANGE = (0.32, 0.44, 0.50)  # low / mid / top volume tiers
+
+# Wallet Benchmark (measured 21-day median, docs/leaderboard-traders/reports/
+# dangerously-skip-permissions_strategy_2026-10-18_to_2026-11-08.md). This is a
+# REPORTING benchmark for realized pair cost, not a pairing gate: the bot
+# strives to pair under it and accepts above it — sub-$1.00 must emerge from
+# sizing, risk and position management, not from refusing to pair.
+WALLET_MEDIAN_PAIR_COST = 0.977
 
 # Risk Guardrails
 DAILY_LOSS_CAP_USD = 500.0     # Maximum allowable daily loss

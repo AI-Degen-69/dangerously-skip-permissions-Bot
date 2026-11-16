@@ -500,7 +500,7 @@ export function BotControlTile({ health }: { health?: BotHealthView }) {
                         <Param label="Pair cap" value={`$${Number(setup.entry.maxPairCost).toFixed(3)}`} />
                         <Param label="Max buy" value={`${Math.round(Number(setup.entry.maxFillPrice) * 100)}¢`} />
                         <Param label="Clip / max" value={`${setup.entry.clipSharesDefault} / ${setup.entry.maxShares} sh`} />
-                        <Param label="Gap veto" value={`≥${setup.entry.maxShareLead} sh`} />
+                        <Param label="Gap cap" value={Number(setup.entry.maxUnhedgedUsd ?? 0) > 0 ? `≤$${Number(setup.entry.maxUnhedgedUsd ?? 0).toFixed(0)}` : 'no veto'} />
                         <Param label="Cutoff" value={`${setup.entry.stopBeforeCloseSec}s`} />
                       </div>
                     </div>
