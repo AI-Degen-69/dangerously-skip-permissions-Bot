@@ -15,9 +15,9 @@ The desk API is a lightweight stdlib loopback service. Its default bind is `127.
 # Terminal 1: Launch Backend API (default 127.0.0.1:8789)
 python bot/api.py
 
-# Optional: bind a different port
-python bot/api.py --port 8790
-# If you do, point the UI at it: VITE_BOT_ORIGIN=http://127.0.0.1:8790 bun run dev
+# Optional: bind a different port (must match on both sides)
+# python bot/api.py --port 8789
+# VITE_BOT_ORIGIN=http://127.0.0.1:8789 bun run dev
 ```
 
 *Verify:* Navigate to `http://127.0.0.1:8789/api/bot/control` in your browser. You should receive a JSON status response (`"running": false`, `"mode": "paper"`).

@@ -32,18 +32,6 @@ The puller creates `raw/`, `reports/` and `analysis/` on first use, anchored to
 `docs/leaderboard-traders/` so the output lands in the same place whatever
 directory you run it from.
 
-## Reports
-
-| File | Wallet | Window | Answers |
-|---|---|---|---|
-| `ledgers/dangerously-skip-permissions/reports/full_history_report.html` | `0xc53375ff94e96100f2b30a4b5775db35218d69a9` | 2026-07-12 -> 2026-11-08 (17 weekly pulls, 1.19M rows) | Visual summary: the edge is real, and it has a size limit |
-| `ledgers/dangerously-skip-permissions/reports/3week_report.html` | same | 2026-10-18 -> 2026-11-08 | Visual summary of the three-week analysis |
-| `ledgers/dangerously-skip-permissions/reports/strategy_2026-10-18_to_2026-11-08.md` | same | 2026-10-18 -> 2026-11-08 (486,244 rows) | Current written reading of the wallet; supersedes the one-week report on the listed points |
-| `ledgers/dangerously-skip-permissions/reports/weekly_strategy_2026-11-01_to_2026-11-08.md` | same | 2026-11-01 -> 2026-11-08 (174,019 rows) | One-week deep dive; kept as the record of that sample, partly superseded |
-| `ledgers/dangerously-skip-permissions/reports/weekly_appendix.txt` | same | 2026-11-01 -> 2026-11-08 | Exact computed output behind the one-week report |
-| `ledgers/dangerously-skip-permissions/reports/wallet_mechanics.md` | same | full history | What the wallet does: no sells, both ladders at once, share ladder, rebate economics, v2.6 gap table |
-| `ledgers/goodfallen/reports/strategy_2026-11-01_to_2026-11-08.md` | `0x0ca4e9d27ff826a109ecbf74754fb66b93f277a6` | 2026-11-01 -> 2026-11-08 (84,860 rows) | Same reverse-engineering method on a second wallet |
-
 ## Scripts
 
 | Script | Purpose | Input |
@@ -86,9 +74,6 @@ python -m pytest docs/leaderboard-traders/tests -q
 
 ## Known gaps
 
-- The goodfallen report cites `analyze_goodfallen.py`; that script is not in the
-  repo, and its 35.5 MB ledger was never committed. The report's inline Python
-  snippet is the only reproduction left.
 - `analyze_mechanics.py` values shares still held in a resolved market only when
   a REDEEM row names the winning side. Without one the outcome is unknown, so
   that market is reported as a `$0..$1`-per-share P&L range and left out of the
