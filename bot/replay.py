@@ -36,7 +36,7 @@ sys.path.insert(0, ".")
 
 from bot import constants as C
 from bot import executor as E
-from bot.executor import compute_fill_usd, evaluate_microstructure_ladder
+from bot.executor import compute_fill_usd, evaluate_microstructure_ladder, v20_max_hedge_price
 from bot.fill_model import match_maker_book_cross, match_maker_print
 from bot.risk import clip_shares
 from bot.runs import tape_segments
@@ -448,7 +448,10 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
         last_fill_ts = ts
         last_fill_px = px
         imbalance_after = abs(inv["Up"]["shares"] - inv["Down"]["shares"])
-        if sub_reason in ("rebalance-taker", "rebalance-maker") and imbalance_after < imbalance_before:
+        if strategy_id.startswith("hydrogen-v2") and role == "TAKER" and sub_reason == "rebalance-taker":
+            opp_outcome = "Down" if outcome == "Up" else "Up"
+            resting[opp_outcome] = []
+        if strategy_id.startswith("hydrogen-v1.9") and sub_reason in ("rebalance-taker", "rebalance-maker") and imbalance_after < imbalance_before:
             opp_outcome = "Down" if outcome == "Up" else "Up"
             if inv[opp_outcome]["shares"] > 0:
                 heavy_avg_cost = inv[opp_outcome]["cost"] / inv[opp_outcome]["shares"]
@@ -561,12 +564,18 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
         nonlocal placements, queue_unknown
         opp_side = "Down" if outcome == "Up" else "Up"
         max_hedge_px = None
-        # v1.9-only resting hygiene (mirrors live_paper): older strategies keep prior behavior.
-        if sub_reason == "rebalance-maker" and strategy_id.startswith("hydrogen-v1.9"):
-            resting[opp_side] = []
-            if inv[opp_side]["shares"] > 0:
-                heavy_avg = inv[opp_side]["cost"] / inv[opp_side]["shares"]
-                max_hedge_px = math.floor((max_pc - heavy_avg + 1e-9) * 100.0) / 100.0
+        # v1.9 / v2.0 resting hygiene (mirrors live_paper): older strategies keep prior behavior.
+        if sub_reason == "rebalance-maker":
+            if strategy_id.startswith("hydrogen-v2"):
+                resting[opp_side] = []
+                if inv[opp_side]["shares"] > inv[outcome]["shares"] + 1e-9:
+                    cap = rescue_max if reason == "sweep" else max_pc
+                    max_hedge_px = v20_max_hedge_price(inv, opp_side, outcome, cap)
+            elif strategy_id.startswith("hydrogen-v1.9"):
+                resting[opp_side] = []
+                if inv[opp_side]["shares"] > 0:
+                    heavy_avg = inv[opp_side]["cost"] / inv[opp_side]["shares"]
+                    max_hedge_px = math.floor((max_pc - heavy_avg + 1e-9) * 100.0) / 100.0
         bids = state[outcome]["bids"] or []
         desired = [round(px - i * spacing, 4) for i in range(max(1, levels))]
         if unhedged_step_cents > 0:

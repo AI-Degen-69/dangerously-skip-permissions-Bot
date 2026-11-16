@@ -1173,6 +1173,325 @@ def _projected_pair_cost(
     return round(new_side_avg + opp_avg, 4)
 
 
+H20_LEAD_TOLERANCE = 0.5
+H20_DIP_TOUCH_MAX = 0.45
+H20_ATM_MAX_BID = 0.58
+
+
+def v20_max_hedge_price(
+    inv: dict[str, dict[str, float]],
+    heavy: str,
+    light: str,
+    cap: float,
+) -> float:
+    """Strict maker hedge ceiling keeping both cumulative & marginal pair cost <= cap."""
+    heavy_sh = float((inv.get(heavy) or {}).get("shares", 0.0))
+    heavy_cost = float((inv.get(heavy) or {}).get("cost", 0.0))
+    light_sh = float((inv.get(light) or {}).get("shares", 0.0))
+    light_cost = float((inv.get(light) or {}).get("cost", 0.0))
+    deficit = heavy_sh - light_sh
+    if heavy_sh <= 0.0 or deficit <= 0.0:
+        return 0.0
+    heavy_avg = heavy_cost / heavy_sh
+    portfolio_cap = (cap * heavy_sh - heavy_cost - light_cost) / deficit
+    marginal_cap = cap - heavy_avg
+    return math.floor((min(portfolio_cap, marginal_cap) + 1e-9) * 100.0) / 100.0
+
+
+def _evaluate_hydrogen_v20(
+    quotes: dict[str, dict[str, float | None]],
+    inv: dict[str, dict[str, float]],
+    min_fill: float = 0.07,
+    max_fill: float = 0.47,
+    default_clip: float = 10.0,
+    max_clip: float = 45.0,
+    dip_curve: dict | None = None,
+    target_pair_cost: float = 0.965,
+    max_pair_cost: float = 0.985,
+    rescue_max_pair_cost: float = 0.995,
+    rescue_ceiling: float = 0.985,
+    max_unhedged_usd: float = 6.0,
+    max_unhedged_shares: float = 0.0,
+    include_taker_fee: bool = True,
+    in_sweep_phase: bool = False,
+    open_orders: dict | None = None,
+) -> MicrostructureDecision:
+    """Hydrogen v2.0 decision engine.
+
+    Balanced (abs(lead) <= 0.5 sh, outside sweep):
+      - Simultaneous two-sided maker resting across Up and Down.
+      - Deep dips (bid <= 45c) rest at best bid with inverse-dip curve sizing.
+      - Balanced ATM odds (45c < bid <= 58c) rest off-touch at min(bid - 1c, max_fill).
+      - Unhedged exposure strictly capped by max_unhedged_usd (default $6.00).
+      - Mutual target_pair_cost gate (<= $0.965); clean holding-resting skip when
+        both eligible sides are already resting (no single-probe fallthrough).
+
+    Imbalanced (abs(lead) > 0.5 sh):
+      - Heavy-side resting orders are cancelled in live_paper/replay.
+      - Profit-lock / sweep taker crosses only if fee-inclusive projected pair cost
+        stays <= target_pair_cost ($0.965 normally, $0.995 in sweep) and <= rescue_ceiling.
+      - Otherwise rests clamped maker hedge at min(light_bid, _v20_max_hedge_price(cap)).
+      - Never pays >= $1.00 pair cost and never triggers single-window freeze latch.
+    """
+    up_sh = float((inv.get("Up") or {}).get("shares", 0.0))
+    dn_sh = float((inv.get("Down") or {}).get("shares", 0.0))
+    lead = up_sh - dn_sh
+    abs_lead = abs(lead)
+    oo = open_orders or {}
+
+    if abs_lead > H20_LEAD_TOLERANCE:
+        heavy = "Up" if lead > 0 else "Down"
+        light = "Down" if lead > 0 else "Up"
+        deficit = round(abs_lead, 4)
+        light_bid, light_ask = _h15_side_prices(quotes, light)
+
+        taker_cap = float(rescue_max_pair_cost if in_sweep_phase else target_pair_cost)
+        if (
+            light_ask is not None
+            and min_fill - 1e-9 <= float(light_ask) <= float(rescue_ceiling) + 1e-9
+        ):
+            taker_usd, _ = compute_fill_usd(
+                deficit, float(light_ask), role="TAKER", include_fee=include_taker_fee,
+            )
+            proj_taker = _projected_pair_cost(inv, light, deficit, taker_usd)
+            heavy_avg = (inv[heavy]["cost"] / inv[heavy]["shares"]) if inv[heavy]["shares"] > 0 else 0.0
+            marginal_taker = heavy_avg + (taker_usd / deficit)
+            if (
+                proj_taker is not None
+                and proj_taker <= taker_cap + 1e-9
+                and marginal_taker <= taker_cap + 1e-9
+                and proj_taker < 1.0 - 1e-9
+            ):
+                return MicrostructureDecision(
+                    action="taker",
+                    outcome=light,
+                    price=round(float(light_ask), 4),
+                    shares=deficit,
+                    role="TAKER",
+                    reason="sweep-taker" if in_sweep_phase else "balance-topup",
+                    sub_reason="rebalance-taker",
+                    projected_pair_cost=proj_taker,
+                    share_deficit=deficit,
+                )
+
+        maker_cap = float(rescue_max_pair_cost if in_sweep_phase else max_pair_cost)
+        max_hedge_px = min(float(rescue_ceiling), v20_max_hedge_price(inv, heavy, light, maker_cap))
+        if light_bid is None or float(light_bid) < min_fill - 1e-9 or max_hedge_px < min_fill - 1e-9:
+            return MicrostructureDecision(
+                action="skip",
+                outcome=light,
+                price=None,
+                shares=0.0,
+                role="MAKER",
+                reason="sweep-cap" if in_sweep_phase else "pair-cost-cap",
+                sub_reason="rebalance-cap",
+                projected_pair_cost=None,
+                share_deficit=deficit,
+            )
+
+        px = round(min(float(light_bid), max_hedge_px), 2)
+        if px < min_fill - 1e-9 or px > max_hedge_px + 1e-9:
+            return MicrostructureDecision(
+                action="skip",
+                outcome=light,
+                price=None,
+                shares=0.0,
+                role="MAKER",
+                reason="pair-cost-cap",
+                sub_reason="rebalance-cap",
+                projected_pair_cost=None,
+                share_deficit=deficit,
+            )
+        maker_usd, _ = compute_fill_usd(deficit, px, role="MAKER", include_fee=include_taker_fee)
+        return MicrostructureDecision(
+            action="maker",
+            outcome=light,
+            price=px,
+            shares=deficit,
+            role="MAKER",
+            reason="sweep" if in_sweep_phase else "hedge-leg",
+            sub_reason="rebalance-maker",
+            projected_pair_cost=_projected_pair_cost(inv, light, deficit, maker_usd),
+            share_deficit=deficit,
+        )
+
+    if in_sweep_phase:
+        return MicrostructureDecision(
+            action="skip",
+            outcome=None,
+            price=None,
+            shares=0.0,
+            role="MAKER",
+            reason="sweep-idle",
+            sub_reason="balanced",
+            projected_pair_cost=None,
+            share_deficit=0.0,
+        )
+
+    def _raw_target_px(bid: float | None) -> float | None:
+        if bid is None or bid < min_fill - 1e-9 or bid > H20_ATM_MAX_BID + 1e-9:
+            return None
+        if bid <= H20_DIP_TOUCH_MAX + 1e-9:
+            px = round(float(bid), 2)
+        else:
+            px = min(round(float(bid) - 0.01, 2), round(float(max_fill), 2))
+        if px < min_fill - 1e-9 or px > max_fill + 1e-9:
+            return None
+        return px
+
+    raw_px: dict[str, float | None] = {}
+    side_bids: dict[str, float | None] = {}
+    for side in ("Up", "Down"):
+        bid, _ = _h15_side_prices(quotes, side)
+        side_bids[side] = bid
+        raw_px[side] = _raw_target_px(bid)
+
+    # Ensure two-sided resting quotes sum <= target_pair_cost when both sides quote together
+    for side in ("Up", "Down"):
+        if raw_px[side] is None:
+            continue
+        opp = "Down" if side == "Up" else "Up"
+        opp_oo = oo.get(opp)
+        if opp_oo is not None:
+            opp_px = float(opp_oo.get("price", 0.0) or 0.0)
+            mutual_cap = math.floor((target_pair_cost - opp_px + 1e-9) * 100.0) / 100.0
+            if raw_px[side] > mutual_cap + 1e-9:
+                raw_px[side] = mutual_cap if mutual_cap >= min_fill - 1e-9 else None
+    if raw_px["Up"] is not None and raw_px["Down"] is not None:
+        if raw_px["Up"] + raw_px["Down"] > target_pair_cost + 1e-9:
+            half_cap = math.floor((target_pair_cost / 2.0 + 1e-9) * 100.0) / 100.0
+            for side in ("Up", "Down"):
+                if raw_px[side] is not None and raw_px[side] > half_cap + 1e-9:
+                    raw_px[side] = half_cap if half_cap >= min_fill - 1e-9 else None
+
+    candidates: list[dict] = []
+    for side in ("Up", "Down"):
+        px = raw_px[side]
+        if px is None:
+            continue
+        opp = "Down" if side == "Up" else "Up"
+        # When opposite side is >58c (not two-sided ATM), only take genuine dips <=45c
+        if raw_px[opp] is None and oo.get(opp) is None and px > H20_DIP_TOUCH_MAX + 1e-9:
+            continue
+
+        raw_sh = (
+            dip_curve_shares(dip_curve, px, max_clip)
+            if isinstance(dip_curve, dict)
+            else float(default_clip)
+        )
+        if raw_sh is None:
+            raw_sh = float(default_clip)
+        shares = clip_shares(float(raw_sh), max_clip)
+
+        side_sh = float((inv.get(side) or {}).get("shares", 0.0))
+        side_cost = float((inv.get(side) or {}).get("cost", 0.0))
+        opp_sh = float((inv.get(opp) or {}).get("shares", 0.0))
+        opp_cost = float((inv.get(opp) or {}).get("cost", 0.0))
+
+        if max_unhedged_usd > 0.0:
+            new_sh = side_sh + shares
+            new_cost = side_cost + shares * px
+            lead_after = max(0.0, new_sh - opp_sh)
+            unhedged_after = (new_cost / new_sh) * lead_after if new_sh > 0 else 0.0
+            if unhedged_after > max_unhedged_usd + 1e-9:
+                if side_sh <= opp_sh + 1e-9:
+                    avail_lead = max(0.0, max_unhedged_usd / max(px, 1e-6))
+                    allowed = math.floor((avail_lead + max(0.0, opp_sh - side_sh) + 1e-9) * 10.0) / 10.0
+                else:
+                    cur_avg = side_cost / side_sh
+                    rem_usd = max(0.0, max_unhedged_usd - cur_avg * (side_sh - opp_sh))
+                    allowed = math.floor((rem_usd / max(px, 1e-6) + 1e-9) * 10.0) / 10.0
+                shares = min(shares, allowed)
+                if shares < 1.0 - 1e-9:
+                    continue
+
+        if max_unhedged_shares > 0.0:
+            new_sh = side_sh + shares
+            lead_after = max(0.0, new_sh - opp_sh)
+            if lead_after > max_unhedged_shares + 1e-9:
+                allowed = math.floor((max_unhedged_shares + opp_sh - side_sh + 1e-9) * 10.0) / 10.0
+                shares = min(shares, max(0.0, allowed))
+                if shares < 1.0 - 1e-9:
+                    continue
+
+        # Verify enough hedge headroom remains under max_pair_cost
+        new_sh = side_sh + shares
+        new_cost = side_cost + shares * px
+        need_opp = max(0.0, new_sh - opp_sh)
+        if need_opp > 0.0:
+            rem_budget = max_pair_cost * new_sh - new_cost - opp_cost
+            if (rem_budget / need_opp) < min_fill - 1e-9:
+                continue
+
+        candidates.append({
+            "side": side,
+            "px": round(px, 2),
+            "shares": round(shares, 2),
+            "proj": _projected_pair_cost(inv, side, shares, shares * px),
+        })
+
+    # Cheaper side first (Up ties first)
+    candidates.sort(key=lambda c: (c["px"], 0 if c["side"] == "Up" else 1))
+
+    for cand in candidates:
+        side = cand["side"]
+        cur = oo.get(side)
+        if cur is None:
+            return MicrostructureDecision(
+                action="maker",
+                outcome=side,
+                price=cand["px"],
+                shares=cand["shares"],
+                role="MAKER",
+                reason="balanced-open",
+                sub_reason="two-sided-maker",
+                projected_pair_cost=cand["proj"],
+                share_deficit=0.0,
+            )
+        cur_px = float(cur.get("price", 0.0) or 0.0)
+        cur_sh = float(cur.get("shares_left", 0.0) or 0.0)
+        # Reprice upward inside band, or resize at exact same price; never starve the other side
+        if cand["px"] > cur_px + 1e-9 or (
+            abs(cand["px"] - cur_px) < 1e-9 and abs(cand["shares"] - cur_sh) > 0.5
+        ):
+            return MicrostructureDecision(
+                action="maker",
+                outcome=side,
+                price=cand["px"],
+                shares=cand["shares"],
+                role="MAKER",
+                reason="balanced-open",
+                sub_reason="two-sided-maker",
+                projected_pair_cost=cand["proj"],
+                share_deficit=0.0,
+            )
+
+    if any(s in oo for s in ("Up", "Down")):
+        return MicrostructureDecision(
+            action="skip",
+            outcome=None,
+            price=None,
+            shares=0.0,
+            role="MAKER",
+            reason="holding-resting",
+            sub_reason="both-sides-resting" if ("Up" in oo and "Down" in oo) else "one-side-resting",
+            projected_pair_cost=None,
+            share_deficit=0.0,
+        )
+
+    return MicrostructureDecision(
+        action="skip",
+        outcome=None,
+        price=None,
+        shares=0.0,
+        role="MAKER",
+        reason="price-band-skip",
+        sub_reason="balanced-out-of-band",
+        projected_pair_cost=None,
+        share_deficit=0.0,
+    )
+
+
 def evaluate_microstructure_ladder(
     quotes: dict[str, dict[str, float | None]],
     inv: dict[str, dict[str, float]],
@@ -1388,6 +1707,26 @@ def evaluate_microstructure_ladder(
             in_sweep_phase=in_sweep_phase,
             max_depth_shares=_v16_depth,
             resting_size=resting_size,
+        )
+
+    if strategy_id == "hydrogen-v2.0":
+        return _evaluate_hydrogen_v20(
+            quotes=quotes,
+            inv=inv,
+            min_fill=min_fill,
+            max_fill=max_fill,
+            default_clip=default_clip,
+            max_clip=max_clip,
+            dip_curve=dip_curve,
+            target_pair_cost=float(target_pair_cost if target_pair_cost is not None else 0.965),
+            max_pair_cost=float(max_pair_cost),
+            rescue_max_pair_cost=float(rescue_max_pair_cost),
+            rescue_ceiling=float(rescue_ceiling),
+            max_unhedged_usd=float(max_unhedged_usd),
+            max_unhedged_shares=float(max_unhedged_shares),
+            include_taker_fee=bool(kwargs.get("include_taker_fee", True)),
+            in_sweep_phase=in_sweep_phase,
+            open_orders=open_orders,
         )
 
     if strategy_id in ("hydrogen-v1.9", "hydrogen-v1.9-arm-a", "hydrogen-v1.9-arm-b", "hydrogen-v1.9-arm-e"):
