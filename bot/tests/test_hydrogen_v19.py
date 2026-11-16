@@ -4,6 +4,7 @@ import unittest
 from bot import ab_test as ab
 from bot import constants as C
 from bot import replay
+from bot.live_paper import cancel_side_orders, ladder_keys, update_maker_order
 from bot.executor import (
     H19_L1_PRICE_MAX,
     H19_L1_PRICE_MIN,
@@ -53,17 +54,19 @@ def _dec(quotes, inv, fill_idx=0, strategy_id="hydrogen-v1.9", **over):
 
 class TestHydrogenV19RegistryAndWiring(unittest.TestCase):
     def test_registry_entry_and_features(self):
-        for sid in ("hydrogen-v1.9",):
-            setup = C.STRATEGY_SETUPS[sid]
-            entry = setup["entry"]
-            self.assertEqual(entry["levelsPerSide"], 1)
-            self.assertEqual(entry["clipSharesDefault"], 5.0)
-            self.assertEqual(entry["maxShares"], 5.0)
-            self.assertEqual(entry["maxPairCost"], 0.990)
-            self.assertEqual(entry["maxUnhedgedShares"], 5.0)
-            self.assertEqual(entry["maxUnhedgedUsd"], 2.50)
-            self.assertEqual(setup["features"].get("sizing"), "split-ladder-v19")
-            self.assertIn(setup["features"].get("l3Mode"), ("patient", "immediate", "off"))
+        setup = C.STRATEGY_SETUPS["hydrogen-v1.9"]
+        entry = setup["entry"]
+        self.assertEqual(entry["levelsPerSide"], 1)
+        self.assertEqual(entry["clipSharesDefault"], 5.0)
+        self.assertEqual(entry["maxShares"], 5.0)
+        self.assertEqual(entry["maxPairCost"], 0.990)
+        self.assertEqual(entry["maxUnhedgedShares"], 5.0)
+        self.assertEqual(entry["maxUnhedgedUsd"], 2.50)
+        self.assertEqual(setup["features"].get("sizing"), "split-ladder-v19")
+        self.assertNotIn("l3Mode", setup["features"])
+        # The A/B arms were dropped as unprofitable; only the core setup remains.
+        for retired in ("hydrogen-v1.9-arm-a", "hydrogen-v1.9-arm-b", "hydrogen-v1.9-arm-e"):
+            self.assertNotIn(retired, C.STRATEGY_SETUPS)
 
     def test_describe_setup_v19(self):
         _sig, desc, highlights = C.describe_setup(C.STRATEGY_SETUPS["hydrogen-v1.9"])
@@ -79,19 +82,13 @@ class TestHydrogenV19RegistryAndWiring(unittest.TestCase):
             "hydrogen-v1.9",
         )
 
-    def test_arm_run_ids_map_to_own_arm(self):
-        self.assertEqual(
-            ab._run_strategy_id("run_20261116_160000_paper_hydrogen_v1_9_arm_a"),
-            "hydrogen-v1.9-arm-a",
-        )
-        self.assertEqual(
-            ab._run_strategy_id("run_20261116_160000_paper_hydrogen_v1_9_arm_b"),
-            "hydrogen-v1.9-arm-b",
-        )
-        self.assertEqual(
-            ab._run_strategy_id("run_20261116_160000_paper_hydrogen_v1_9_arm_e"),
-            "hydrogen-v1.9-arm-e",
-        )
+    def test_legacy_arm_run_ids_map_to_production(self):
+        for legacy in ("arm_a", "arm_b", "arm_e"):
+            self.assertEqual(
+                ab._run_strategy_id(f"run_20261116_160000_paper_hydrogen_v1_9_{legacy}"),
+                "hydrogen-v1.9",
+            )
+
 
 class TestHydrogenV19Layer1Probe(unittest.TestCase):
     def test_l1_probe_places_single_rung_in_band(self):
@@ -160,7 +157,7 @@ class TestHydrogenV19Layer2ClampedMaker(unittest.TestCase):
 
 
 class TestHydrogenV19Layer3TakerBailout(unittest.TestCase):
-    def test_arm_b_delays_l3_for_20_seconds(self):
+    def test_l3_delays_for_20_seconds(self):
         # Deficit active for only 10s: Layer 3 taker bailout must NOT fire yet
         # Down ask = 0.65 -> heavy_avg (0.46) + 0.65 = 1.11 >= 1.07
         # Since deficit_duration_sec = 10.0 < 20.0, maker hedge at clamped 0.53 rests instead!
@@ -169,7 +166,7 @@ class TestHydrogenV19Layer3TakerBailout(unittest.TestCase):
         self.assertEqual(d.role, "MAKER")
         self.assertEqual(d.sub_reason, "rebalance-maker")
 
-    def test_arm_b_fires_l3_after_20_seconds_on_breakout(self):
+    def test_l3_fires_after_20_seconds_on_breakout(self):
         # Deficit active for 21s: breakout ask = 0.65 (ask <= 0.72 & marginal 1.11 >= 1.07)
         # Layer 3 taker equalizer fires!
         d = _dec(_q(0.33, 0.35, 0.53, 0.65), _inv(5.0, 2.30, 0, 0),
@@ -181,22 +178,36 @@ class TestHydrogenV19Layer3TakerBailout(unittest.TestCase):
         self.assertEqual(d.shares, 5.0)
         self.assertEqual(d.sub_reason, "rebalance-taker")
 
-    def test_arm_a_fires_l3_immediately(self):
-        # Arm A fires immediately (deficit_duration_sec = 0.0) when ask <= 0.72 & marginal >= 1.00
-        d = _dec(_q(0.33, 0.35, 0.53, 0.60), _inv(5.0, 2.30, 0, 0),
-                 deficit_duration_sec=0.0, strategy_id="hydrogen-v1.9-arm-a")
-        self.assertEqual(d.action, "fill")
-        self.assertEqual(d.role, "TAKER")
-        self.assertEqual(d.price, 0.60)
-        self.assertEqual(d.sub_reason, "rebalance-taker")
 
-    def test_arm_e_never_fires_taker(self):
-        # Arm E is pure maker, even at 25s elapsed deficit with breakout ask
-        d = _dec(_q(0.33, 0.35, 0.53, 0.65), _inv(5.0, 2.30, 0, 0),
-                 deficit_duration_sec=25.0, strategy_id="hydrogen-v1.9-arm-e")
-        self.assertEqual(d.role, "MAKER")
-        self.assertEqual(d.sub_reason, "rebalance-maker")
 
+class TestLadderOrderHygiene(unittest.TestCase):
+    """Resting-rung bookkeeping used by the v1.9 maker hedge."""
+
+    def test_ladder_rungs_rest_independently(self):
+        orders: dict[str, dict] = {}
+        update_maker_order(orders, "Up", 0.44, 5.0, 0, "clip-fill",
+                           "split-ladder-maker", 0.0, 10.0, 1000.0, order_key="Up")
+        update_maker_order(orders, "Up", 0.43, 5.0, 0, "clip-fill",
+                           "split-ladder-maker", 0.0, 12.0, 1000.0, order_key="Up#1")
+        update_maker_order(orders, "Down", 0.55, 5.0, 0, "clip-fill",
+                           "split-ladder-maker", 0.0, 8.0, 1000.0)
+        self.assertEqual(ladder_keys(orders, "Up"), ["Up", "Up#1"])
+        self.assertEqual(ladder_keys(orders, "Down"), ["Down"])
+        # Rungs report their real side, so the fill loops can match them.
+        self.assertEqual(orders["Up#1"]["side"], "Up")
+        self.assertEqual(orders["Up"]["shares_left"], 5.0)
+        self.assertEqual(orders["Up#1"]["price"], 0.43)
+
+    def test_cancel_side_pulls_every_rung_only(self):
+        orders: dict[str, dict] = {}
+        for key, px in (("Up", 0.44), ("Up#1", 0.43)):
+            update_maker_order(orders, "Up", px, 5.0, 0, "clip-fill",
+                               "split-ladder-maker", 0.0, 1.0, 1000.0, order_key=key)
+        update_maker_order(orders, "Down", 0.55, 5.0, 0, "clip-fill",
+                           "split-ladder-maker", 0.0, 1.0, 1000.0)
+        pulled = cancel_side_orders(orders, "Up")
+        self.assertEqual(len(pulled), 2)
+        self.assertEqual(set(orders), {"Down"})
 
 if __name__ == "__main__":
     unittest.main()

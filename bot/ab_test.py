@@ -2,9 +2,8 @@
 
 Compares the frozen, measured Hydrogen v1.0 baseline run
 (DEFAULT_BASELINE_ID, `run_20261113_183248_paper_hydrogen_v1_0`) against the
-Hydrogen v1.5 candidate (`hydrogen-v1.5`: concurrent two-sided accumulation
-from T+4s -- both sides quoted, lighter side first to 85c, half-gap top-ups,
-no dip band, no rescue ladder, no pair-cost gate).
+Hydrogen v1.9 candidate (`hydrogen-v1.9`: single 5-share probe, clamped
+maker hedge under $0.990, 20s patient taker bailout).
 
 Archived runs (`run_meta.json` status starting with "archived") are never
 picked up as baseline or candidate, so the tainted pre-PR #56 v1.2 runs stay
@@ -428,12 +427,6 @@ def _run_strategy_id(run_id: str | None) -> str:
         return "hydrogen-v1.8"
     if "hydrogen_v2_0" in str(run_id).lower() or "hydrogen-v2.0" in str(run_id).lower():
         return "hydrogen-v2.0"
-    if "hydrogen_v1_9_arm_a" in str(run_id).lower() or "hydrogen-v1.9-arm-a" in str(run_id).lower():
-        return "hydrogen-v1.9-arm-a"
-    if "hydrogen_v1_9_arm_b" in str(run_id).lower() or "hydrogen-v1.9-arm-b" in str(run_id).lower():
-        return "hydrogen-v1.9-arm-b"
-    if "hydrogen_v1_9_arm_e" in str(run_id).lower() or "hydrogen-v1.9-arm-e" in str(run_id).lower():
-        return "hydrogen-v1.9-arm-e"
     if "hydrogen_v1_9" in str(run_id).lower() or "hydrogen-v1.9" in str(run_id).lower():
         return "hydrogen-v1.9"
     if "hydrogen_v1_7" in str(run_id).lower() or "hydrogen-v1.7" in str(run_id).lower():

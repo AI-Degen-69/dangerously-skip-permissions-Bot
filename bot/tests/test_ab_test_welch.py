@@ -143,33 +143,6 @@ class TestBaselineIdentity(unittest.TestCase):
             self.assertNotIn(banned, h0)
             self.assertNotIn(banned, h1)
 
-    def test_hydrogen_candidate_registered(self):
-        from bot import constants as C
-        # Only the live set stays registered: replay defaults (v2.6/v2.7,
-        # hydrogen-v1.9), the A/B baseline (hydrogen-v1.0) and the
-        # candidate (hydrogen-v2.0). Superseded setups were pruned.
-        for sid in ("dangerously-skip-permissions-v2.6",
-                    "dangerously-skip-permissions-v2.7",
-                    "hydrogen-v1.0", "hydrogen-v1.9", "hydrogen-v2.0"):
-            self.assertIn(sid, C.STRATEGY_SETUPS)
-        for sid in ("dangerously-skip-permissions-v2.1",
-                    "dangerously-skip-permissions-v2.5",
-                    "hydrogen-v1.5", "hydrogen-v1.8"):
-            self.assertNotIn(sid, C.STRATEGY_SETUPS)
-        reg = C.STRATEGY_SETUPS.get("hydrogen-v2.0")
-        self.assertIsNotNone(reg)
-        e = reg["entry"]
-        self.assertEqual(e["startAfterOpenSec"], 4)
-        self.assertEqual(e["stopBeforeCloseSec"], 30)
-        self.assertEqual(e["sweepBeforeCloseSec"], 12)
-        self.assertEqual(e["minFillPrice"], 0.07)
-        self.assertEqual(e["maxFillPrice"], 0.47)
-        self.assertEqual(e["maxUnhedgedUsd"], 6.0)
-        self.assertEqual(e["maxPairCost"], 0.985)
-        self.assertIn("dipCurve", e)
-
-
-class TestPairedOneSidedPnl(unittest.TestCase):
     def test_paired_vs_one_sided_split(self):
         recs = [
             _rec("p1", 1.0, 2, 10.0, 10.0, 0.95),

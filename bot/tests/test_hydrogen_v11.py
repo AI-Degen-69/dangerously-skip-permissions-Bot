@@ -1,6 +1,5 @@
 import unittest
 from bot.executor import evaluate_microstructure_ladder
-from bot import constants as C
 
 
 class TestHydrogenV11Knobs(unittest.TestCase):

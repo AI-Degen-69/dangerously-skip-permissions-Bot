@@ -26,27 +26,25 @@ export function Settings() {
   const { data: me } = useMe()
   const toast = useToast()
   const [name, setName] = useState<string | null>(null)
-  const [confirm, setConfirm] = useState<'reset' | 'clear' | null>(null)
+  const [confirm, setConfirm] = useState(false)
 
   const rename = useApiMutation((value: string) => api('/workspace', { method: 'PATCH', json: { name: value } }), ['me'], {
     onSuccess: () => toast('Workspace renamed'),
   })
-  const reset = useApiMutation(() => api('/workspace/reset', { method: 'POST' }), ['me', 'overview', 'contacts', 'companies', 'deals', 'tasks'], {
+  const clear = useApiMutation(() => api('/workspace/data', { method: 'DELETE' }), ['me'], {
     onSuccess: () => {
-      setConfirm(null)
-      toast('Sample data restored')
-    },
-  })
-  const clear = useApiMutation(() => api('/workspace/data', { method: 'DELETE' }), ['me', 'overview', 'contacts', 'companies', 'deals', 'tasks'], {
-    onSuccess: () => {
-      setConfirm(null)
-      toast('Workspace cleared')
+      setConfirm(false)
+      toast('Imported data cleared')
     },
   })
 
   if (!me) return null
   const value = name ?? me.workspace.name
   const initials = (me.user.name ?? me.user.email ?? 'You').slice(0, 2).toUpperCase()
+  const connections: [string, boolean, string][] = [
+    ['Database', me.capabilities.database, 'D1 via the DB binding'],
+    ['Sign in with Freebuff', me.capabilities.auth === 'freebuff', 'FREEBUFF_CLIENT_ID'],
+  ]
 
   return (
     <div className="mx-auto max-w-[720px] p-5 sm:p-8">
@@ -116,12 +114,8 @@ export function Settings() {
         <h2 className="font-heading text-sm font-semibold text-foreground">Connections</h2>
         <Card className="mt-3 gap-0 overflow-hidden p-0">
           <ul className="divide-y divide-border">
-            {[
-              ['Database', me.capabilities.database, 'D1 via the DB binding'],
-              ['File storage', me.capabilities.files, 'R2 via the FILES binding'],
-              ['Sign in with Freebuff', me.capabilities.auth === 'freebuff', 'FREEBUFF_CLIENT_ID'],
-            ].map(([label, ok, detail]) => (
-              <li key={label as string} className="flex h-14 items-center gap-3 px-4">
+            {connections.map(([label, ok, detail]) => (
+              <li key={label} className="flex h-14 items-center gap-3 px-4">
                 <span className="min-w-0 flex-1">
                   <span className="block text-[13.5px] font-medium text-foreground">{label}</span>
                   <span className="block truncate text-[12px] text-muted-foreground">{detail}</span>
@@ -149,53 +143,24 @@ export function Settings() {
         <Card className="mt-3 gap-0 divide-y divide-border overflow-hidden p-0">
           <div className="flex items-center gap-3 p-4">
             <span className="min-w-0 flex-1">
-              <span className="block text-[13.5px] font-medium text-foreground">Restore sample data</span>
+              <span className="block text-[13.5px] font-medium text-foreground">Clear imported data</span>
               <span className="block text-[12.5px] text-muted-foreground">
-                Replaces everything with the starter companies, contacts and deals.
+                Deletes every paper window and trade imported into this workspace. This cannot be undone.
               </span>
             </span>
-            <Button variant="outline" size="sm" onClick={() => setConfirm('reset')}>
-              Restore
-            </Button>
-          </div>
-          <div className="flex items-center gap-3 p-4">
-            <span className="min-w-0 flex-1">
-              <span className="block text-[13.5px] font-medium text-foreground">Clear workspace</span>
-              <span className="block text-[12.5px] text-muted-foreground">
-                Deletes every record and file. This cannot be undone.
-              </span>
-            </span>
-            <Button variant="destructive" size="sm" onClick={() => setConfirm('clear')}>
+            <Button variant="destructive" size="sm" onClick={() => setConfirm(true)}>
               Clear
             </Button>
           </div>
         </Card>
       </section>
 
-      <AlertDialog open={confirm === 'reset'} onOpenChange={(open) => !open && setConfirm(null)}>
+      <AlertDialog open={confirm} onOpenChange={(open) => !open && setConfirm(false)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Restore sample data?</AlertDialogTitle>
+            <AlertDialogTitle>Clear imported data?</AlertDialogTitle>
             <AlertDialogDescription>
-              Everything in the workspace is replaced with the starter data.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={reset.isPending}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => reset.mutate(undefined)} disabled={reset.isPending}>
-              {reset.isPending && <Spinner data-icon="inline-start" />}
-              Restore
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog open={confirm === 'clear'} onOpenChange={(open) => !open && setConfirm(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Clear the workspace?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Every contact, company, deal, task, note and file is deleted.
+              Every imported paper window and trade is deleted from this workspace.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

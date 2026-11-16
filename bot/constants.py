@@ -143,7 +143,6 @@ STRATEGY_SETUPS = {
             "levelSpacing": 0.01,
             "minSpacingMoveSec": 0.5,
             "minSpacingStaticSec": 2.5,
-            "staticRequoteSec": 2.5,
             "includeTakerFee": True,
             # --- 4 new knobs ---
             "takerDipEntryMax": 0.45,
@@ -181,7 +180,6 @@ STRATEGY_SETUPS = {
             "levelSpacing": 0.01,
             "minSpacingMoveSec": 0.5,
             "minSpacingStaticSec": 2.5,
-            "staticRequoteSec": 2.5,
             "includeTakerFee": True,
             "takerDipEntryMax": 0.42,
             "lateRescueStartSec": 210,
@@ -223,7 +221,6 @@ STRATEGY_SETUPS = {
             "wholeLadderClips": True,
             "minSpacingMoveSec": 0.5,
             "minSpacingStaticSec": 2.5,
-            "staticRequoteSec": 2.5,
             "includeTakerFee": True,
             "maxDepthShares": 0.0,
         },
@@ -253,7 +250,6 @@ STRATEGY_SETUPS = {
             "dipCurve": {"lo": 0.07, "hi": 0.45, "sharesLo": 33.0, "sharesHi": 8.0},
             "minSpacingMoveSec": 0.5,
             "minSpacingStaticSec": 2.5,
-            "staticRequoteSec": 2.5,
             "includeTakerFee": True,
             "wholeLadderClips": True,
             "maxDepthShares": 0.0,
@@ -293,12 +289,12 @@ _SETUP_FEATURES = {
     },
     "hydrogen-v1.9": {
         "sizing": "split-ladder-v19", "preflightGate": False, "patientHedge": False, "takerDip": False,
-        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False, "l3Mode": "patient",
+        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
         "blurb": "dynamic 3-layer architecture: 1-level 5sh probe in 42–49c ATM band with T+150s cutoff; clamped maker hedge (<= $0.990) on any lead > 0.5sh; patient 20s delayed taker bailout (>= $1.07 marginal pair, <= 72c ask) with single-window freeze latch",
     },
     "hydrogen-v2.0": {
         "sizing": "two-sided-dip-v20", "preflightGate": False, "patientHedge": False, "takerDip": False,
-        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False, "l3Mode": "subpar",
+        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
         "blurb": "two-sided simultaneous resting (42-47c ATM & 7-45c inverse-dip curve, <=$6 unhedged USD) + clamped sub-$0.985 maker / <=$0.965 profit-lock taker",
     },
 }
@@ -328,8 +324,6 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         depth_cap = 0.0
     risk = float(f.get("dollarRisk", 4.50))
     sizing = f.get("sizing", "ladder")
-    balanced = (sizing == "balanced")
-    split_v18 = (sizing == "split-ladder-v18")
     split_v19 = (sizing == "split-ladder-v19")
     two_sided_v20 = (sizing == "two-sided-dip-v20")
     preflight = bool(f.get("preflightGate", False))
@@ -357,20 +351,7 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
             )
         except (TypeError, ValueError):
             _sched_txt = None
-    _sch_txt = None
-    if _sched_ok and isinstance(_sched, (list, tuple)):
-        try:
-            _sch_txt = (float(_sched[0][1]), float(_sched[-1][0]), float(_sched[-1][1]))
-        except (TypeError, ValueError, IndexError):
-            _sch_txt = None
-    l3_mode = str(f.get("l3Mode", "patient"))
-    if split_v19 and l3_mode == "off":
-        dip_txt = (
-            f"two-sided simultaneous 5 sh maker resting in the 42–48c band at sub-$0.990 pair cost "
-            f"with zero taker fills and exact deficit sizing"
-        )
-        sig_size = "Two-Sided Resting (5 sh)"
-    elif split_v19:
+    if split_v19:
         dip_txt = (
             f"1-level single 5 sh probe in the 42–49c ATM band (frozen at T+150s / 40 sh matched) "
             f"with strict resting hygiene and exact deficit sizing"
@@ -388,19 +369,6 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
             f"strictly bounded to ${float(e.get('maxUnhedgedUsd', 6.0)):.2f} max unhedged USD"
         )
         sig_size = f"Two-Sided + Curve ({s_lo:g}@{c_lo}c → {s_hi:g}@{hi_c}c)"
-    elif split_v18 and _sch_txt is not None:
-        _c0, _t1, _c1 = _sch_txt
-        dip_txt = (
-            f"2-level off-touch split ladder (-1c, -2c; {_c0:g} sh at the open decaying to {_c1:g} sh "
-            f"by T+{_t1:g}s) in the 42–58c ATM band with Heavy-Side Floor Gate (<45c when >=10 sh heavy)"
-        )
-        sig_size = f"3-Layer Split Ladder ({_c0:g}→{_c1:g} sh)"
-    elif balanced and _sch_txt is not None:
-        _c0, _t1, _c1 = _sch_txt
-        dip_txt = (f"scheduled clips ({_c0:g} sh at the open decaying to {_c1:g} sh "
-                   f"by T+{_t1:g}s) quoting both sides together, the lighter side always bought first with top-ups "
-                   f"closing at most half the gap, size tilting to the cheaper side (5 sh taker probes on wide books)")
-        sig_size = f"Balanced Books ({_c0:g}→{_c1:g} sh)"
     elif _sched_txt is not None:
         dip_txt, sig_size = _sched_txt
     elif sizing == "hump":
@@ -434,33 +402,11 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
             f"dips under {hi_c}c)"
         )
         sig_size = f"Capped ${risk:.2f} Per Dip ({clip:g}-{mx:g} sh)"
-    elif sizing == "confidence":
-        dip_txt = f"{mx:g} sh on risk-free pairs, {clip:g} sh micro dips"
-        sig_size = f"{mx:g} sh Atomic / {clip:g} sh Micro"
-    elif sizing == "de-escalating":
-        dip_txt = f"shrinking dip clips (max {mx:g} sh)"
-        sig_size = f"Shrinking Dip Clips (max {mx:g} sh)"
     else:
         dip_txt = f"{clip:g} sh (max {mx:g} sh) in the {lo_c}c-{hi_c}c band"
         sig_size = f"Dip Grid [{lo_c}c-{hi_c}c]"
 
-    if split_v19 and l3_mode == "immediate":
-        gate_txt = (
-            f"a 3-layer breakout defense: Layer 1 quotes only within [42¢, 49¢] under ${cap:.3f} pair cost; "
-            f"Layer 2 rebalances with sub-par clamped maker hedging (<= $0.990) on any lead > 0.5 sh; "
-            f"Layer 3 fires an immediate taker equalizer (>= $1.00 marginal pair, <= 72¢ ask) "
-            f"with single-window freeze latch"
-        )
-        sig_gate = "Clamped Maker (≤$0.990) + Immediate L3"
-    elif split_v19 and l3_mode == "off":
-        gate_txt = (
-            f"a 3-layer breakout defense: Layer 1 rests both sides within [42¢, 48¢] under ${cap:.3f} pair cost; "
-            f"Layer 2 rebalances with sub-par clamped maker hedging (<= $0.990) on any lead > 0.5 sh; "
-            f"Layer 3 taker bailout is disabled (pure maker execution) "
-            f"with single-window freeze latch"
-        )
-        sig_gate = "Clamped Maker (≤$0.990) + Pure Maker (No Taker)"
-    elif split_v19:
+    if split_v19:
         gate_txt = (
             f"a 3-layer breakout defense: Layer 1 quotes only within [42¢, 49¢] under ${cap:.3f} pair cost; "
             f"Layer 2 rebalances with sub-par clamped maker hedging (<= $0.990) on any lead > 0.5 sh; "
@@ -477,18 +423,6 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
             f"(never >= $1.00, no freeze latch)"
         )
         sig_gate = f"Two-Sided ≤${cap:.3f} (No ≥$1.00 / No Latch)"
-    elif split_v18:
-        gate_txt = (
-            f"a 3-layer breakout defense: balanced entries stay in 42–58c under ${cap:.3f} pair cost "
-            f"(heavy floor gate blocks <45c above 10 sh lead); rebalance-maker bypasses pair-cost skips up to "
-            f"{hi_c}c; breakout rebalance-taker flattens 60–68c ask deficits immediately"
-        )
-        sig_gate = "3-Layer Defense (Heavy Gate + Breakout Taker)"
-    elif balanced:
-        gate_txt = (f"a balanced book: the lighter side is bought first at any price up to the {hi_c}c ceiling, "
-                    f"top-ups close at most half the gap per fill, and pair cost is reported against the wallet "
-                    f"benchmark instead of gated")
-        sig_gate = "Balanced Book (25% lead)"
     elif preflight:
         gate_txt = f"pre-flight hedge gate plus pair gates (under ${rescue:.3f})"
         sig_gate = f"Pre-Flight Gate (under ${rescue:.3f})"
@@ -529,7 +463,7 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         f"Buys dips {dip_txt}; entries follow {gate_txt}; "
         f"never {gap_txt}.{sweep_txt}{heavy_txt}{depth_txt}"
     ).strip()
-    if balanced or split_v18 or split_v19 or two_sided_v20:
+    if split_v19 or two_sided_v20:
         signature = f"{sig_size} - {sig_gate} - {gap_cap_txt} - Max Buy {hi_c}c"
         description = (
             f"Accumulates both sides from the open: {dip_txt}; {gate_txt}; "
@@ -550,13 +484,7 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         "maxBuy": f"{hi_c}c",
         "cutoff": f"{cutoff:g}s before close",
     }
-    if split_v19 and l3_mode == "immediate":
-        highlights["pairGates"] = "balanced <= $0.990; clamped maker <= floor(0.990 - heavy_avg); immediate taker equalizer (>= $1.00)"
-        highlights["preflightGate"] = "Deficit Trigger (tol = 0.5 sh) + Window Freeze Latch"
-    elif split_v19 and l3_mode == "off":
-        highlights["pairGates"] = "balanced <= $0.990; clamped maker <= floor(0.990 - heavy_avg); no taker bailout (pure maker)"
-        highlights["preflightGate"] = "Deficit Trigger (tol = 0.5 sh) + Window Freeze Latch"
-    elif split_v19:
+    if split_v19:
         highlights["pairGates"] = "balanced <= $0.990; clamped maker <= floor(0.990 - heavy_avg); patient taker 20s delay (>= $1.07)"
         highlights["preflightGate"] = "Deficit Trigger (tol = 0.5 sh) + Window Freeze Latch"
     elif two_sided_v20:
@@ -565,12 +493,6 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
             f"profit-lock taker <= ${tgt:.3f} (sweep <= ${rescue:.3f}), never >= $1.00"
         )
         highlights["preflightGate"] = "Two-Sided Mutual Gate + Sub-$1.00 Deficit Equalizer (No Freeze Latch)"
-    elif split_v18:
-        highlights["pairGates"] = "balanced <= $0.995; rebalance-maker unblocked to 85c; breakout taker 60-68c"
-        highlights["preflightGate"] = "Heavy Floor Gate (>=10sh & <45c) + Breakout Taker (60-68c)"
-    elif balanced:
-        highlights["pairGates"] = "reported vs $0.977 wallet benchmark, never gated"
-        highlights["preflightGate"] = "Off (lighter side always eligible to 85c)"
     return signature, description, highlights
 
 
