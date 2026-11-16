@@ -68,7 +68,7 @@ export function tweakCards(candidate: AbTestDistributionStats | null | undefined
 
   const t2body =
     splitV18
-      ? (hl.dipClips ?? `2-level off-touch split ladder (-1¢, -2¢; ${clip}→${mx} sh) inside 42–58¢; unblocked rebalance-maker splits deficits up to ${mx} sh at bid while 60–68¢ breakout triggers taker equalization.`)
+      ? (hl.dipClips ?? `2-level off-touch split ladder (-1¢, -2¢; 10→8 sh) inside 42–58¢; unblocked rebalance-maker splits deficits up to 10 sh at bid while 60–68¢ breakout triggers taker equalization.`)
       : balanced
         ? (hl.dipClips ?? `Both sides quoted together from the open; the lighter side is always bought first, top-ups close at most half the gap, size tilts to the cheaper side.`)
         : (hl.dipClips ??
