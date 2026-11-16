@@ -154,8 +154,8 @@ export const STRATEGY_PRESETS = {
     id: 'dangerously-skip-permissions-v2.3',
     symbol: '⚡ DSP-v2.3',
     name: 'Dangerously Skip Permissions v2.3 (Constant-Risk Sizing)',
-    signature: 'Constant Dollar-Risk ($4.50) · Dip Buys ≤45¢ (10–45 sh) · Single Gap-Veto Knob (20 sh, max hold 19) · Total Paired Volume Uncapped · Strict Sub-$1.00 Pair Cap',
-    description: 'Constant dollar-risk candidate: Buys dips at 45¢ or cheaper only, sizing each dip as $4.50 / price (10 at 45¢ up to 45 at 10¢) so no single dip risks more than $4.50. Unhedged gap vetoed at 20 shares (never held; max hold 19), total paired volume uncapped — choppy windows re-trigger dip then equalize cycles to stack paired wins. No pre-flight gate, no heavy 60-share fills — entries follow strict sub-$1.00 pair-cost gates.',
+    signature: 'Constant Dollar-Risk ($4.50) · Dip Buys ≤45¢ (10–45 sh) · No Share Veto · Total Paired Volume Uncapped · Strict Sub-$1.00 Pair Cap',
+    description: 'Constant dollar-risk candidate: Buys dips at 45¢ or cheaper only, sizing each dip as $4.50 / price (10 at 45¢ up to 45 at 10¢) so no single dip risks more than $4.50. No share-denominated veto — unhedged risk is governed in dollars, not shares; total paired volume uncapped — choppy windows re-trigger dip then equalize cycles to stack paired wins. No pre-flight gate, no heavy 60-share fills — entries follow strict sub-$1.00 pair-cost gates.',
     entry: {
       clipSharesDefault: 10,
       maxShares: 45,
@@ -178,9 +178,9 @@ export const STRATEGY_PRESETS = {
   'dangerously-skip-permissions-v2.4': {
     id: 'dangerously-skip-permissions-v2.4',
     symbol: '⚡ DSP-v2.4',
-    name: 'Dangerously Skip Permissions v2.4 (Single-Knob Gap Veto)',
-    signature: 'Constant Dollar-Risk ($4.50) · Dip Buys ≤45¢ (10–45 sh) · Single Gap-Veto Knob (11 sh, max hold 10) · Total Paired Volume Uncapped · Strict Sub-$1.00 Pair Cap',
-    description: 'Single-knob candidate: identical to v2.3 except the unhedged-gap veto knob is 11 shares (never held; max hold 10), so the worst strand is ~$4.50 instead of ~$8.70. Buys dips at 45¢ or cheaper only; total paired volume uncapped; entries follow strict sub-$1.00 pair-cost gates.',
+    name: 'Dangerously Skip Permissions v2.4 (Flat Ladder, No Veto)',
+    signature: 'Flat 10 sh Ladder · Dip Buys ≤45¢ · No Share Veto · Total Paired Volume Uncapped · Strict Sub-$1.00 Pair Cap',
+    description: 'Flat-ladder candidate: uniform 10 sh dips at 45¢ or cheaper, no share-denominated veto — both sides stay eligible at every lead with the lagging side evaluated first. Total paired volume uncapped; entries follow strict sub-$1.00 pair-cost gates with rescue to $0.995.',
     entry: {
       clipSharesDefault: 10,
       maxShares: 45,
@@ -349,8 +349,8 @@ export const STRATEGY_PRESETS = {
     id: 'hydrogen-v1.2',
     symbol: 'H2 Hydrogen-v1.2',
     name: 'Hydrogen v1.2',
-    signature: 'Uniform 10sh clips · 11-share Lead Veto · Balanced-or-Light Taker Dip (36¢) · 8¢ Unhedged Step · Patient Pair (under $0.985) · Dollar Gap Cap ($45.00) · Under-$1.020 Cap',
-    description: 'Uniform 10 sh clips under an 11-share lead veto (max 10 sh directional lead, scales in balanced 10/10 increments, no 10→25 overshoot); taker dip entries up to 36¢ only when balanced or on the light side; 8¢ unhedged step; patient pair with leg-2 ceiling 75¢ and late rescue to $1.02 from T+210s; never more than $45.00 of unhedged cost.',
+    signature: 'Uniform 10sh clips · Balanced-or-Light Taker Dip (36¢) · 8¢ Unhedged Step · Patient Pair (under $0.985) · Dollar Gap Cap ($45.00) · Under-$1.020 Cap',
+    description: 'Uniform 10 sh clips with no share veto (the 11-share lead veto was removed engine-wide; both sides stay eligible at every lead, lagging side first); taker dip entries up to 36¢ only when balanced or on the light side; 8¢ unhedged step; patient pair with leg-2 ceiling 75¢ and late rescue to $1.02 from T+210s; never more than $45.00 of unhedged cost.',
     entry: {
       clipSharesDefault: 10,
       maxShares: 10,
@@ -390,8 +390,8 @@ export const STRATEGY_PRESETS = {
     id: 'hydrogen-v1.3',
     symbol: 'H2 Hydrogen-v1.3',
     name: 'Hydrogen v1.3',
-    signature: 'Uniform 10sh clips · 11-share Lead Veto · Balanced-or-Light Taker Dip (36¢) · 8¢ Unhedged Step · Patient Pair (under $0.985) · Dollar Gap Cap ($45.00) · Under-$1.020 Cap',
-    description: 'Post-PR #56 build (same knobs as v1.2): uniform 10 sh clips under an 11-share lead veto; taker dip entries up to 36¢ only when balanced or on the light side; 8¢ unhedged step; patient pair with leg-2 ceiling 75¢ and late rescue to $1.02 from T+210s; never more than $45.00 of unhedged cost.',
+    signature: 'Uniform 10sh clips · Balanced-or-Light Taker Dip (36¢) · 8¢ Unhedged Step · Patient Pair (under $0.985) · Dollar Gap Cap ($45.00) · Under-$1.020 Cap',
+    description: 'Post-PR #56 build (same knobs as v1.2) with no share veto: uniform 10 sh clips, both sides eligible at every lead with the lagging side evaluated first; taker dip entries up to 36¢ only when balanced or on the light side; 8¢ unhedged step; patient pair with leg-2 ceiling 75¢ and late rescue to $1.02 from T+210s; never more than $45.00 of unhedged cost.',
     entry: {
       clipSharesDefault: 10,
       maxShares: 10,

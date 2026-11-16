@@ -229,8 +229,8 @@ STRATEGY_SETUPS = {
             "benchmarkPairCost": 0.965,
             "targetPairCost": 0.965,
             "maxPairCost": 0.985,
-            # Share veto left free (46) because the dollar cap does the work:
-            # a 33-share clip at 7c is $2.31 of risk, not "33 >= 11 shares".
+            # No share veto anywhere in the engine: a 33-share clip at 7c is
+            # $2.31 of risk, and the dollar cap below is what governs it.
             "maxUnhedgedUsd": 5.0,
             # Inverse-dip curve: 33 shares at 7c -> 8 shares at 45c, linear in price.
             "dipCurve": {"lo": 0.07, "hi": 0.45, "sharesLo": 33.0, "sharesHi": 8.0},
@@ -513,7 +513,7 @@ _SETUP_FEATURES = {
         # strategy_id.endswith("v2.3"), so v2.4 falls through to the ladder.
         "sizing": "ladder", "preflightGate": False,
         "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
-        "blurb": "flat 10-share ladder under an 11-share gap veto with passive sweep and uncapped paired volume",
+        "blurb": "flat 10-share ladder with passive sweep and uncapped paired volume (no share veto; dollar-capped unhedged risk)",
     },
     "dangerously-skip-permissions-v2.5": {
         "sizing": "inverse-curve", "preflightGate": False, "heavyAtomic": False,
@@ -543,7 +543,7 @@ _SETUP_FEATURES = {
     "hydrogen-v1.2": {
         "sizing": "hump", "preflightGate": False, "patientHedge": True, "takerDip": True,
         "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
-        "blurb": "uniform 10sh clips under an 11-share lead veto with balanced-or-light-only taker dip entry to 36c, 8c unhedged step, leg-2 ceiling 75c, and late rescue to $1.02 from T+210s (pre-PR #56 engine; superseded by v1.3)",
+        "blurb": "uniform 10sh clips with balanced-or-light-only taker dip entry to 36c, 8c unhedged step, leg-2 ceiling 75c, and late rescue to $1.02 from T+210s (pre-PR #56 engine; share veto removed engine-wide; superseded by v1.3)",
     },
     "hydrogen-v1.3": {
         "sizing": "hump", "preflightGate": False, "patientHedge": True, "takerDip": True,
@@ -587,8 +587,12 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
     if sizing == "hump":
         probe = e.get("unhedgedProbeShares")
         if probe and float(probe) > 0:
-            dip_txt = f"hump clips ({float(probe):g} sh probe / {mx:g} sh pair)"
-            sig_size = f"Hump Curve ({float(probe):g}sh probe / {mx:g}sh pair)"
+            if float(probe) == float(mx) == float(clip):
+                dip_txt = f"flat {clip:g} sh clips (probe, ladder and cap all bind at {clip:g} sh, so the hump curve never expresses)"
+                sig_size = f"Flat {clip:g} sh Clips"
+            else:
+                dip_txt = f"hump clips ({float(probe):g} sh probe / {mx:g} sh pair)"
+                sig_size = f"Hump Curve ({float(probe):g}sh probe / {mx:g}sh pair)"
         else:
             dip_txt = f"hump clips (30 sh at/below 10c, ~48.7 sh at 40-50c, 30 sh at/above 70c, capped at {mx:g} sh)"
             sig_size = f"Hump Curve (30-48.7-30 sh, cap {mx:g})"
@@ -626,9 +630,10 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         sig_gate = f"Pre-Flight Gate (under ${rescue:.3f})"
     elif patient:
         gate_txt = (
-            f"a patient pair: the first leg is placed at the touch near the money, the hedge "
-            f"rests on the other side and is crossed only in the sweep, and the pair cost "
-            f"stays under ${cap:.3f}"
+            f"a patient pair: legs are bought as dips in the {lo_c}c-{hi_c}c band, cheapest side "
+            f"first (a taker leg is crossed immediately up to the dip threshold, otherwise the deficit "
+            f"hedge rests on the other side as a maker order and is crossed only in the sweep), "
+            f"and the pair cost stays under ${cap:.3f}"
         )
         sig_gate = f"Patient Pair (under ${cap:.3f})"
     elif hedge_now:

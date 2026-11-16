@@ -234,8 +234,8 @@ def evaluate_microstructure_ladder(
     Supports both setups:
     - 'hapcs-v1': Aggressive dual-regime with M4 certainty sniping up to 97.5¢ and 12s cutoff.
     - 'dangerously-skip-permissions': Reconstructed from wallet 0xc533…69a9 ($1.42M vol/wk).
-      Focuses on deep dips [7¢–45¢], 75s early cutoff, strict unhedged-gap veto,
-      and Tiered Rescue Pairing up to $1.025 so 80¢–92¢ deficit-closing hedges
+      Focuses on deep dips [7¢–45¢], 75s early cutoff, dollar-capped unhedged
+      risk (no share veto), and Tiered Rescue Pairing up to $1.025 so 80¢–92¢ deficit-closing hedges
       are executed rather than left unhedged to face 100% loss at resolution.
     """
     bench_pc = target_pair_cost if target_pair_cost is not None else benchmark_pair_cost
@@ -570,7 +570,7 @@ def evaluate_microstructure_ladder(
         # fee via compute_fill_usd, so slippage is never understated. Falls
         # through to the maker path when the taker candidate fails its gates.
         # No atomic bypass here: a fresh taker dip is never the v2.2 risk-free
-        # atomic pair, so the share-lead veto always binds.
+        # atomic pair, and no share veto exists to bind it.
         # hydrogen-v1.2 balanced-or-light-only taker dip: when the book is
         # imbalanced (lead > 0 means this side is heavy, since deficit <= 0
         # here), skip the taker cross and fall through to the maker path.
