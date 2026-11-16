@@ -24,10 +24,10 @@ class TestHydrogenV13Registry(unittest.TestCase):
 
 class TestArchivedRunExclusion(unittest.TestCase):
     def test_archived_prefix_detected(self):
-        self.assertTrue(ab._is_archived_run.__code__.co_consts is not None)
-        # Non-existent runs are not archived.
+        # Non-existent / empty runs are not archived.
         self.assertFalse(ab._is_archived_run("run_20990101_000000_paper_hydrogen_v9_9"))
         self.assertFalse(ab._is_archived_run(None))
+        self.assertFalse(ab._is_archived_run(""))
 
     def test_strategy_id_mapping_covers_v13(self):
         self.assertEqual(
