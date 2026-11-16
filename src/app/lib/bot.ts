@@ -127,6 +127,7 @@ export interface StrategyFeatures {
   heavyAtomic?: boolean
   sweep?: boolean
   pairedVolumeCapped?: boolean
+  l3Mode?: string
   blurb?: string
 }
 

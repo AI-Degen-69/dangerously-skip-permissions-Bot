@@ -1006,7 +1006,8 @@ def trade_window(
         nonlocal orders_posted
         opp_side = "Down" if outcome == "Up" else "Up"
         max_hedge_px = None
-        if sub_reason == "rebalance-maker":
+        # v1.9-only resting hygiene: older strategies keep their own behavior.
+        if sub_reason == "rebalance-maker" and strat_id.startswith("hydrogen-v1.9"):
             cancel_side_orders(open_orders, opp_side)
             if inv[opp_side]["shares"] > 0:
                 heavy_avg = inv[opp_side]["cost"] / inv[opp_side]["shares"]
@@ -1061,7 +1062,8 @@ def trade_window(
         nonlocal orders_posted, orders_cancelled
         opp_side = "Down" if outcome == "Up" else "Up"
         max_hedge_px = None
-        if sub_reason == "rebalance-maker":
+        # v1.9-only resting hygiene: older strategies keep their own behavior.
+        if sub_reason == "rebalance-maker" and strat_id.startswith("hydrogen-v1.9"):
             cancel_side_orders(open_orders, opp_side)
             if inv[opp_side]["shares"] > 0:
                 heavy_avg = inv[opp_side]["cost"] / inv[opp_side]["shares"]

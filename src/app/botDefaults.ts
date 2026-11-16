@@ -563,7 +563,7 @@ export const STRATEGY_PRESETS = {
       includeTakerFee: true,
       wholeLadderClips: true,
     },
-    features: { sizing: 'split-ladder-v19', preflightGate: false, patientHedge: false, takerDip: false, heavyAtomic: false, sweep: true, pairedVolumeCapped: false },
+    features: { sizing: 'split-ladder-v19', preflightGate: false, patientHedge: false, takerDip: false, heavyAtomic: false, sweep: true, pairedVolumeCapped: false, l3Mode: 'patient' },
   },
   'hydrogen-v1.9-arm-a': {
     id: 'hydrogen-v1.9-arm-a',
@@ -592,7 +592,7 @@ export const STRATEGY_PRESETS = {
       includeTakerFee: true,
       wholeLadderClips: true,
     },
-    features: { sizing: 'split-ladder-v19', preflightGate: false, patientHedge: false, takerDip: false, heavyAtomic: false, sweep: true, pairedVolumeCapped: false },
+    features: { sizing: 'split-ladder-v19', preflightGate: false, patientHedge: false, takerDip: false, heavyAtomic: false, sweep: true, pairedVolumeCapped: false, l3Mode: 'immediate' },
   },
   'hydrogen-v1.9-arm-b': {
     id: 'hydrogen-v1.9-arm-b',
@@ -621,7 +621,7 @@ export const STRATEGY_PRESETS = {
       includeTakerFee: true,
       wholeLadderClips: true,
     },
-    features: { sizing: 'split-ladder-v19', preflightGate: false, patientHedge: false, takerDip: false, heavyAtomic: false, sweep: true, pairedVolumeCapped: false },
+    features: { sizing: 'split-ladder-v19', preflightGate: false, patientHedge: false, takerDip: false, heavyAtomic: false, sweep: true, pairedVolumeCapped: false, l3Mode: 'patient' },
   },
   'hydrogen-v1.9-arm-e': {
     id: 'hydrogen-v1.9-arm-e',
@@ -650,6 +650,6 @@ export const STRATEGY_PRESETS = {
       includeTakerFee: true,
       wholeLadderClips: true,
     },
-    features: { sizing: 'split-ladder-v19', preflightGate: false, patientHedge: false, takerDip: false, heavyAtomic: false, sweep: true, pairedVolumeCapped: false },
+    features: { sizing: 'split-ladder-v19', preflightGate: false, patientHedge: false, takerDip: false, heavyAtomic: false, sweep: true, pairedVolumeCapped: false, l3Mode: 'off' },
   },
 } as const

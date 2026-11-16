@@ -426,6 +426,14 @@ def _run_strategy_id(run_id: str | None) -> str:
         return "hydrogen-v1.1"
     if "hydrogen_v1_8" in str(run_id).lower() or "hydrogen-v1.8" in str(run_id).lower():
         return "hydrogen-v1.8"
+    if "hydrogen_v1_9_arm_a" in str(run_id).lower() or "hydrogen-v1.9-arm-a" in str(run_id).lower():
+        return "hydrogen-v1.9-arm-a"
+    if "hydrogen_v1_9_arm_b" in str(run_id).lower() or "hydrogen-v1.9-arm-b" in str(run_id).lower():
+        return "hydrogen-v1.9-arm-b"
+    if "hydrogen_v1_9_arm_e" in str(run_id).lower() or "hydrogen-v1.9-arm-e" in str(run_id).lower():
+        return "hydrogen-v1.9-arm-e"
+    if "hydrogen_v1_9" in str(run_id).lower() or "hydrogen-v1.9" in str(run_id).lower():
+        return "hydrogen-v1.9"
     if "hydrogen_v1_7" in str(run_id).lower() or "hydrogen-v1.7" in str(run_id).lower():
         return "hydrogen-v1.7"
     if "hydrogen_v1_6" in str(run_id).lower() or "hydrogen-v1.6" in str(run_id).lower():

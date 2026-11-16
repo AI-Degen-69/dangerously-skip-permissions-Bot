@@ -958,6 +958,7 @@ def _evaluate_hydrogen_v19(
     deficit_duration_sec: float = 0.0,
     window_bailout_latched: bool = False,
     candidate_arm: str = "B",
+    max_pair_cost: float = H19_L2_PAIR_CAP,
 ) -> MicrostructureDecision:
     """Hydrogen v1.9 microstructure decision engine.
 
@@ -982,6 +983,21 @@ def _evaluate_hydrogen_v19(
 
     def _skip(reason: str, sub: str, pref: str | None) -> MicrostructureDecision:
         return MicrostructureDecision(action="skip", outcome=pref, reason=reason, sub_reason=sub)
+
+    def _unhedged_ok(side: str, shares: float, est_usd: float) -> bool:
+        cur = inv.get(side) or {}
+        new_sh = float(cur.get("shares", 0.0)) + shares
+        opp = "Down" if side == "Up" else "Up"
+        lead_after = new_sh - float((inv.get(opp) or {}).get("shares", 0.0))
+        if lead_after <= 0 or new_sh <= 0:
+            return True
+        if max_unhedged_shares > 0 and lead_after > max_unhedged_shares + 1e-9:
+            return False
+        if max_unhedged_usd > 0:
+            new_cost = float(cur.get("cost", 0.0)) + est_usd
+            if (new_cost / new_sh) * lead_after > max_unhedged_usd:
+                return False
+        return True
 
     def _cap_m(shares: float, role: str, side: str) -> float:
         try:
@@ -1036,6 +1052,8 @@ def _evaluate_hydrogen_v19(
                 return _skip("extreme-price-skip", "ceiling-price-skip", light)
             take_size = min(deficit, 10.0)
             est_usd, _ = compute_fill_usd(take_size, l_ask, role="TAKER", include_fee=True)
+            if not _unhedged_ok(light, take_size, est_usd):
+                return _skip("unhedged-cap-skip", "unhedged-cap", light)
             proj = _projected_pair_cost(inv, light, take_size, est_usd)
             return MicrostructureDecision(
                 action="fill", outcome=light, price=round(l_ask, 4),
@@ -1044,8 +1062,8 @@ def _evaluate_hydrogen_v19(
                 projected_pair_cost=proj, share_deficit=deficit,
             )
 
-        # Layer 2: Clamped Maker Rebalance (<= 0.990)
-        max_hedge_px = math.floor((H19_L2_PAIR_CAP - heavy_avg + 1e-9) * 100.0) / 100.0
+        # Layer 2: Clamped Maker Rebalance (<= min(configured cap, 0.990))
+        max_hedge_px = math.floor((min(H19_L2_PAIR_CAP, max_pair_cost) - heavy_avg + 1e-9) * 100.0) / 100.0
         if l_bid is None:
             return _skip("no-liquidity", "no-liquidity", light)
         px = min(float(l_bid), max_hedge_px)
@@ -1058,6 +1076,8 @@ def _evaluate_hydrogen_v19(
         if size <= 0:
             return _skip("no-liquidity", "depth-cap", light)
         est_usd, _ = compute_fill_usd(size, px, role="MAKER", include_fee=False)
+        if not _unhedged_ok(light, size, est_usd):
+            return _skip("unhedged-cap-skip", "unhedged-cap", light)
         proj = _projected_pair_cost(inv, light, size, est_usd)
         return MicrostructureDecision(
             action="fill", outcome=light, price=round(px, 4),
@@ -1071,8 +1091,12 @@ def _evaluate_hydrogen_v19(
         return _skip("window-frozen", "cutoff-reached", "Up" if fill_idx % 2 == 0 else "Down")
 
     if candidate_arm == "E":
-        # Two-Sided Simultaneous Resting within [0.42, 0.48]
+        # Two-Sided Simultaneous Resting within [0.42, 0.48].
+        # A side rests only when its own bid implies a price inside the band;
+        # clamping an out-of-band bid up to 0.42 could cross the ask.
         if up_bid is not None and dn_bid is not None:
+            up_in_band = 0.42 <= round(up_bid - 0.01, 2) <= 0.48
+            dn_in_band = 0.42 <= round(dn_bid - 0.01, 2) <= 0.48
             up_base = min(max(round(up_bid - 0.01, 2), 0.42), 0.48)
             dn_max = math.floor((0.990 - up_base + 1e-9) * 100.0) / 100.0
             dn_base = min(max(round(dn_bid - 0.01, 2), 0.42), min(0.48, dn_max))
@@ -1081,13 +1105,13 @@ def _evaluate_hydrogen_v19(
 
             has_up = bool(open_orders and "Up" in open_orders)
             has_dn = bool(open_orders and "Down" in open_orders)
-            if not has_up and up_base >= 0.42:
+            if up_in_band and not has_up:
                 return MicrostructureDecision(
                     action="fill", outcome="Up", price=up_base, shares=5.0,
                     role="MAKER", reason="straddle-open", sub_reason="balance-maker",
                     projected_pair_cost=None, share_deficit=0.0,
                 )
-            elif not has_dn and dn_base >= 0.42:
+            elif dn_in_band and not has_dn:
                 return MicrostructureDecision(
                     action="fill", outcome="Down", price=dn_base, shares=5.0,
                     role="MAKER", reason="straddle-open", sub_reason="balance-maker",
@@ -1121,6 +1145,8 @@ def _evaluate_hydrogen_v19(
     if size <= 0:
         return _skip("no-liquidity", "depth-cap", pick)
     est_usd, _ = compute_fill_usd(size, target_px, role="MAKER", include_fee=False)
+    if not _unhedged_ok(pick, size, est_usd):
+        return _skip("unhedged-cap-skip", "unhedged-cap", pick)
     return MicrostructureDecision(
         action="fill", outcome=pick, price=round(target_px, 4),
         shares=size, role="MAKER",
@@ -1387,6 +1413,7 @@ def evaluate_microstructure_ladder(
             deficit_duration_sec=float(kwargs.get("deficit_duration_sec", 0.0) or 0.0),
             window_bailout_latched=bool(kwargs.get("window_bailout_latched", False)),
             candidate_arm=arm_type,
+            max_pair_cost=max_pair_cost,
         )
 
     if strategy_id in ("hydrogen-v1.7", "hydrogen-v1.8"):

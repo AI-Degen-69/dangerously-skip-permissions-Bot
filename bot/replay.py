@@ -561,7 +561,8 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
         nonlocal placements, queue_unknown
         opp_side = "Down" if outcome == "Up" else "Up"
         max_hedge_px = None
-        if sub_reason == "rebalance-maker":
+        # v1.9-only resting hygiene (mirrors live_paper): older strategies keep prior behavior.
+        if sub_reason == "rebalance-maker" and strategy_id.startswith("hydrogen-v1.9"):
             resting[opp_side] = []
             if inv[opp_side]["shares"] > 0:
                 heavy_avg = inv[opp_side]["cost"] / inv[opp_side]["shares"]
