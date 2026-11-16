@@ -123,21 +123,21 @@ class TestBaselineIdentity(unittest.TestCase):
     def test_default_baseline_is_hydrogen_v1_0(self):
         self.assertEqual(ab.DEFAULT_BASELINE_ID,
                          "run_20261113_183248_paper_hydrogen_v1_0")
-        self.assertEqual(ab.DEFAULT_CANDIDATE_ID, "hydrogen-v1.3")
+        self.assertEqual(ab.DEFAULT_CANDIDATE_ID, "hydrogen-v1.4")
         self.assertEqual(ab.TARGET_SAMPLE_SIZE, 120)
         self.assertEqual(ab.TARGET_PAIRED_WINDOWS, 60)
         self.assertEqual(ab.TARGET_SUB_DOLLAR_PAIRS, 35)
 
-    def test_hypothesis_names_hydrogen_v1_3_vs_hydrogen_v1_0(self):
+    def test_hypothesis_names_hydrogen_v1_4_vs_hydrogen_v1_0(self):
         h0 = ab._hypothesis_text(None, null=True,
                                  baseline_id=ab.DEFAULT_BASELINE_ID)
         h1 = ab._hypothesis_text(None, null=False,
                                  baseline_id=ab.DEFAULT_BASELINE_ID)
-        self.assertTrue(h0.startswith("H₀: μ_Hydrogen_v1.3 ≤ μ_Hydrogen_v1.0 (and ≤ 0)"))
-        self.assertTrue(h1.startswith("H₁: μ_Hydrogen_v1.3 > μ_Hydrogen_v1.0 and > 0"))
-        self.assertIn("Hydrogen_v1.3", h0)
+        self.assertTrue(h0.startswith("H₀: μ_Hydrogen_v1.4 ≤ μ_Hydrogen_v1.0 (and ≤ 0)"))
+        self.assertTrue(h1.startswith("H₁: μ_Hydrogen_v1.4 > μ_Hydrogen_v1.0 and > 0"))
+        self.assertIn("Hydrogen_v1.4", h0)
         self.assertIn("Hydrogen_v1.0", h0)
-        self.assertIn("Hydrogen_v1.3", h1)
+        self.assertIn("Hydrogen_v1.4", h1)
         self.assertIn("Hydrogen_v1.0", h1)
         for banned in ("v2.0", "v2.2", "Confidence", "DSP_v2.6"):
             self.assertNotIn(banned, h0)
@@ -145,13 +145,14 @@ class TestBaselineIdentity(unittest.TestCase):
 
     def test_hydrogen_candidate_registered(self):
         from bot import constants as C
-        # v1.1/v1.2 stay registered as frozen setups; v1.3 is the candidate.
+        # v1.1/v1.2/v1.3 stay registered as frozen setups; v1.4 is the candidate.
         self.assertIsNotNone(C.STRATEGY_SETUPS.get("hydrogen-v1.1"))
         self.assertIsNotNone(C.STRATEGY_SETUPS.get("hydrogen-v1.2"))
-        reg = C.STRATEGY_SETUPS.get("hydrogen-v1.3")
+        self.assertIsNotNone(C.STRATEGY_SETUPS.get("hydrogen-v1.3"))
+        reg = C.STRATEGY_SETUPS.get("hydrogen-v1.4")
         self.assertIsNotNone(reg)
         e = reg["entry"]
-        self.assertEqual(e["startAfterOpenSec"], 15)
+        self.assertEqual(e["startAfterOpenSec"], 4)
         self.assertEqual(e["stopBeforeCloseSec"], 30)
         self.assertNotIn("maxShareLead", e)
         self.assertEqual(e["sweepBeforeCloseSec"], 12)
@@ -161,7 +162,7 @@ class TestBaselineIdentity(unittest.TestCase):
         self.assertEqual(e["dipCurve"], "hump")
         self.assertEqual(e["levelsPerSide"], 2)
         self.assertEqual(e["levelSpacing"], 0.01)
-        self.assertEqual(e["maxClipShares"], 10.0)
+        self.assertEqual(e["maxClipShares"], 30.0)
         self.assertTrue(e["takerDipBalancedOnly"])
         self.assertEqual(e["maxUnhedgedShares"], 100.0)
         self.assertEqual(e["maxUnhedgedUsd"], 45.0)
@@ -171,7 +172,8 @@ class TestBaselineIdentity(unittest.TestCase):
         self.assertEqual(e["lateRescueMaxPairCost"], 1.02)
         self.assertEqual(e["takerDipEntryMax"], 0.36)
         self.assertEqual(e["unhedgedStepCents"], 8.0)
-        self.assertEqual(e["unhedgedProbeShares"], 10.0)
+        self.assertEqual(e["unhedgedProbeShares"], 30.0)
+        self.assertEqual(e["clipSchedule"], [[0, 30.0], [120, 15.0]])
 
 
 class TestPairedOneSidedPnl(unittest.TestCase):

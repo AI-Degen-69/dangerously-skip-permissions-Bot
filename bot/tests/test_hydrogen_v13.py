@@ -18,9 +18,9 @@ class TestHydrogenV13Registry(unittest.TestCase):
         self.assertTrue(v13["entry"]["takerDipBalancedOnly"])
         self.assertEqual(v13["name"], "Hydrogen v1.3")
 
-    def test_v13_is_default_candidate(self):
-        self.assertEqual(ab.DEFAULT_CANDIDATE_ID, "hydrogen-v1.3")
-        self.assertEqual(ab.CANDIDATE_DISPLAY_NAME, "Hydrogen v1.3")
+    def test_v13_superseded_but_registered(self):
+        # v1.4 is now the default candidate; v1.3 stays frozen and registered.
+        self.assertEqual(ab.DEFAULT_CANDIDATE_ID, "hydrogen-v1.4")
         self.assertIn("hydrogen-v1.3", C.STRATEGY_SETUPS)
 
 

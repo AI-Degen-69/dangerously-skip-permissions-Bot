@@ -555,6 +555,7 @@ def trade_window(
     except (TypeError, ValueError):
         max_unhedged_usd = C.MAX_UNHEDGED_USD
     dip_curve = entry.get("dipCurve") or None
+    clip_schedule = entry.get("clipSchedule") or None
     rescue_ceiling = float(entry.get("rescueCeilingPrice", C.RESCUE_CEILING_PRICE))
     rescue_max_pair_cost = float(entry.get("rescuePairCostMax", C.RESCUE_PAIR_COST_MAX))
     sweep_before = float(entry.get("sweepBeforeCloseSec", C.HARD_CUTOFF_SBC))
@@ -1069,6 +1070,7 @@ def trade_window(
                 max_pair_cost=max_pair_cost,
                 max_unhedged_usd=max_unhedged_usd,
                 dip_curve=dip_curve,
+                clip_schedule=clip_schedule,
                 in_sweep_phase=in_sweep_phase,
                 rescue_ceiling=rescue_ceiling,
                 rescue_max_pair_cost=rescue_max_pair_cost,

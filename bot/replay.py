@@ -350,6 +350,7 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
     except (TypeError, ValueError):
         max_unhedged_usd = 0.0
     dip_curve = entry.get("dipCurve") or None
+    clip_schedule = entry.get("clipSchedule") or None
     rescue_ceiling = float(entry.get("rescueCeilingPrice", C.RESCUE_CEILING_PRICE))
     rescue_max = float(entry.get("rescuePairCostMax", C.RESCUE_PAIR_COST_MAX))
     leg1_max = entry.get("leg1MaxPrice", entry.get("maxLeg1Price", None))
@@ -675,6 +676,7 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
             whole_ladder=True, target_pair_cost=target_pc,
             max_pair_cost=max_pc,
             max_unhedged_usd=max_unhedged_usd, dip_curve=dip_curve,
+            clip_schedule=clip_schedule,
             in_sweep_phase=in_sweep, rescue_ceiling=rescue_ceiling,
             rescue_max_pair_cost=rescue_max,
             leg1_max_price=leg1_max, leg2_max_price=leg2_max,

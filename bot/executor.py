@@ -227,6 +227,7 @@ def evaluate_microstructure_ladder(
     unhedged_step_cents: float | None = None,
     unhedged_probe_shares: float | None = None,
     open_orders: dict | None = None,
+    clip_schedule: list | None = None,
     **kwargs,
 ) -> MicrostructureDecision:
     """Decision Engine for Hybrid Arbitrage Pairing & Certainty Sniping.
@@ -347,6 +348,29 @@ def evaluate_microstructure_ladder(
     _probe_sh = _fnum(unhedged_probe_shares)
     if _probe_sh is None:
         _probe_sh = _fnum(kwargs.get("unhedgedProbeShares", kwargs.get("unhedged_probe_shares")))
+    # Wallet-measured clip schedule: the researched account opens windows
+    # with ~30-share clips and decays to ~15 after T+120s. A schedule is an
+    # explicit [[elapsedSec, clipShares], ...] ladder, linearly interpolated
+    # and clamped at both ends; absent/empty means a flat default clip.
+    _sched = clip_schedule
+    if _sched is None:
+        _sched = kwargs.get("clipSchedule", kwargs.get("clip_schedule"))
+    if _sched:
+        try:
+            pts = sorted((float(a), float(b)) for a, b in _sched)
+            t = _elapsed if _elapsed is not None else 0.0
+            if t <= pts[0][0]:
+                default_clip = float(pts[0][1])
+            elif t >= pts[-1][0]:
+                default_clip = float(pts[-1][1])
+            else:
+                for (t0, c0), (t1, c1) in zip(pts, pts[1:]):
+                    if t0 <= t <= t1:
+                        frac = (t - t0) / (t1 - t0) if t1 > t0 else 0.0
+                        default_clip = c0 + (c1 - c0) * frac
+                        break
+        except (TypeError, ValueError):
+            pass
     has_late = _late_start is not None
     in_late = bool(has_late and _elapsed is not None and _elapsed >= _late_start)
     late_cap = _late_max if (has_late and _late_max is not None) else rescue_max_pair_cost

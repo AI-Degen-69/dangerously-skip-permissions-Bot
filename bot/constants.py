@@ -392,6 +392,52 @@ STRATEGY_SETUPS = {
             "maxDepthShares": 0.0,
         },
     },
+    "hydrogen-v1.4": {
+        "id": "hydrogen-v1.4",
+        "symbol": "H2 Hydrogen-v1.4",
+        "name": "Hydrogen v1.4",
+        # Wallet-timed, wallet-sized. Same post-PR #56 engine and pair gates
+        # as v1.3, but entries start at T+4s (first fills land ~T+6s, the
+        # wallet's measured median) and clips follow the wallet's measured
+        # schedule: 30 shares at the open decaying to ~15 after T+120s.
+        # No share veto; unhedged risk stays dollar-capped (maxUnhedgedUsd).
+        "entry": {
+            "startAfterOpenSec": 4,
+            "stopBeforeCloseSec": 30,
+            "sweepBeforeCloseSec": 12,
+            "clipSharesDefault": 30.0,
+            "maxShares": 30.0,
+            "maxClipShares": 30.0,
+            "clipSchedule": [[0, 30.0], [120, 15.0]],
+            "minFillPrice": 0.07,
+            "maxFillPrice": 0.48,
+            "maxLeg1Price": 0.48,
+            "leg1MaxPrice": 0.48,
+            "leg2MaxPrice": 0.75,
+            "benchmarkPairCost": 0.960,
+            "targetPairCost": 0.960,
+            "maxPairCost": 0.985,
+            "maxUnhedgedShares": 100.0,
+            "maxUnhedgedUsd": 45.0,
+            "dipCurve": "hump",
+            "wholeLadderClips": True,
+            "levelsPerSide": 2,
+            "levelSpacing": 0.01,
+            "minSpacingMoveSec": 0.5,
+            "minSpacingStaticSec": 2.5,
+            "staticRequoteSec": 2.5,
+            "includeTakerFee": True,
+            "takerDipEntryMax": 0.36,
+            "takerDipBalancedOnly": True,
+            "unhedgedStepCents": 8.0,
+            "unhedgedProbeShares": 30.0,
+            "lateRescueStartSec": 210,
+            "lateRescueMaxPairCost": 1.02,
+            "rescuePairCostMax": 1.02,
+            "rescueCeilingPrice": 0.985,
+            "maxDepthShares": 0.0,
+        },
+    },
     "hydrogen-v1.3": {
         "id": "hydrogen-v1.3",
         "symbol": "H2 Hydrogen-v1.3",
@@ -550,6 +596,11 @@ _SETUP_FEATURES = {
         "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
         "blurb": "post-PR #56 CLOB/maker-hold build: uniform 10sh clips with balanced-or-light-only taker dip entry to 36c, 8c unhedged step, leg-2 ceiling 75c, and late rescue to $1.02 from T+210s (no share veto; dollar-capped unhedged risk)",
     },
+    "hydrogen-v1.4": {
+        "sizing": "hump", "preflightGate": False, "patientHedge": True, "takerDip": True,
+        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
+        "blurb": "wallet-timed, wallet-sized v1.3 engine: entries from T+4s (~T+6s first fills, the wallet median), 30sh opening clips decaying to ~15sh after T+120s, balanced-or-light-only taker dip entry to 36c, 8c unhedged step, leg-2 ceiling 75c, and late rescue to $1.02 from T+210s (no share veto; dollar-capped unhedged risk)",
+    },
 }
 
 
@@ -584,7 +635,27 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
     sweep = bool(f.get("sweep", False))
     uncapped = bool(f.get("pairedVolumeCapped", True)) is False
 
-    if sizing == "hump":
+    _sched = e.get("clipSchedule") or []
+    _sched_ok = False
+    try:
+        _s0, _s1 = _sched[0], _sched[-1]
+        _sched_ok = bool(isinstance(_sched, (list, tuple)) and len(_sched) >= 2)
+    except (TypeError, IndexError):
+        _sched_ok = False
+    _sched_txt = None
+    if sizing == "hump" and _sched_ok:
+        try:
+            _c0, _t1, _c1 = float(_s0[1]), float(_s1[0]), float(_s1[1])
+            _sched_txt = (
+                f"scheduled clips ({_c0:g} sh at the open decaying to {_c1:g} sh "
+                f"by T+{_t1:g}s, linear in between — the wallet's measured 30→15 shape)",
+                f"Scheduled Clips ({_c0:g}→{_c1:g} sh)",
+            )
+        except (TypeError, ValueError):
+            _sched_txt = None
+    if _sched_txt is not None:
+        dip_txt, sig_size = _sched_txt
+    elif sizing == "hump":
         probe = e.get("unhedgedProbeShares")
         if probe and float(probe) > 0:
             if float(probe) == float(mx) == float(clip):

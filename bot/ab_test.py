@@ -2,8 +2,8 @@
 
 Compares the frozen, measured Hydrogen v1.0 baseline run
 (DEFAULT_BASELINE_ID, `run_20261113_183248_paper_hydrogen_v1_0`) against the
-Hydrogen v1.3 candidate (`hydrogen-v1.3`, the post-PR #56 CLOB/maker-hold
-engine build with trading parameters identical to v1.2).
+Hydrogen v1.4 candidate (`hydrogen-v1.4`: the post-PR #56 engine, wallet-timed
+(T+4s open) and wallet-sized (30sh clips decaying to ~15sh), with no share veto).
 
 Archived runs (`run_meta.json` status starting with "archived") are never
 picked up as baseline or candidate, so the tainted pre-PR #56 v1.2 runs stay
@@ -30,8 +30,8 @@ from bot.fill_audit import role_of
 ROOT = Path(__file__).resolve().parent.parent
 RUNS_DIR = ROOT / "bot" / "runs"
 DEFAULT_BASELINE_ID = "run_20261113_183248_paper_hydrogen_v1_0"
-DEFAULT_CANDIDATE_ID = "hydrogen-v1.3"
-CANDIDATE_DISPLAY_NAME = "Hydrogen v1.3"
+DEFAULT_CANDIDATE_ID = "hydrogen-v1.4"
+CANDIDATE_DISPLAY_NAME = "Hydrogen v1.4"
 BASELINE_DISPLAY_NAME = "Hydrogen v1.0"
 AB_STATE_PATH = ROOT / "bot" / "ab_test_state.json"
 
@@ -157,6 +157,7 @@ def _load_run_windows(run_id: str) -> list[dict[str, Any]]:
 
                 if net is not None:
                     records.append({
+                        "rebate": round(float(data.get("rebate_usd") or 0.0), 2),
                         "slug": slug,
                         "epoch": int(slug.split("-")[-1]) if "-" in slug else 0,
                         "net": net,
@@ -232,6 +233,8 @@ def _empty_stats(observed: int = 0) -> dict[str, Any]:
         "lossRate": 0.0,
         "netPnl": 0.0,
         "feesUsd": 0.0,
+        "rebateUsd": 0.0,
+        "netRebated": 0.0,
         "makerFeeBaseUsd": 0.0,
         "meanPnl": 0.0,
         "stdPnl": 0.0,
@@ -325,6 +328,8 @@ def _compute_distribution_stats(records: list[dict[str, Any]],
         "lossRate": round(losses / n, 4),
         "netPnl": round(net_sum, 2),
         "feesUsd": round(sum(r.get("feesUsd", 0.0) or 0.0 for r in active), 4),
+        "rebateUsd": round(sum(r.get("rebate", 0.0) or 0.0 for r in active), 2),
+        "netRebated": round(net_sum + sum(r.get("rebate", 0.0) or 0.0 for r in active), 2),
         "makerFeeBaseUsd": round(sum(r.get("makerFeeBaseUsd", 0.0) or 0.0 for r in active), 4),
         "meanPnl": round(mean_val, 4),
         "stdPnl": round(std_val, 4),
@@ -418,6 +423,8 @@ def _run_strategy_id(run_id: str | None) -> str:
         return "hydrogen-v1.0"
     if "hydrogen_v1_1" in str(run_id).lower() or "hydrogen-v1.1" in str(run_id).lower():
         return "hydrogen-v1.1"
+    if "hydrogen_v1_4" in str(run_id).lower() or "hydrogen-v1.4" in str(run_id).lower():
+        return "hydrogen-v1.4"
     if "hydrogen_v1_3" in str(run_id).lower() or "hydrogen-v1.3" in str(run_id).lower():
         return "hydrogen-v1.3"
     if "hydrogen_v1_2" in str(run_id).lower() or "hydrogen-v1.2" in str(run_id).lower():
@@ -461,7 +468,9 @@ def _hypothesis_text(candidate_id: str | None, *, null: bool,
     strat_id = _run_strategy_id(candidate_id)
     base_strat_id = _run_strategy_id(baseline_id or DEFAULT_BASELINE_ID)
 
-    if "hydrogen-v1.3" in str(strat_id).lower() or "v1_3" in str(strat_id).lower() or "v1.3" in str(strat_id).lower():
+    if "hydrogen-v1.4" in str(strat_id).lower() or "v1_4" in str(strat_id).lower() or "v1.4" in str(strat_id).lower():
+        cand_label = "Hydrogen_v1.4"
+    elif "hydrogen-v1.3" in str(strat_id).lower() or "v1_3" in str(strat_id).lower() or "v1.3" in str(strat_id).lower():
         cand_label = "Hydrogen_v1.3"
     elif "hydrogen-v1.2" in str(strat_id).lower() or "v1_2" in str(strat_id).lower() or "v1.2" in str(strat_id).lower():
         cand_label = "Hydrogen_v1.2"
@@ -711,9 +720,13 @@ def get_ab_test_data() -> dict[str, Any]:
 
     histogram = _build_histogram(baseline_stats["pnlList"], candidate_stats["pnlList"], mu_crit)
 
+    # Wallet benchmark: the measured account's 21-day median all-in pair cost.
+    # Reporting reference for realized pair cost, NOT a pairing gate.
+    wallet_benchmark = C.WALLET_MEDIAN_PAIR_COST
     return {
         "status": "ready",
         "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "walletBenchmarkPairCost": wallet_benchmark,
         "baseline": {
             "runId": baseline_id,
             **_run_info(baseline_id),
@@ -722,6 +735,7 @@ def get_ab_test_data() -> dict[str, Any]:
         "candidate": {
             "runId": candidate_id,
             **_run_info(candidate_id),
+            "pairCostVsBenchmark": round(candidate_stats["meanPairCost"] - wallet_benchmark, 4),
             "targetSamples": TARGET_SAMPLE_SIZE,
             "progressPct": round(min(100.0, (n_b / TARGET_SAMPLE_SIZE) * 100.0), 1),
             **candidate_stats,
