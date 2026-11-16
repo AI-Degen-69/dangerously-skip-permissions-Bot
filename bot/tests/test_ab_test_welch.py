@@ -145,28 +145,28 @@ class TestBaselineIdentity(unittest.TestCase):
 
     def test_hydrogen_candidate_registered(self):
         from bot import constants as C
-        # v1.1/v1.2/v1.3/v1.4 stay registered as frozen setups; v1.5 is the candidate.
-        self.assertIsNotNone(C.STRATEGY_SETUPS.get("hydrogen-v1.1"))
-        self.assertIsNotNone(C.STRATEGY_SETUPS.get("hydrogen-v1.2"))
-        self.assertIsNotNone(C.STRATEGY_SETUPS.get("hydrogen-v1.3"))
-        self.assertIsNotNone(C.STRATEGY_SETUPS.get("hydrogen-v1.4"))
-        reg = C.STRATEGY_SETUPS.get("hydrogen-v1.5")
+        # Only the live set stays registered: replay defaults (v2.6/v2.7,
+        # hydrogen-v1.9), the A/B baseline (hydrogen-v1.0) and the
+        # candidate (hydrogen-v2.0). Superseded setups were pruned.
+        for sid in ("dangerously-skip-permissions-v2.6",
+                    "dangerously-skip-permissions-v2.7",
+                    "hydrogen-v1.0", "hydrogen-v1.9", "hydrogen-v2.0"):
+            self.assertIn(sid, C.STRATEGY_SETUPS)
+        for sid in ("dangerously-skip-permissions-v2.1",
+                    "dangerously-skip-permissions-v2.5",
+                    "hydrogen-v1.5", "hydrogen-v1.8"):
+            self.assertNotIn(sid, C.STRATEGY_SETUPS)
+        reg = C.STRATEGY_SETUPS.get("hydrogen-v2.0")
         self.assertIsNotNone(reg)
         e = reg["entry"]
         self.assertEqual(e["startAfterOpenSec"], 4)
         self.assertEqual(e["stopBeforeCloseSec"], 30)
         self.assertEqual(e["sweepBeforeCloseSec"], 12)
         self.assertEqual(e["minFillPrice"], 0.07)
-        self.assertEqual(e["maxFillPrice"], 0.85)
-        self.assertNotIn("dipCurve", e)
-        self.assertNotIn("leg2MaxPrice", e)
-        self.assertNotIn("takerDipEntryMax", e)
-        self.assertNotIn("lateRescueStartSec", e)
-        self.assertEqual(e["maxClipShares"], 30.0)
-        self.assertEqual(e["maxUnhedgedShares"], 100.0)
-        self.assertEqual(e["maxUnhedgedUsd"], 45.0)
+        self.assertEqual(e["maxFillPrice"], 0.47)
+        self.assertEqual(e["maxUnhedgedUsd"], 6.0)
         self.assertEqual(e["maxPairCost"], 0.985)
-        self.assertEqual(e["clipSchedule"], [[0, 30.0], [120, 15.0]])
+        self.assertIn("dipCurve", e)
 
 
 class TestPairedOneSidedPnl(unittest.TestCase):

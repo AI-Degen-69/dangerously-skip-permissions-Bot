@@ -53,7 +53,7 @@ def _dec(quotes, inv, fill_idx=0, strategy_id="hydrogen-v1.9", **over):
 
 class TestHydrogenV19RegistryAndWiring(unittest.TestCase):
     def test_registry_entry_and_features(self):
-        for sid in ("hydrogen-v1.9", "hydrogen-v1.9-arm-a", "hydrogen-v1.9-arm-b", "hydrogen-v1.9-arm-e"):
+        for sid in ("hydrogen-v1.9",):
             setup = C.STRATEGY_SETUPS[sid]
             entry = setup["entry"]
             self.assertEqual(entry["levelsPerSide"], 1)
@@ -92,18 +92,6 @@ class TestHydrogenV19RegistryAndWiring(unittest.TestCase):
             ab._run_strategy_id("run_20261116_160000_paper_hydrogen_v1_9_arm_e"),
             "hydrogen-v1.9-arm-e",
         )
-
-    def test_describe_setup_arm_text(self):
-        _sig_a, desc_a, _hl_a = C.describe_setup(C.STRATEGY_SETUPS["hydrogen-v1.9-arm-a"])
-        self.assertIn("Immediate", _sig_a)
-        self.assertIn("immediate taker equalizer", desc_a)
-        _sig_e, desc_e, _hl_e = C.describe_setup(C.STRATEGY_SETUPS["hydrogen-v1.9-arm-e"])
-        self.assertIn("Pure Maker", _sig_e)
-        self.assertIn("zero taker fills", desc_e)
-        _sig_b, desc_b, _hl_b = C.describe_setup(C.STRATEGY_SETUPS["hydrogen-v1.9-arm-b"])
-        self.assertIn("Patient L3", _sig_b)
-        self.assertIn("patient 20s delayed", desc_b)
-
 
 class TestHydrogenV19Layer1Probe(unittest.TestCase):
     def test_l1_probe_places_single_rung_in_band(self):

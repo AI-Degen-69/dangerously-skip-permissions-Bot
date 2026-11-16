@@ -2,7 +2,6 @@
 import unittest
 
 from bot import ab_test as ab
-from bot import constants as C
 from bot import replay
 from bot.executor import (
     H18_BREAKOUT_ASK_MAX,
@@ -44,26 +43,7 @@ def _dec(quotes, inv, fill_idx=0, **over):
     return evaluate_microstructure_ladder(quotes=quotes, **kw)
 
 
-class TestHydrogenV18RegistryAndWiring(unittest.TestCase):
-    def test_registry_entry_and_features(self):
-        setup = C.STRATEGY_SETUPS["hydrogen-v1.8"]
-        entry = setup["entry"]
-        self.assertEqual(entry["clipSchedule"], [[0, 10.0], [120, 8.0]])
-        self.assertEqual(entry["levelsPerSide"], 2)
-        self.assertEqual(entry["levelSpacing"], 0.01)
-        self.assertEqual(entry["maxUnhedgedShares"], 25.0)
-        self.assertEqual(entry["maxUnhedgedUsd"], 15.0)
-        self.assertEqual(entry["maxFillPrice"], 0.85)
-        self.assertEqual(setup["features"].get("sizing"), "split-ladder-v18")
-
-    def test_published_ceiling_matches_enforced_gate(self):
-        # describe_setup must publish the gate the split ladder enforces
-        # (H17_PAIR_SOFT = 0.995), not a stricter unenforced number.
-        _sig, desc, highlights = C.describe_setup(C.STRATEGY_SETUPS["hydrogen-v1.8"])
-        self.assertIn("$0.995", desc)
-        self.assertNotIn("$0.985", desc)
-        self.assertIn("$0.995", highlights["pairGates"])
-
+class TestHydrogenV18Wiring(unittest.TestCase):
     def test_replay_and_ab_test_mapping(self):
         self.assertIn(replay.STRATEGY_HYDROGEN, ("hydrogen-v1.8", "hydrogen-v1.9"))
         self.assertEqual(

@@ -1,6 +1,5 @@
 """Hydrogen v1.6: edge-seeking sizing without a hard pair gate."""
 import unittest
-from bot import constants as C
 from bot.executor import evaluate_microstructure_ladder
 
 
@@ -22,14 +21,6 @@ def _dec(quotes, inv, fill_idx=0, **over):
               max_unhedged_usd=45.0)
     kw.update(over)
     return evaluate_microstructure_ladder(quotes=quotes, **kw)
-
-
-class TestHydrogenV16Registry(unittest.TestCase):
-    def test_v16_registered(self):
-        reg = C.STRATEGY_SETUPS.get("hydrogen-v1.6")
-        self.assertIsNotNone(reg)
-        self.assertEqual(reg["entry"]["maxFillPrice"], 0.85)
-        self.assertEqual(reg["entry"]["maxUnhedgedUsd"], 45.0)
 
 
 class TestEdgeSeekingSizing(unittest.TestCase):
