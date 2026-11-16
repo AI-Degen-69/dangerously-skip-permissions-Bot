@@ -667,7 +667,9 @@ STRATEGY_SETUPS = {
             "levelSpacing": 0.01,
             "benchmarkPairCost": 0.960,
             "targetPairCost": 0.960,
-            "maxPairCost": 0.985,
+            # Declared ceiling must match the split ladder's enforced
+            # H17_PAIR_SOFT (0.995); it is what describe_setup publishes.
+            "maxPairCost": 0.995,
             "maxUnhedgedShares": 25.0,
             "maxUnhedgedUsd": 15.0,
             "wholeLadderClips": True,
