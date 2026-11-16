@@ -62,7 +62,7 @@ class HydrogenV20Test(unittest.TestCase):
         # Prior strategies must remain intact
         self.assertEqual(C.STRATEGY_SETUPS["hydrogen-v1.9"]["entry"]["maxFillPrice"], 0.85)
         self.assertEqual(C.STRATEGY_SETUPS["dangerously-skip-permissions-v2.5"]["entry"]["maxUnhedgedUsd"], 5.0)
-        self.assertEqual(ab.DEFAULT_CANDIDATE_ID, "hydrogen-v1.9")
+        self.assertEqual(ab.DEFAULT_CANDIDATE_ID, "hydrogen-v2.0")
 
     def test_simultaneous_two_sided_resting_at_50_50_open(self):
         quotes = {

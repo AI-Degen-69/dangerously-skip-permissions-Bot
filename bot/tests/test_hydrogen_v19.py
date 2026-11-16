@@ -73,7 +73,7 @@ class TestHydrogenV19RegistryAndWiring(unittest.TestCase):
 
     def test_replay_and_ab_test_mapping(self):
         self.assertEqual(replay.STRATEGY_HYDROGEN, "hydrogen-v1.9")
-        self.assertEqual(ab.DEFAULT_CANDIDATE_ID, "hydrogen-v1.9")
+        self.assertEqual(ab.DEFAULT_CANDIDATE_ID, "hydrogen-v2.0")
         self.assertEqual(
             ab._run_strategy_id("run_20261116_160000_paper_hydrogen_v1_9"),
             "hydrogen-v1.9",

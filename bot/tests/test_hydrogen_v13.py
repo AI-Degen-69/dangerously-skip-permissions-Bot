@@ -20,7 +20,7 @@ class TestHydrogenV13Registry(unittest.TestCase):
 
     def test_v13_superseded_but_registered(self):
         # v1.3 stays frozen and registered while later candidates are active.
-        self.assertIn(ab.DEFAULT_CANDIDATE_ID, ("hydrogen-v1.5", "hydrogen-v1.9"))
+        self.assertIn(ab.DEFAULT_CANDIDATE_ID, ("hydrogen-v1.5", "hydrogen-v1.9", "hydrogen-v2.0"))
         self.assertIn("hydrogen-v1.3", C.STRATEGY_SETUPS)
 
 
