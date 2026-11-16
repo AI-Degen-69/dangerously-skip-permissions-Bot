@@ -392,6 +392,40 @@ STRATEGY_SETUPS = {
             "maxDepthShares": 0.0,
         },
     },
+    "hydrogen-v1.5": {
+        "id": "hydrogen-v1.5",
+        "symbol": "H2 Hydrogen-v1.5",
+        "name": "Hydrogen v1.5",
+        # Concurrent two-sided accumulation (measured wallet grammar): both
+        # sides are quoted from T+4s, the lighter side is always bought
+        # first at any price up to the 85c ceiling, top-ups close at most
+        # half the gap per fill, and size tilts toward the cheaper side.
+        # No dip band, no deficit-chase ladder, no pair-cost gate: pair
+        # cost is reported against the wallet benchmark, never enforced.
+        # Buy-only, hold-to-settlement. Dollar-capped unhedged risk.
+        "entry": {
+            "startAfterOpenSec": 4,
+            "stopBeforeCloseSec": 30,
+            "sweepBeforeCloseSec": 12,
+            "clipSharesDefault": 30.0,
+            "maxShares": 30.0,
+            "maxClipShares": 30.0,
+            "clipSchedule": [[0, 30.0], [120, 15.0]],
+            "minFillPrice": 0.07,
+            "maxFillPrice": 0.85,
+            "benchmarkPairCost": 0.960,
+            "targetPairCost": 0.960,
+            "maxPairCost": 0.985,
+            "maxUnhedgedShares": 100.0,
+            "maxUnhedgedUsd": 45.0,
+            "wholeLadderClips": True,
+            "minSpacingMoveSec": 0.5,
+            "minSpacingStaticSec": 2.5,
+            "staticRequoteSec": 2.5,
+            "includeTakerFee": True,
+            "maxDepthShares": 0.0,
+        },
+    },
     "hydrogen-v1.4": {
         "id": "hydrogen-v1.4",
         "symbol": "H2 Hydrogen-v1.4",
@@ -601,6 +635,11 @@ _SETUP_FEATURES = {
         "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
         "blurb": "wallet-timed, wallet-sized v1.3 engine: entries from T+4s (~T+6s first fills, the wallet median), 30sh opening clips decaying to ~15sh after T+120s, balanced-or-light-only taker dip entry to 36c, 8c unhedged step, leg-2 ceiling 75c, and late rescue to $1.02 from T+210s (no share veto; dollar-capped unhedged risk)",
     },
+    "hydrogen-v1.5": {
+        "sizing": "balanced", "preflightGate": False, "patientHedge": False, "takerDip": False,
+        "heavyAtomic": False, "sweep": True, "pairedVolumeCapped": False,
+        "blurb": "concurrent two-sided accumulation from T+4s (live-wallet grammar): both sides quoted at the touch in 30sh scheduled clips decaying to ~15sh, lighter side always bought first at any price up to 85c, top-ups close at most half the gap, tilt to the cheaper side with 5sh taker probes on wide books; no dip band, no rescue ladder, no pair-cost gate (reported vs $0.977 only); buy-only hold-to-settlement, $45/100-share caps",
+    },
 }
 
 
@@ -628,6 +667,7 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         depth_cap = 0.0
     risk = float(f.get("dollarRisk", 4.50))
     sizing = f.get("sizing", "ladder")
+    balanced = (sizing == "balanced")
     preflight = bool(f.get("preflightGate", False))
     hedge_now = bool(f.get("hedgeNowGate", False))
     patient = bool(f.get("patientHedge", False))
@@ -653,7 +693,19 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
             )
         except (TypeError, ValueError):
             _sched_txt = None
-    if _sched_txt is not None:
+    _sch_txt = None
+    if _sched_ok and isinstance(_sched, (list, tuple)):
+        try:
+            _sch_txt = (float(_sched[0][1]), float(_sched[-1][0]), float(_sched[-1][1]))
+        except (TypeError, ValueError, IndexError):
+            _sch_txt = None
+    if balanced and _sch_txt is not None:
+        _c0, _t1, _c1 = _sch_txt
+        dip_txt = (f"scheduled clips ({_c0:g} sh at the open decaying to {_c1:g} sh "
+                   f"by T+{_t1:g}s) quoting both sides together, the lighter side always bought first with top-ups "
+                   f"closing at most half the gap, size tilting to the cheaper side (5 sh taker probes on wide books)")
+        sig_size = f"Balanced Books ({_c0:g}→{_c1:g} sh)"
+    elif _sched_txt is not None:
         dip_txt, sig_size = _sched_txt
     elif sizing == "hump":
         probe = e.get("unhedgedProbeShares")
@@ -696,7 +748,12 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         dip_txt = f"{clip:g} sh (max {mx:g} sh) in the {lo_c}c-{hi_c}c band"
         sig_size = f"Dip Grid [{lo_c}c-{hi_c}c]"
 
-    if preflight:
+    if balanced:
+        gate_txt = (f"a balanced book: the lighter side is bought first at any price up to the {hi_c}c ceiling, "
+                    f"top-ups close at most half the gap per fill, and pair cost is reported against the wallet "
+                    f"benchmark instead of gated")
+        sig_gate = "Balanced Book (25% lead)"
+    elif preflight:
         gate_txt = f"pre-flight hedge gate plus pair gates (under ${rescue:.3f})"
         sig_gate = f"Pre-Flight Gate (under ${rescue:.3f})"
     elif patient:
@@ -736,6 +793,12 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         f"Buys dips {dip_txt}; entries follow {gate_txt}; "
         f"never {gap_txt}.{sweep_txt}{heavy_txt}{depth_txt}"
     ).strip()
+    if balanced:
+        signature = f"{sig_size} - {sig_gate} - {gap_cap_txt} - Max Buy {hi_c}c"
+        description = (
+            f"Accumulates both sides from the open: {dip_txt}; {gate_txt}; "
+            f"never {gap_txt}.{sweep_txt}{heavy_txt}{depth_txt}"
+        ).strip()
     highlights = {
         "dipClips": dip_txt,
         "pairGates": f"fresh under ${tgt:.3f} / close under ${cap:.3f} / rescue under ${rescue:.3f}",
@@ -751,6 +814,9 @@ def describe_setup(setup: dict) -> tuple[str, str, dict[str, str]]:
         "maxBuy": f"{hi_c}c",
         "cutoff": f"{cutoff:g}s before close",
     }
+    if balanced:
+        highlights["pairGates"] = "reported vs $0.977 wallet benchmark, never gated"
+        highlights["preflightGate"] = "Off (lighter side always eligible to 85c)"
     return signature, description, highlights
 
 

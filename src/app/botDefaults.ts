@@ -467,4 +467,37 @@ export const STRATEGY_PRESETS = {
     },
     features: { sizing: 'hump', preflightGate: false, patientHedge: true, takerDip: true, heavyAtomic: false, sweep: true, pairedVolumeCapped: false },
   },
+  // Hydrogen v1.5: concurrent two-sided accumulation (measured wallet grammar).
+  // Both sides quoted from T+4s, lighter side always bought first up to 85c,
+  // top-ups close at most half the gap, tilt to the cheaper side with 5 sh
+  // taker probes on wide books. No dip band, no rescue ladder, no pair-cost
+  // gate (reported vs the $0.977 wallet benchmark, never enforced).
+  'hydrogen-v1.5': {
+    id: 'hydrogen-v1.5',
+    symbol: 'H2 Hydrogen-v1.5',
+    name: 'Hydrogen v1.5',
+    signature: 'Balanced Books (30→15 sh) · Balanced Book (25% lead) · Dollar Gap Cap ($45.00) · Max Buy 85¢',
+    description: 'Accumulates both sides from the open: scheduled clips (30 sh at the open decaying to 15 sh by T+120s) quoting both sides together, the lighter side always bought first with top-ups closing at most half the gap, size tilting to the cheaper side (5 sh taker probes on wide books); a balanced book: the lighter side is bought first at any price up to the 85¢ ceiling and pair cost is reported against the wallet benchmark instead of gated; never more than $45.00 of unhedged cost.',
+    entry: {
+      clipSharesDefault: 30,
+      maxShares: 30,
+      maxClipShares: 30,
+      clipSchedule: [[0, 30], [120, 15]],
+      minFillPrice: 0.07,
+      maxFillPrice: 0.85,
+      benchmarkPairCost: 0.960,
+      targetPairCost: 0.960,
+      maxPairCost: 0.985,
+      maxUnhedgedShares: 100,
+      maxUnhedgedUsd: 45.0,
+      startAfterOpenSec: 4,
+      stopBeforeCloseSec: 30,
+      sweepBeforeCloseSec: 12,
+      minSpacingMoveSec: 0.5,
+      minSpacingStaticSec: 2.5,
+      includeTakerFee: true,
+      wholeLadderClips: true,
+    },
+    features: { sizing: 'balanced', preflightGate: false, patientHedge: false, takerDip: false, heavyAtomic: false, sweep: true, pairedVolumeCapped: false },
+  },
 } as const

@@ -808,6 +808,16 @@ def trade_window(
             trade_reason = "maker-dip-ladder"
             event_reason = "clip-fill"
             fill_kind = "entry"
+        elif sub_reason in ("rebalance-taker", "rebalance-maker"):
+            # Hydrogen v1.5: lighter-side top-up closing at most half the gap.
+            trade_reason = "balance-topup"
+            event_reason = "clip-fill"
+            fill_kind = "hedge"
+        elif sub_reason in ("balance-maker", "balance-probe"):
+            # Hydrogen v1.5: concurrent accumulation tilt fill.
+            trade_reason = "balance-build"
+            event_reason = "clip-fill"
+            fill_kind = "entry"
         else:
             trade_reason = "straddle-balance"
             event_reason = "clip-fill"

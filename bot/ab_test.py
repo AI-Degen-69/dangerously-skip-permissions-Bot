@@ -2,8 +2,9 @@
 
 Compares the frozen, measured Hydrogen v1.0 baseline run
 (DEFAULT_BASELINE_ID, `run_20261113_183248_paper_hydrogen_v1_0`) against the
-Hydrogen v1.4 candidate (`hydrogen-v1.4`: the post-PR #56 engine, wallet-timed
-(T+4s open) and wallet-sized (30sh clips decaying to ~15sh), with no share veto).
+Hydrogen v1.5 candidate (`hydrogen-v1.5`: concurrent two-sided accumulation
+from T+4s -- both sides quoted, lighter side first to 85c, half-gap top-ups,
+no dip band, no rescue ladder, no pair-cost gate).
 
 Archived runs (`run_meta.json` status starting with "archived") are never
 picked up as baseline or candidate, so the tainted pre-PR #56 v1.2 runs stay
@@ -30,8 +31,8 @@ from bot.fill_audit import role_of
 ROOT = Path(__file__).resolve().parent.parent
 RUNS_DIR = ROOT / "bot" / "runs"
 DEFAULT_BASELINE_ID = "run_20261113_183248_paper_hydrogen_v1_0"
-DEFAULT_CANDIDATE_ID = "hydrogen-v1.4"
-CANDIDATE_DISPLAY_NAME = "Hydrogen v1.4"
+DEFAULT_CANDIDATE_ID = "hydrogen-v1.5"
+CANDIDATE_DISPLAY_NAME = "Hydrogen v1.5"
 BASELINE_DISPLAY_NAME = "Hydrogen v1.0"
 AB_STATE_PATH = ROOT / "bot" / "ab_test_state.json"
 
@@ -423,6 +424,8 @@ def _run_strategy_id(run_id: str | None) -> str:
         return "hydrogen-v1.0"
     if "hydrogen_v1_1" in str(run_id).lower() or "hydrogen-v1.1" in str(run_id).lower():
         return "hydrogen-v1.1"
+    if "hydrogen_v1_5" in str(run_id).lower() or "hydrogen-v1.5" in str(run_id).lower():
+        return "hydrogen-v1.5"
     if "hydrogen_v1_4" in str(run_id).lower() or "hydrogen-v1.4" in str(run_id).lower():
         return "hydrogen-v1.4"
     if "hydrogen_v1_3" in str(run_id).lower() or "hydrogen-v1.3" in str(run_id).lower():
@@ -468,7 +471,9 @@ def _hypothesis_text(candidate_id: str | None, *, null: bool,
     strat_id = _run_strategy_id(candidate_id)
     base_strat_id = _run_strategy_id(baseline_id or DEFAULT_BASELINE_ID)
 
-    if "hydrogen-v1.4" in str(strat_id).lower() or "v1_4" in str(strat_id).lower() or "v1.4" in str(strat_id).lower():
+    if "hydrogen-v1.5" in str(strat_id).lower() or "v1_5" in str(strat_id).lower() or "v1.5" in str(strat_id).lower():
+        cand_label = "Hydrogen_v1.5"
+    elif "hydrogen-v1.4" in str(strat_id).lower() or "v1_4" in str(strat_id).lower() or "v1.4" in str(strat_id).lower():
         cand_label = "Hydrogen_v1.4"
     elif "hydrogen-v1.3" in str(strat_id).lower() or "v1_3" in str(strat_id).lower() or "v1.3" in str(strat_id).lower():
         cand_label = "Hydrogen_v1.3"

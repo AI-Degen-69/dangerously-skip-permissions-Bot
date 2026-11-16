@@ -12,6 +12,7 @@ Core Strategy Pillars:
   5. Settlement Lock ($T-12s \to T-0s$)
 """
 
+import math
 from dataclasses import dataclass, field
 
 from . import constants as C
@@ -174,6 +175,213 @@ class MicrostructureDecision:
     sub_reason: str = "maker-dip-ladder"
     projected_pair_cost: float | None = None
     share_deficit: float = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Hydrogen v1.5: concurrent two-sided accumulation.
+#
+# Measured wallet grammar (live tape + 486k-trade report): both sides are
+# quoted from the first seconds of the window in ~30-share clips (5-share
+# probes when the book is uncertain), the lighter side is always bought
+# first at whatever the book offers, top-ups close at most half of the
+# gap per fill, and size tilts toward the side trading cheaper. There is
+# no dip band, no deficit-chase ladder, and no pair-cost gate: pair cost
+# is computed for the record and reported against the $0.977 wallet
+# benchmark, never enforced. Buy-only, hold-to-settlement, zero sells.
+# ---------------------------------------------------------------------------
+H15_LEAD_TOLERANCE = 0.25    # measured: share lead stays under ~25% of matched book
+H15_MIN_LEAD_SHARES = 5.0   # tiny books: tolerate up to 5 sh before rebalancing
+H15_PROBE_SHARES = 5.0      # measured modal minimum: 5-share price-discovery probes
+H15_TAKER_SPREAD_MAX = 0.02  # cross the ask when the spread is at most 2c
+H15_GAP_CLOSE_FRACTION = 0.5  # rebalance top-ups close at most half the gap per fill
+
+
+def _h15_side_prices(quotes: dict, side: str) -> tuple[float | None, float | None]:
+    q = quotes.get(side) or {}
+    bid = q.get("bid")
+    ask = q.get("ask")
+    valid_bid = bid if (bid is not None and 0.0 < bid < 1.0) else None
+    valid_ask = ask if (ask is not None and 0.0 < ask < 1.0) else None
+    return valid_bid, valid_ask
+
+
+def _evaluate_concurrent_accumulation(
+    quotes: dict[str, dict[str, float | None]],
+    inv: dict[str, dict[str, float]],
+    fill_idx: int,
+    default_clip: float,
+    max_clip: float,
+    min_fill: float,
+    max_ceiling: float,
+    max_unhedged_usd: float,
+    in_sweep_phase: bool,
+    max_depth_shares: float = 0.0,
+    resting_size: dict | None = None,
+) -> MicrostructureDecision:
+    """Hydrogen v1.5 decision: balance first, tilt cheap, never chase.
+
+    Over tolerance the lighter side is bought at the touch (taker when the
+    spread is tight, maker otherwise), sized to close at most half the gap.
+    Within tolerance the cheaper side is quoted in schedule clips, with
+    5-share taker probes when the book is wide. Every price up to the
+    ceiling is eligible for the light side; pair cost is recorded, not gated.
+    """
+    up_sh = float((inv.get("Up") or {}).get("shares", 0.0))
+    dn_sh = float((inv.get("Down") or {}).get("shares", 0.0))
+    matched = min(up_sh, dn_sh)
+    lead = up_sh - dn_sh  # > 0 means Up heavy
+    tol = max(H15_MIN_LEAD_SHARES, H15_LEAD_TOLERANCE * matched)
+    over = abs(lead) > tol
+    light = "Down" if lead > 0 else ("Up" if lead < 0 else None)
+
+    def _unhedged_ok(side: str, shares: float, est_usd: float) -> bool:
+        if max_unhedged_usd <= 0:
+            return True
+        cur = inv.get(side) or {}
+        new_sh = float(cur.get("shares", 0.0)) + shares
+        new_cost = float(cur.get("cost", 0.0)) + est_usd
+        opp = "Down" if side == "Up" else "Up"
+        lead_after = new_sh - float((inv.get(opp) or {}).get("shares", 0.0))
+        if lead_after > 0 and new_sh > 0:
+            if (new_cost / new_sh) * lead_after > max_unhedged_usd:
+                return False
+        return True
+
+    def _cap_maker(shares: float, role: str, side: str) -> float:
+        try:
+            dc = float(max_depth_shares or 0.0)
+        except Exception:
+            dc = 0.0
+        if dc <= 0 or role != "MAKER":
+            return shares
+        avail = None
+        if isinstance(resting_size, dict):
+            avail = resting_size.get(side)
+        try:
+            avail = float(avail) if avail is not None else None
+        except (TypeError, ValueError):
+            avail = None
+        if avail is None:
+            return shares
+        if avail <= 0:
+            return 0.0
+        return min(float(shares), float(avail))
+
+    def _skip(reason: str, sub: str, preferred: str | None) -> MicrostructureDecision:
+        return MicrostructureDecision(action="skip", outcome=preferred,
+                                      reason=reason, sub_reason=sub)
+
+    # The sweep stops opening; the book is held to settlement.
+    if in_sweep_phase:
+        preferred = light if light is not None else "Up"
+        return _skip("sweep-balanced", "sweep-balanced", preferred)
+
+    # --- Rebalance mode: the lighter side is bought first, at any price
+    # up to the ceiling, closing at most half the gap per fill. ---
+    if over and light is not None:
+        want = min(float(default_clip), math.ceil(abs(lead) * H15_GAP_CLOSE_FRACTION))
+        size = min(clip_shares(round(want, 1), max_clip), max_clip)
+        if size <= 0:
+            return _skip("no-liquidity", "no-liquidity", light)
+        bid, ask = _h15_side_prices(quotes, light)
+        spread = (ask - bid) if (ask is not None and bid is not None) else None
+        use_taker = ask is not None and (bid is None or (spread is not None and spread <= H15_TAKER_SPREAD_MAX + 1e-9))
+        if use_taker:
+            px, role = ask, "TAKER"
+        elif bid is not None:
+            px, role = bid, "MAKER"
+        else:
+            return _skip("no-liquidity", "no-liquidity", light)
+        if px < min_fill:
+            return _skip("dust-quote", "below-price-floor", light)
+        if px > max_ceiling:
+            return _skip("extreme-price-skip", "ceiling-price-skip", light)
+        est_usd, _fee = compute_fill_usd(size, px, role=role, include_fee=(role == "TAKER"))
+        if not _unhedged_ok(light, size, est_usd):
+            return _skip("unhedged-cap-skip", "unhedged-cap", light)
+        size = _cap_maker(size, role, light)
+        if size <= 0:
+            return _skip("no-liquidity", "depth-cap", light)
+        proj = _projected_pair_cost(inv, light, size, est_usd)
+        opp_sh = float((inv.get("Up" if light == "Down" else "Down") or {}).get("shares", 0.0))
+        return MicrostructureDecision(
+            action="fill", outcome=light, price=round(px, 4), shares=size,
+            role=role, reason="balance-topup",
+            sub_reason="rebalance-taker" if role == "TAKER" else "rebalance-maker",
+            projected_pair_cost=proj,
+            share_deficit=round(max(0.0, opp_sh - float((inv.get(light) or {}).get("shares", 0.0))), 2),
+        )
+
+    # --- Balanced mode: tilt toward the cheaper side. ---
+    up_bid, up_ask = _h15_side_prices(quotes, "Up")
+    dn_bid, dn_ask = _h15_side_prices(quotes, "Down")
+    up_ref = up_bid if up_bid is not None else up_ask
+    dn_ref = dn_bid if dn_bid is not None else dn_ask
+    if up_ref is None and dn_ref is None:
+        return _skip("no-liquidity", "no-liquidity", "Up" if fill_idx % 2 == 0 else "Down")
+    if up_ref is None:
+        side = "Down"
+    elif dn_ref is None:
+        side = "Up"
+    elif up_ref < dn_ref:
+        side = "Up"
+    elif dn_ref < up_ref:
+        side = "Down"
+    else:
+        side = "Up" if fill_idx % 2 == 0 else "Down"
+    bid, ask = _h15_side_prices(quotes, side)
+    spread = (ask - bid) if (ask is not None and bid is not None) else None
+    attempts: list[tuple[str, float, float]] = []
+    if ask is not None and (bid is None or (spread is not None and spread > H15_TAKER_SPREAD_MAX + 1e-9)):
+        # Uncertain book: 5-share taker probe at the ask for price discovery.
+        attempts.append(("TAKER", ask, min(H15_PROBE_SHARES, max_clip)))
+    if bid is not None:
+        attempts.append(("MAKER", bid, min(float(default_clip), max_clip)))
+    saw_dust = saw_ceiling = saw_unhedged = saw_depth = False
+    for role, px, want in attempts:
+        if px < min_fill:
+            saw_dust = True
+            continue
+        if px > max_ceiling:
+            saw_ceiling = True
+            continue
+        size = min(clip_shares(round(want, 1), max_clip), max_clip)
+        if size <= 0:
+            continue
+        est_usd, _fee = compute_fill_usd(size, px, role=role, include_fee=(role == "TAKER"))
+        if not _unhedged_ok(side, size, est_usd):
+            saw_unhedged = True
+            continue
+        size = _cap_maker(size, role, side)
+        if size <= 0:
+            saw_depth = True
+            continue
+        proj = _projected_pair_cost(inv, side, size, est_usd)
+        return MicrostructureDecision(
+            action="fill", outcome=side, price=round(px, 4), shares=size,
+            role=role, reason="clip-fill",
+            sub_reason="balance-probe" if role == "TAKER" else "balance-maker",
+            projected_pair_cost=proj,
+            share_deficit=0.0,
+        )
+    if saw_ceiling:
+        return _skip("extreme-price-skip", "ceiling-price-skip", side)
+    if saw_dust:
+        return _skip("dust-quote", "below-price-floor", side)
+    if saw_unhedged:
+        return _skip("unhedged-cap-skip", "unhedged-cap", side)
+    if saw_depth:
+        return _skip("no-liquidity", "depth-cap", side)
+    other = "Down" if side == "Up" else "Up"
+    o_bid, o_ask = _h15_side_prices(quotes, other)
+    o_px = o_bid if o_bid is not None else o_ask
+    if o_px is None:
+        return _skip("no-liquidity", "no-liquidity", side)
+    if o_px < min_fill:
+        return _skip("dust-quote", "below-price-floor", other)
+    if o_px > max_ceiling:
+        return _skip("extreme-price-skip", "ceiling-price-skip", other)
+    return _skip("no-liquidity", "no-liquidity", other)
 
 
 def _avg_cost(shares: float, cost: float) -> float | None:
@@ -374,6 +582,26 @@ def evaluate_microstructure_ladder(
     has_late = _late_start is not None
     in_late = bool(has_late and _elapsed is not None and _elapsed >= _late_start)
     late_cap = _late_max if (has_late and _late_max is not None) else rescue_max_pair_cost
+
+    # Hydrogen v1.5: concurrent two-sided accumulation. This path replaces
+    # the dip grid, deficit ladder and rescue sections below entirely: no
+    # dip band, no deficit chase, no pair-cost gate. The balancing ceiling
+    # is max_fill (0.85 in the v1.5 preset); pair cost is computed for the
+    # record and reported against the wallet benchmark, never enforced.
+    if strategy_id == "hydrogen-v1.5":
+        try:
+            _v15_depth = float(max_depth_shares or 0.0)
+        except Exception:
+            _v15_depth = 0.0
+        return _evaluate_concurrent_accumulation(
+            quotes=quotes, inv=inv, fill_idx=fill_idx,
+            default_clip=default_clip, max_clip=max_clip,
+            min_fill=min_fill, max_ceiling=max_fill,
+            max_unhedged_usd=max_unhedged_usd,
+            in_sweep_phase=in_sweep_phase,
+            max_depth_shares=_v15_depth,
+            resting_size=resting_size,
+        )
 
     # 1. Phase 3: Resolution Certainty Snipe in Minute 4 [0.90, 0.975]
     # Enabled exclusively for 'hapcs-v1'. Disabled for 'dangerously-skip-permissions'
