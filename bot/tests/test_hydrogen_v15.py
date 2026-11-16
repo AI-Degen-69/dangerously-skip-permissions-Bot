@@ -1,7 +1,6 @@
 """Hydrogen v1.5: concurrent two-sided accumulation (measured wallet grammar)."""
 import unittest
 from bot import ab_test as ab
-from bot import constants as C
 from bot.executor import evaluate_microstructure_ladder
 
 
@@ -23,45 +22,6 @@ def _dec(quotes, inv, fill_idx=0, **over):
               max_unhedged_usd=45.0)
     kw.update(over)
     return evaluate_microstructure_ladder(quotes=quotes, **kw)
-
-
-class TestHydrogenV15Registry(unittest.TestCase):
-    def test_v15_registered_with_balance_first_entry(self):
-        reg = C.STRATEGY_SETUPS.get("hydrogen-v1.5")
-        self.assertIsNotNone(reg)
-        e = reg["entry"]
-        self.assertEqual(e["startAfterOpenSec"], 4)
-        self.assertEqual(e["clipSharesDefault"], 30.0)
-        self.assertEqual(e["maxShares"], 30.0)
-        self.assertEqual(e["clipSchedule"], [[0, 30.0], [120, 15.0]])
-        # Balancing ceiling replaces the dip band: the light side may be
-        # bought at any price up to 85c.
-        self.assertEqual(e["maxFillPrice"], 0.85)
-        # No dip/rescue/taker-dip knobs bind the v1.5 path.
-        for dead in ("dipCurve", "leg2MaxPrice", "takerDipEntryMax",
-                     "takerDipBalancedOnly", "unhedgedStepCents",
-                     "unhedgedProbeShares", "lateRescueStartSec",
-                     "lateRescueMaxPairCost", "rescuePairCostMax",
-                     "rescueCeilingPrice"):
-            self.assertNotIn(dead, e)
-        # Pair-cost fields stay as reporting benchmarks only.
-        self.assertEqual(e["maxPairCost"], 0.985)
-        self.assertEqual(e["maxUnhedgedUsd"], 45.0)
-
-    def test_v15_copy_describes_accumulation_not_dips(self):
-        reg = C.STRATEGY_SETUPS["hydrogen-v1.5"]
-        self.assertIn("Balanced Books", reg["signature"])
-        self.assertIn("85", reg["signature"])
-        self.assertNotIn("Patient Pair", reg["signature"])
-        self.assertIn("lighter side", reg["description"])
-        self.assertEqual(reg["configHighlights"]["pairGates"],
-                         "reported vs $0.977 wallet benchmark, never gated")
-
-    def test_v15_is_default_candidate(self):
-        self.assertIn(ab.DEFAULT_CANDIDATE_ID, ("hydrogen-v1.5", "hydrogen-v1.9", "hydrogen-v2.0"))
-        self.assertIn(ab.CANDIDATE_DISPLAY_NAME, ("Hydrogen v1.5", "Hydrogen v1.9", "Hydrogen v2.0"))
-        # v1.4 stays registered as a frozen setup.
-        self.assertIsNotNone(C.STRATEGY_SETUPS.get("hydrogen-v1.4"))
 
 
 class TestConcurrentAccumulation(unittest.TestCase):

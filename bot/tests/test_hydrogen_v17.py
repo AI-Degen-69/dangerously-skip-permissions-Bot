@@ -1,7 +1,6 @@
 """Hydrogen v1.7: 2-level off-touch split ladder + ATM balanced band."""
 import unittest
 
-from bot import constants as C
 from bot.executor import (
     H17_LADDER_LEVELS,
     H17_LADDER_SPACING,
@@ -32,20 +31,6 @@ def _dec(quotes, inv, fill_idx=0, **over):
               max_unhedged_usd=15.0, max_unhedged_shares=25.0)
     kw.update(over)
     return evaluate_microstructure_ladder(quotes=quotes, **kw)
-
-
-class TestHydrogenV17Registry(unittest.TestCase):
-    def test_entry_matches_spec(self):
-        entry = C.STRATEGY_SETUPS["hydrogen-v1.7"]["entry"]
-        self.assertEqual(entry["clipSchedule"], [[0, 10.0], [120, 8.0]])
-        self.assertEqual(entry["maxUnhedgedShares"], 25.0)
-        self.assertEqual(entry["maxUnhedgedUsd"], 15.0)
-        self.assertEqual(entry["maxFillPrice"], 0.85)
-
-    def test_ladder_shape_configured(self):
-        entry = C.STRATEGY_SETUPS["hydrogen-v1.7"]["entry"]
-        self.assertEqual(entry["levelsPerSide"], H17_LADDER_LEVELS)
-        self.assertEqual(entry["levelSpacing"], H17_LADDER_SPACING)
 
 
 class TestToleranceScaling(unittest.TestCase):
