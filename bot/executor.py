@@ -1746,7 +1746,7 @@ def evaluate_microstructure_ladder(
             open_orders=open_orders,
         )
 
-    if strategy_id in ("hydrogen-v1.9", "hydrogen-v1.9-arm-a", "hydrogen-v1.9-arm-b", "hydrogen-v1.9-arm-e"):
+    if strategy_id in ("hydrogen-v1.9", "hydrogen-v1.9-arm-a", "hydrogen-v1.9-arm-e"):
         try:
             _v19_depth = float(max_depth_shares or 0.0)
         except Exception:
