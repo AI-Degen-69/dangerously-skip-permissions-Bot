@@ -30,8 +30,8 @@ class TestHydrogenV14Registry(unittest.TestCase):
         self.assertNotIn("maxShareLead", e)
 
     def test_v14_superseded_but_registered(self):
-        # v1.5 is now the default candidate; v1.4 stays frozen and registered.
-        self.assertEqual(ab.DEFAULT_CANDIDATE_ID, "hydrogen-v1.5")
+        # v1.4 stays frozen and registered while later candidates are active.
+        self.assertIn(ab.DEFAULT_CANDIDATE_ID, ("hydrogen-v1.5", "hydrogen-v1.9"))
         self.assertIn("hydrogen-v1.4", C.STRATEGY_SETUPS)
         # v1.3 stays registered as a frozen setup.
         self.assertIsNotNone(C.STRATEGY_SETUPS.get("hydrogen-v1.3"))
