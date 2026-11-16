@@ -24,3 +24,5 @@ bot/ab_test_state.json
 
 # Raw trade history (large, machine-pulled)
 data/
+/ledgers/
+docs/leaderboard-traders/ledgers/*/raw/

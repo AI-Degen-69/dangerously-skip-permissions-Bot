@@ -11,6 +11,12 @@ import requests
 
 BASE_URL = "https://data-api.polymarket.com/v2/activity"
 GAMMA_URL = "https://gamma-api.polymarket.com"
+# Anchored to docs/leaderboard-traders so the output lands in the same place
+# whatever directory the script is run from.
+LEDGERS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ledgers"
+)
+ACCOUNT_SUBDIRS = ("raw", "reports", "analysis")
 DEFAULT_USERNAME = "dangerously-skip-permissions"
 USER_ADDRESS = "0xc53375ff94e96100f2b30a4b5775db35218d69a9"
 PAGE_LIMIT = 100
@@ -18,9 +24,10 @@ REQUEST_DELAY_SECONDS = 0.2
 REQUEST_TIMEOUT_SECONDS = 30
 WINDOW_SIZE_SECONDS = 300  # 5 minutes
 UTC = datetime.timezone.utc
+MAX_EMPTY_WINDOWS = 4  # shortcut: 4 empty windows in a row end a "max" crawl; raise for dormant accounts
+MAX_WINDOWS = 3650  # safety cap for a "max" crawl (10 years of daily windows)
 
 CSV_FIELDS = [
-    "Proxy_Wallet",
     "Timestamp_UTC",
     "Type",
     "Market",
@@ -31,9 +38,7 @@ CSV_FIELDS = [
     "USD_Amount",
     "Condition_ID",
     "Token_ID",
-    "Transaction_Hash",
     "Market_Slug",
-    "Event_Slug",
 ]
 
 WINDOW_PATTERN = re.compile(r'-(?:(\d+)m|(\d+)h)-(\d+)$')
@@ -293,7 +298,7 @@ def cut_tail_markets(
 
     market_records = defaultdict(list)
     for r in records:
-        key = r.get("Event_Slug") or r.get("Market_Slug") or r.get("Condition_ID") or r.get("Market")
+        key = r.get("Market_Slug") or r.get("Condition_ID") or r.get("Market")
         market_records[key].append(r)
 
     markets_to_remove = set()
@@ -325,7 +330,7 @@ def cut_tail_markets(
     # 1. Check Newest Tail (markets near end_ts or now_ts)
     for key, stats in market_stats.items():
         sample = stats["sample"]
-        slug = sample.get("Event_Slug") or sample.get("Market_Slug") or key
+        slug = sample.get("Market_Slug") or key
         w_meta = get_window_meta(slug)
         if w_meta:
             slot_start, duration = w_meta
@@ -353,7 +358,7 @@ def cut_tail_markets(
         if key in markets_to_remove:
             continue
         sample = stats["sample"]
-        slug = sample.get("Event_Slug") or sample.get("Market_Slug") or key
+        slug = sample.get("Market_Slug") or key
         w_meta = get_window_meta(slug)
         if w_meta:
             slot_start, duration = w_meta
@@ -388,20 +393,129 @@ def cut_tail_markets(
     cleaned_records = []
     removed_records = []
     for r in records:
-        key = r.get("Event_Slug") or r.get("Market_Slug") or r.get("Condition_ID") or r.get("Market")
+        key = r.get("Market_Slug") or r.get("Condition_ID") or r.get("Market")
         if key in markets_to_remove:
             removed_records.append(r)
         else:
             cleaned_records.append(r)
 
     if removal_reasons:
-        print(f"Tail cut: filtered out {len(removal_reasons)} incomplete/partial markets ({len(removed_records)} trades removed):")
+        print(
+            f"  Tail cut: dropped {len(removal_reasons):,} incomplete/partial "
+            f"market(s) ({len(removed_records):,} fills)"
+        )
         for k, reason in removal_reasons.items():
-            print(f"  - [{k}]: {reason}")
+            print(f"    - {k}: {reason}")
     else:
-        print("Tail check: all markets in range are fully completed and pulled.")
+        print("  Tail check: every market in the window is complete.")
 
     return cleaned_records, removed_records
+
+
+def window_bounds(
+    now: datetime.datetime,
+    window_days: int,
+    snap_to_window: bool = True,
+) -> tuple[int, int]:
+    """Returns (start_ts, end_ts) for the window ending at `now`."""
+    now_ts = int(now.timestamp())
+    if snap_to_window:
+        end_ts = (now_ts // WINDOW_SIZE_SECONDS) * WINDOW_SIZE_SECONDS
+    else:
+        end_ts = now_ts
+    return end_ts - window_days * 24 * 60 * 60, end_ts
+
+
+def _fmt_duration(seconds: float) -> str:
+    minutes, secs = divmod(int(seconds), 60)
+    if minutes >= 60:
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours}h{minutes:02d}m"
+    return f"{minutes}m{secs:02d}s" if minutes else f"{secs}s"
+
+
+SECTION_WIDTH = 74
+
+
+def _section(title: str) -> None:
+    """A titled rule with a blank line first, so long output reads in blocks."""
+    print()
+    print(f"  {title} " + "=" * max(4, SECTION_WIDTH - len(title) - 3))
+
+
+def _usd(record: dict) -> float:
+    try:
+        return float(record.get("USD_Amount") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _window_label(slug: str | None) -> str:
+    """A 5m market window in clock time, e.g. '07:35 (5m)'."""
+    meta = get_window_meta(slug or "")
+    if meta:
+        slot, duration = meta
+        return (
+            datetime.datetime.fromtimestamp(slot, tz=UTC).strftime("%H:%M")
+            + f" ({duration // 60}m)"
+        )
+    return (slug or "")[:18] or "unknown"
+
+
+def _finish_day(day, fills, usd, windows, started_at, interactive) -> None:
+    summary = (
+        f"{day} | {fills:,} fills in {len(windows):,} market windows | "
+        f"${usd:>9,.0f} traded | {_fmt_duration(time.monotonic() - started_at):>7}"
+    )
+    if interactive:
+        print("\r" + " " * 110 + "\r" + "  " + summary, flush=True)
+    else:
+        print("  " + summary, flush=True)
+    print("  " + "-" * 70, flush=True)
+
+
+def _crawl_eta(crawl_start_ts: int, target_ts: int | None, end_ts: int, elapsed: float) -> str:
+    """Share of the account's history already covered, plus the crawl's ETA.
+
+    Needs the account's first activity (target_ts); until it is known the crawl
+    has no denominator, so the ETA is left out rather than guessed.
+    """
+    if not target_ts or target_ts >= crawl_start_ts or elapsed <= 0:
+        return ""
+    covered = crawl_start_ts - end_ts
+    if covered <= 0:
+        return ""
+    pct = min(covered / (crawl_start_ts - target_ts), 1.0)
+    eta = elapsed * (1 - pct) / pct
+    return f"~{_fmt_duration(eta)} left"
+
+
+def probe_oldest_activity(user_address: str) -> int | None:
+    """Timestamp of the account's first activity, or None if the probe fails.
+
+    The crawl needs a denominator for an ETA; one ascending request is cheaper
+    than crawling to the account's first fill just to learn where it is.
+    """
+    try:
+        response = requests.get(
+            BASE_URL,
+            params={
+                "user": user_address,
+                "limit": 1,
+                "sortBy": "TIMESTAMP",
+                "sortDirection": "ASC",
+            },
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        page = response.json().get("data")
+        timestamp = page[0]["timestamp"]
+        if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)):
+            return None
+        return int(timestamp)
+    except Exception:
+        return None
 
 
 def fetch_activity(
@@ -411,10 +525,14 @@ def fetch_activity(
     cut_tails: bool = True,
     verify_remote: bool = False,
     window_days: int = 7,
+    partial: list[dict] | None = None,
 ) -> list[dict]:
     """
     Fetches one or seven days of activity backward from the end boundary.
     Supports user address resolution, target date parsing, full window alignment, and tail cutting.
+
+    ``partial`` collects rows as they arrive so a Ctrl+C mid-window does not
+    discard the work already done; the caller can merge them on interrupt.
     """
     if window_days not in (1, 7):
         raise ValueError("window_days must be 1 or 7")
@@ -439,24 +557,27 @@ def fetch_activity(
         now = now.astimezone(UTC)
 
     now_ts = int(now.timestamp())
-    if snap_to_window:
-        end_ts = (now_ts // WINDOW_SIZE_SECONDS) * WINDOW_SIZE_SECONDS
-    else:
-        end_ts = now_ts
-    start_ts = end_ts - window_days * 24 * 60 * 60
+    start_ts, end_ts = window_bounds(now, window_days, snap_to_window)
 
     print(
-        f"Fetching activity for {user_address} backward from "
-        f"{datetime.datetime.fromtimestamp(end_ts, tz=UTC).isoformat()} "
-        f"to {datetime.datetime.fromtimestamp(start_ts, tz=UTC).isoformat()} "
-        f"({window_days}-day window)..."
+        f"  Checking {datetime.datetime.fromtimestamp(end_ts, tz=UTC):%Y-%m-%d} back to "
+        f"{datetime.datetime.fromtimestamp(start_ts, tz=UTC):%Y-%m-%d} for fills "
+        f"({window_days} days requested)",
+        flush=True,
     )
 
     records = []
     cursor = None
     seen_cursors = set()
-    page_number = 0
-    fetched_count = 0
+    day = None
+    day_fills = 0
+    day_usd = 0.0
+    day_windows: set[str] = set()
+    current_window = "unknown"
+    started = time.monotonic()
+    day_started = started
+    last_live = 0.0
+    interactive = getattr(sys.stdout, "isatty", lambda: False)()
 
     while True:
         params = {
@@ -501,37 +622,61 @@ def fetch_activity(
             if timestamp < start_ts or timestamp > end_ts:
                 continue
 
-            records.append(
-                {
-                    "Proxy_Wallet": activity.get("proxy_wallet"),
-                    "Timestamp_UTC": datetime.datetime.fromtimestamp(
-                        timestamp, tz=UTC
-                    ).isoformat(),
-                    "Type": activity.get("type"),
-                    "Market": activity.get("title"),
-                    "Outcome": activity.get("outcome"),
-                    "Side": activity.get("side"),
-                    "Price": activity.get("price"),
-                    "Shares": activity.get("size"),
-                    "USD_Amount": activity.get("usdc_size"),
-                    "Condition_ID": activity.get("condition_id"),
-                    "Token_ID": activity.get("token_id"),
-                    "Transaction_Hash": activity.get("transaction_hash"),
-                    "Market_Slug": activity.get("slug"),
-                    "Event_Slug": activity.get("event_slug"),
-                    "timestamp": timestamp,
-                }
-            )
+            iso = datetime.datetime.fromtimestamp(timestamp, tz=UTC).isoformat()
+            record_day = iso[:10]
+            if record_day != day:
+                if day is not None:
+                    _finish_day(day, day_fills, day_usd, day_windows, day_started, interactive)
+                day = record_day
+                day_fills = 0
+                day_usd = 0.0
+                day_windows = set()
+                day_started = time.monotonic()
+                if interactive:
+                    print("\r" + " " * 110 + "\r", end="", flush=True)
+                print(flush=True)
+                print(f"  --- {day} " + "-" * max(4, 60 - len(day)), flush=True)
 
-        page_number += 1
-        fetched_count += len(page)
-        print(
-            f"Page {page_number}: {len(page)} records; "
-            f"{fetched_count} total",
-            flush=True,
-        )
+            record = {
+                "Timestamp_UTC": iso,
+                "Type": activity.get("type"),
+                "Market": activity.get("title"),
+                "Outcome": activity.get("outcome"),
+                "Side": activity.get("side"),
+                "Price": activity.get("price"),
+                "Shares": activity.get("size"),
+                "USD_Amount": activity.get("usdc_size"),
+                "Condition_ID": activity.get("condition_id"),
+                "Token_ID": activity.get("token_id"),
+                "Market_Slug": activity.get("slug"),
+                "timestamp": timestamp,
+            }
+            records.append(record)
+            if partial is not None:
+                partial.append(record)
+            day_fills += 1
+            day_usd += _usd(record)
+            if record["Market_Slug"]:
+                day_windows.add(record["Market_Slug"])
+                current_window = _window_label(record["Market_Slug"])
 
         next_cursor = pagination["next_cursor"]
+        # A terminal gets one rewritten line; a log gets one line every 10s.
+        now = time.monotonic()
+        if day and (interactive or now - last_live >= 10):
+            live = (
+                f"  {day} | market window {current_window} | "
+                f"{day_fills:,} fills so far | ${day_usd:>9,.0f} | "
+                f"{_fmt_duration(now - day_started):>7}"
+            )
+            # Only a terminal needs padding to erase a longer previous line.
+            print(
+                live.ljust(102) if interactive else live,
+                end="\r" if interactive else "\n",
+                flush=True,
+            )
+            last_live = now
+
         if next_cursor is None:
             break
         if not isinstance(next_cursor, str) or not next_cursor:
@@ -543,7 +688,11 @@ def fetch_activity(
         cursor = next_cursor
         time.sleep(REQUEST_DELAY_SECONDS)
 
-    print(f"Retrieved {len(records)} raw activity records.")
+    if day is not None:
+        _finish_day(day, day_fills, day_usd, day_windows, day_started, interactive)
+    elif interactive:
+        print("\r" + " " * 110 + "\r", end="", flush=True)
+    in_range = len(records)
 
     if cut_tails and records:
         records, _ = cut_tail_markets(
@@ -559,18 +708,183 @@ def fetch_activity(
     for r in records:
         r.pop("timestamp", None)
 
-    print(f"Final activity record count: {len(records)}.")
+    if in_range:
+        days_count = len({r["Timestamp_UTC"][:10] for r in records})
+        usd_total = sum(_usd(r) for r in records)
+        print()
+        print(
+            f"  Fetched {in_range:,} fills on {days_count:,} days | "
+            f"${usd_total:>9,.0f} traded | "
+            f"{_fmt_duration(time.monotonic() - started):>7}",
+            flush=True,
+        )
     return records
 
 
-def save_to_csv(records: list[dict], output_path: str):
-    """Saves activity records to a CSV file."""
-    with open(output_path, "w", newline="", encoding="utf-8") as output_file:
+def fetch_max_activity(
+    user_address: str,
+    now: datetime.datetime,
+    window_days: int = 7,
+    verify_remote: bool = False,
+    snap_to_window: bool = True,
+    cut_first_tail: bool = True,
+    autosave_path: str | None = None,
+    target_ts: int | None = None,
+) -> tuple[list[dict], bool]:
+    """Pulls backward window by window until the account runs out of activity.
+
+    Returns (deduped records, interrupted). Consecutive windows share their
+    boundary instant, so each window's rows are merged by identity with the
+    largest count any single window reported.
+
+    autosave_path rewrites the rows pulled so far every few windows, so a crash
+    or a killed terminal does not lose a long crawl. target_ts is the account's
+    first activity, used only to estimate how much of the history is left.
+    """
+    counts: dict[tuple, int] = {}
+    samples: dict[tuple, dict] = {}
+    end = now
+    empty_windows = 0
+    interrupted = False
+    window_number = 0
+    crawl_start = time.monotonic()
+    crawl_start_ts = int(now.timestamp())
+
+    _section("Full history crawl")
+    print(
+        f"  Reads {window_days} days per request; stops after "
+        f"{MAX_EMPTY_WINDOWS} stretches with no fills.",
+        flush=True,
+    )
+    print("  Ctrl+C stops at a checkpoint.", flush=True)
+
+    while empty_windows < MAX_EMPTY_WINDOWS and window_number < MAX_WINDOWS:
+        window_number += 1
+        start_ts, end_ts = window_bounds(end, window_days, snap_to_window)
+        partial: list[dict] = []
+        try:
+            window = fetch_activity(
+                user_address=user_address,
+                now=end,
+                snap_to_window=snap_to_window,
+                cut_tails=cut_first_tail and window_number == 1,
+                verify_remote=verify_remote,
+                window_days=window_days,
+                partial=partial,
+            )
+        except KeyboardInterrupt:
+            interrupted = True
+            if partial:
+                for record in partial:
+                    record.pop("timestamp", None)
+                absorb_window(counts, samples, partial)
+                print(f"  interrupted mid-day: kept {len(partial):,} fills pulled so far")
+            break
+
+        end = datetime.datetime.fromtimestamp(start_ts, tz=UTC)
+        if not window:
+            empty_windows += 1
+            print(
+                f"  stretch {window_number:<3} "
+                f"{datetime.datetime.fromtimestamp(start_ts, tz=UTC):%Y-%m-%d} -> "
+                f"{datetime.datetime.fromtimestamp(end_ts, tz=UTC):%Y-%m-%d}  "
+                f"{0:>7,} fills  "
+                f"(empty {empty_windows}/{MAX_EMPTY_WINDOWS})"
+            )
+            continue
+
+        empty_windows = 0
+        absorb_window(counts, samples, window)
+        elapsed = time.monotonic() - crawl_start
+        eta = _crawl_eta(crawl_start_ts, target_ts, int(end.timestamp()), elapsed)
+        print(
+            f"  stretch {window_number:<3} "
+            f"{datetime.datetime.fromtimestamp(start_ts, tz=UTC):%Y-%m-%d} -> "
+            f"{datetime.datetime.fromtimestamp(end_ts, tz=UTC):%Y-%m-%d}  "
+            f"{len(window):>7,} fills  {_fmt_duration(elapsed):>6}"
+            + (f"  {eta}" if eta else "")
+        )
+
+        if autosave_path and window_number % 5 == 0:
+            snapshot = [samples[key] for key, n in counts.items() for _ in range(n)]
+            try:
+                save_to_csv(snapshot, autosave_path, announce=False)
+                print(f"  autosaved {len(snapshot):,} rows -> {autosave_path}")
+            except OSError as exc:
+                print(f"  autosave failed ({exc}); crawl continues")
+
+    return [samples[key] for key, n in counts.items() for _ in range(n)], interrupted
+
+
+def record_key(record: dict) -> tuple:
+    """Identity of a fill across overlapping windows."""
+    return tuple(record[field] for field in CSV_FIELDS)
+
+
+def absorb_window(counts: dict, samples: dict, window: list[dict]) -> int:
+    """Adds one window to the running multiset and returns the running total.
+
+    Adjacent windows overlap, so the same fill can arrive twice. Keeping the
+    largest count any one window reported removes that overlap without
+    collapsing genuinely identical fills inside a window.
+    """
+    seen: dict[tuple, int] = {}
+    for record in window:
+        key = record_key(record)
+        seen[key] = seen.get(key, 0) + 1
+        samples.setdefault(key, record)
+    # shortcut: identical fills split across a boundary keep the larger count, not the sum
+    for key, n in seen.items():
+        if n > counts.get(key, 0):
+            counts[key] = n
+    return sum(counts.values())
+
+
+def merge_records(*groups: list[dict]) -> list[dict]:
+    """Merges window results, deduping on full CSV identity."""
+    counts: dict[tuple, int] = {}
+    samples: dict[tuple, dict] = {}
+    for group in groups:
+        absorb_window(counts, samples, group)
+    return [samples[key] for key, n in counts.items() for _ in range(n)]
+
+
+def save_to_csv(records: list[dict], output_path: str, announce: bool = True):
+    """Saves activity records to a CSV file. Written to .tmp then renamed, so a
+    kill mid-write never leaves a truncated ledger behind."""
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    tmp_path = f"{output_path}.tmp"
+    with open(tmp_path, "w", newline="", encoding="utf-8") as output_file:
         writer = csv.DictWriter(output_file, fieldnames=CSV_FIELDS, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(records)
+    os.replace(tmp_path, output_path)
 
-    print(f"Successfully saved {len(records)} activity records to '{output_path}'.")
+    if announce:
+        print()
+        print(f"  Saved {len(records):,} rows -> {output_path}")
+
+
+def safe_account_name(display_name: str) -> str:
+    """Filesystem-safe folder name for an account."""
+    return re.sub(r'[^a-zA-Z0-9_\-]', '_', display_name).lower()
+
+
+def account_dirs(display_name: str) -> str:
+    """Create and return ledgers/<account>/ with its raw/, reports/ and analysis/."""
+    root = os.path.join(LEDGERS_DIR, safe_account_name(display_name))
+    for sub in ACCOUNT_SUBDIRS:
+        os.makedirs(os.path.join(root, sub), exist_ok=True)
+    return root
+
+
+def short_account_tag(display_name: str) -> str:
+    """Short filename prefix: the account folder already carries the full name."""
+    safe = safe_account_name(display_name)
+    if safe.startswith("0x"):
+        return safe[:3]
+    head = safe.split("-", 1)[0]
+    return head[:12] if len(head) >= 3 else safe[:3]
 
 
 def default_output_filename(
@@ -579,20 +893,61 @@ def default_output_filename(
     window_days: int,
     date_only: bool,
 ) -> str:
-    safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', display_name).lower()
+    tag = short_account_tag(display_name)
     target_date = target_dt.date()
     if date_only:
         target_date -= datetime.timedelta(days=1)
 
     if window_days == 1:
-        return f"{safe_name}_{target_date:%Y-%m-%d}.csv"
+        return f"{tag}_{target_date:%Y-%m-%d}.csv"
 
     start_date = (
         target_date - datetime.timedelta(days=window_days - 1)
         if date_only
         else (target_dt - datetime.timedelta(days=window_days)).date()
     )
-    return f"{safe_name}_{start_date:%Y-%m-%d}_to_{target_date:%Y-%m-%d}.csv"
+    return f"{tag}_{start_date:%Y-%m-%d}_to_{target_date:%Y-%m-%d}.csv"
+
+
+def pull_stats(records: list[dict]) -> tuple[int, int]:
+    """Distinct market windows and UTC days in a pulled file."""
+    days = {record["Timestamp_UTC"][:10] for record in records}
+    windows = {
+        record.get("Market_Slug") or record.get("Condition_ID")
+        for record in records
+    }
+    windows.discard(None)
+    windows.discard("")
+    return len(windows), len(days)
+
+
+def max_output_filename(
+    display_name: str,
+    records: list[dict],
+) -> str:
+    """Names the file after what was pulled, not the requested date range."""
+    windows, days = pull_stats(records)
+    return f"{short_account_tag(display_name)}_{windows}-windows_{days}-days.csv"
+
+
+def print_checkpoint(records: list[dict], output_file: str, interrupted: bool) -> None:
+    if records:
+        dates = sorted(record["Timestamp_UTC"][:10] for record in records)
+        span = f"{dates[0]} -> {dates[-1]}"
+    else:
+        span = "no activity"
+    windows, days = pull_stats(records)
+    label = "CHECKPOINT (interrupted)" if interrupted else "CHECKPOINT"
+    print()
+    print("=" * SECTION_WIDTH)
+    print(f"  {label}")
+    print(f"  rows     {len(records):,}")
+    print(f"  span     {span}")
+    print(f"  markets  {windows:,} windows across {days:,} days")
+    print(f"  file     {output_file}")
+    if interrupted:
+        print("  Note: the interrupted day is partial; its market windows may be incomplete.")
+    print("=" * SECTION_WIDTH)
 
 
 def main():
@@ -607,7 +962,8 @@ def main():
         "-d", "--date", "--start-date",
         dest="date",
         help=(
-            "Target date/time ending the fetch window. A date-only value fetches "
+            "Target date/time ending the fetch window, or 'max' to pull backward "
+            "until the account runs out of activity. A date-only value fetches "
             "that full UTC date and preceding days; default: now"
         )
     )
@@ -620,7 +976,7 @@ def main():
     )
     parser.add_argument(
         "-o", "--output",
-        help="Custom output CSV filename"
+        help="Custom output path (default: ledgers/<account>/raw/<tag>_<range>.csv)"
     )
     parser.add_argument(
         "--no-snap",
@@ -631,6 +987,11 @@ def main():
         "--no-cut-tails",
         action="store_true",
         help="Disable cutting incomplete/partial markets in the tails"
+    )
+    parser.add_argument(
+        "--no-autosave",
+        action="store_true",
+        help="Disable the periodic partial CSV written during a 'max' crawl"
     )
     parser.add_argument(
         "--verify-remote",
@@ -653,58 +1014,139 @@ def main():
     date_input = args.date
     if not date_input and sys.stdin.isatty():
         try:
-            prompt_date = input("Enter target date (DD/MM, DD/MM/YYYY, or 'now') [now]: ").strip()
-            date_input = prompt_date if prompt_date else "now"
+            prompt_date = input(
+                "Enter date (DD/MM, DD/MM/YYYY, 'now', 'max' for full history, "
+                "'cancel' to quit) [now]: "
+            ).strip()
         except (EOFError, KeyboardInterrupt):
-            date_input = "now"
-            print()
+            print("\n  Cancelled.")
+            sys.exit(0)
+        if prompt_date.lower() in ("cancel", "q", "quit", "exit"):
+            print("  Cancelled.")
+            sys.exit(0)
+        date_input = prompt_date if prompt_date else "now"
     elif not date_input:
         date_input = "now"
 
-    print(f"Resolving '{user_input}'...")
+    _section("Polymarket activity export")
+    print(f"  Resolving '{user_input}'...")
     try:
         resolved_address, display_name = resolve_user_address(user_input)
     except Exception as exc:
-        print(f"Error resolving user: {exc}")
+        print(f"  Error: could not resolve '{user_input}': {exc}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Target account: {display_name} -> {resolved_address}")
+    print(f"  Account   {display_name}")
+    print(f"  Wallet    {resolved_address}")
 
+    is_max = date_input.strip().lower() == "max"
     try:
-        target_dt = parse_date_input(date_input)
+        target_dt = parse_date_input("now" if is_max else date_input)
     except Exception as exc:
-        print(f"Error parsing date '{date_input}': {exc}")
+        print(f"  Error: could not parse date '{date_input}': {exc}", file=sys.stderr)
         sys.exit(1)
 
-    # Determine default CSV output name
-    if args.output:
-        output_file = args.output
-    else:
-        normalized_date_input = date_input.strip()
-        date_only = (
-            normalized_date_input.lower() != "now"
-            and "T" not in normalized_date_input
-            and len(normalized_date_input.split()) == 1
-        )
-        output_file = default_output_filename(
-            display_name,
-            target_dt,
+    autosave_file = None
+    account_root = account_dirs(display_name)
+
+    if is_max:
+        if not args.no_autosave:
+            autosave_file = os.path.join(
+                account_root,
+                "raw",
+                f"{short_account_tag(display_name)}_{target_dt:%Y-%m-%d}_partial.csv",
+            )
+        target_ts = probe_oldest_activity(resolved_address)
+        if target_ts:
+            print(
+                "  Oldest fill  "
+                f"{datetime.datetime.fromtimestamp(target_ts, tz=UTC):%Y-%m-%d}"
+            )
+        activity, interrupted = fetch_max_activity(
+            resolved_address,
+            now=target_dt,
             window_days=args.days,
-            date_only=date_only,
+            verify_remote=args.verify_remote,
+            snap_to_window=not args.no_snap,
+            cut_first_tail=not args.no_cut_tails,
+            autosave_path=autosave_file,
+            target_ts=target_ts,
+        )
+        while True:
+            if args.output:
+                output_file = args.output
+            else:
+                output_file = os.path.join(
+                    account_root,
+                    "raw",
+                    max_output_filename(display_name, activity),
+                )
+            print_checkpoint(activity, output_file, interrupted)
+            if not sys.stdin.isatty():
+                break
+            try:
+                choice = input(
+                    "Press Enter to save and exit, or 'c' to keep pulling older data: "
+                )
+            except (EOFError, KeyboardInterrupt):
+                choice = ""
+                print()
+            if choice.strip().lower() not in ("c", "continue"):
+                break
+            oldest = min((r["Timestamp_UTC"] for r in activity), default=None)
+            if oldest is None:
+                break
+            resumed, interrupted = fetch_max_activity(
+                resolved_address,
+                now=datetime.datetime.fromisoformat(oldest),
+                window_days=args.days,
+                verify_remote=args.verify_remote,
+                snap_to_window=not args.no_snap,
+                cut_first_tail=not args.no_cut_tails,
+                target_ts=target_ts,
+                # no autosave here: this segment would overwrite the first one's partial
+            )
+            activity = merge_records(activity, resumed)
+    else:
+        # Determine default CSV output name
+        if args.output:
+            output_file = args.output
+        else:
+            normalized_date_input = date_input.strip()
+            date_only = (
+                normalized_date_input.lower() != "now"
+                and "T" not in normalized_date_input
+                and len(normalized_date_input.split()) == 1
+            )
+            output_file = os.path.join(
+                account_root,
+                "raw",
+                default_output_filename(
+                    display_name,
+                    target_dt,
+                    window_days=args.days,
+                    date_only=date_only,
+                ),
+            )
+        print(f"  Output    {output_file}")
+
+        activity = fetch_activity(
+            user_address=resolved_address,
+            now=target_dt,
+            snap_to_window=not args.no_snap,
+            cut_tails=not args.no_cut_tails,
+            verify_remote=args.verify_remote,
+            window_days=args.days,
         )
 
-    activity = fetch_activity(
-        user_address=resolved_address,
-        now=target_dt,
-        snap_to_window=not args.no_snap,
-        cut_tails=not args.no_cut_tails,
-        verify_remote=args.verify_remote,
-        window_days=args.days,
-    )
+        if not activity:
+            print(f"  No activity in the {args.days}-day window.")
 
-    if not activity:
-        print(f"No account activity found within the {args.days}-day window.")
+    os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
     save_to_csv(activity, output_path=output_file)
+    if autosave_file and os.path.exists(autosave_file):
+        os.remove(autosave_file)
+        print(f"  Removed partial autosave: {autosave_file}")
 
 
 if __name__ == "__main__":

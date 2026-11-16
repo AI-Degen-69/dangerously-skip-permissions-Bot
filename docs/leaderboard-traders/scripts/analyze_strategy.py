@@ -1,16 +1,22 @@
-"""Reverse-engineer wallet 0xc533...69a9's 5m BTC Up/Down strategy from the weekly fill ledger.
+"""Reverse-engineer a wallet's 5m BTC Up/Down strategy from a fill ledger.
 
-Reads docs/leaderboard-traders/scripts/full-week-trades_dangerously-skip-permissions_2026-11-01_to_2026-11-08.csv
-and prints the analysis sections (markdown) used in the report.
+Any date range works: a week, a month, a quarter.
+
+Reads a ledger CSV (default: ledgers/dangerously-skip-permissions/raw/dangerously_2026-11-01_to_2026-11-08.csv,
+or pass one as argv[1] / TRADES_CSV) and prints the analysis sections (markdown) used in the reports.
+The same text is saved as `<csv-stem>_strategy.md` in `ledgers/<account>/analysis/` when the
+CSV sits under `ledgers/<account>/raw/`, otherwise next to the CSV.
 
 Key recovered facts the script relies on:
   - USD_Amount = Shares * Price * (1 + fee), fee per share = 0.07 * p * (1-p) when taker.
   - Zero-fee fills are maker fills; the two never mix inside one transaction hash.
+    Newer ledgers drop the hash, so row order is the sort tiebreaker for them.
   - REDEEM USD_Amount ~= Shares => winning token, 0 => losing token.
 """
 
 import csv
 import os
+import pathlib
 import sys
 
 import numpy as np
@@ -18,7 +24,13 @@ import pandas as pd
 
 csv.field_size_limit(10**9)
 
-DEFAULT_PATH = "data/dangerously-skip-permissions-trades/17_2026-11-01_to_2026-11-08.csv"
+DEFAULT_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "ledgers",
+    "dangerously-skip-permissions",
+    "raw",
+    "dangerously_2026-11-01_to_2026-11-08.csv",
+)
 # Any ledger can be analysed: pass a .csv argument or set TRADES_CSV.
 PATH = (
     next((a for a in sys.argv[1:] if a.lower().endswith(".csv")), None)
@@ -26,6 +38,37 @@ PATH = (
     or DEFAULT_PATH
 )
 FEE_RATE = 0.07
+REQUIRED_COLUMNS = (
+    "Timestamp_UTC", "Type", "Market_Slug", "Condition_ID",
+    "Outcome", "Token_ID", "Price", "Shares", "USD_Amount",
+)
+
+
+def analysis_target(csv_path: str, suffix: str) -> pathlib.Path:
+    """ledgers/<account>/analysis/ for a raw/ ledger, otherwise next to the CSV."""
+    src = pathlib.Path(csv_path).resolve()
+    if src.parent.name == "raw" and src.parent.parent.parent.name == "ledgers":
+        out_dir = src.parent.parent / "analysis"
+    else:
+        out_dir = src.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir / f"{src.stem}{suffix}"
+
+
+class Tee:
+    """Duplicates stdout into the analysis file."""
+
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data):
+        for stream in self.streams:
+            stream.write(data)
+        return len(data)
+
+    def flush(self):
+        for stream in self.streams:
+            stream.flush()
 
 
 def md(frame, floatfmt=".4f"):
@@ -40,12 +83,46 @@ def md(frame, floatfmt=".4f"):
     return "\n".join([head, sep] + rows)
 
 
+SECTION_WIDTH = 74
+
+
+def _section(title):
+    """Draw a banner above a Markdown section heading.
+
+    The report is both streamed to the terminal and saved as Markdown, so a
+    plain `=` rule gives the terminal the same break as the puller while the
+    `##` heading stays intact in the saved file.
+    """
+    print()
+    print("=" * SECTION_WIDTH)
+    print(f"\n## {title}\n")
+
+
+def _kv(label, value):
+    """A padded `label   value` line, matching the puller's status blocks."""
+    print(f"  {label:<17}{value}")
+
+
 def q(series, ps=(0.1, 0.25, 0.5, 0.75, 0.9)):
     return series.quantile(list(ps)).to_dict()
 
 
+def split_thirds(days):
+    """Three equal-length phases of a sorted day list."""
+    n = len(days)
+    cuts = [0, n // 3, 2 * n // 3, n]
+    return [days[a:b] for a, b in zip(cuts, cuts[1:])]
+
+
 def load():
     df = pd.read_csv(PATH)
+    missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
+    if missing:
+        raise ValueError(f"missing column(s): {', '.join(missing)}")
+    if "Transaction_Hash" not in df.columns:
+        # Newer ledgers drop the hash; row order becomes the sort tiebreaker, so
+        # the duplicate-tx line in section A reads 0 for them.
+        df["Transaction_Hash"] = df.index.to_series().map("{:010d}".format)
     df["ts"] = pd.to_datetime(df["Timestamp_UTC"], utc=True)
     sec = (df["ts"] - pd.Timestamp("1970-01-01", tz="UTC")).dt.total_seconds().astype("int64")
     df["epoch"] = sec
@@ -122,22 +199,23 @@ def build_markets(tr, rd):
 
 
 def section_a(df, tr, rd, rb, m):
-    print("\n## A. Integrity & scale\n")
-    print(
-        f"Rows {len(df):,} | TRADE {len(tr):,} | REDEEM {len(rd):,} | "
-        f"MAKER_REBATE {(rb['Type'] == 'MAKER_REBATE').sum()} | TAKER_REBATE {(rb['Type'] == 'TAKER_REBATE').sum()}"
-    )
-    print(f"Window {df['ts'].min()} -> {df['ts'].max()}")
-    print(f"Trade cash out ${tr['USD_Amount'].sum():,.2f}")
-    print(f"  of which fee premium ${tr['fee'].sum():,.2f} ({tr['fee'].sum() / tr['gross'].sum() * 100:.2f}% of gross notional)")
-    print(f"  gross notional ${tr['gross'].sum():,.2f}")
-    print(f"Redeem cash in ${rd['USD_Amount'].sum():,.2f}")
-    print(f"Rebates ${rb['USD_Amount'].sum():,.2f}")
-    print(f"Net before rebates ${rd['USD_Amount'].sum() - tr['USD_Amount'].sum():,.2f}")
-    print(f"Net after rebates ${rd['USD_Amount'].sum() - tr['USD_Amount'].sum() + rb['USD_Amount'].sum():,.2f}")
-    print(f"Markets traded {tr['Condition_ID'].nunique():,} | tokens traded {tr['Token_ID'].nunique():,} "
-          f"(ratio {tr['Token_ID'].nunique() / tr['Condition_ID'].nunique():.3f})")
-    print(f"Markets settled/redeemed {rd['Condition_ID'].nunique():,} | traded but unredeemed {len(set(tr['Condition_ID']) - set(rd['Condition_ID']))}")
+    _section("A. Integrity & scale")
+    _kv("Rows", f"{len(df):,} | TRADE {len(tr):,} | REDEEM {len(rd):,} | "
+         f"MAKER_REBATE {(rb['Type'] == 'MAKER_REBATE').sum()} | "
+         f"TAKER_REBATE {(rb['Type'] == 'TAKER_REBATE').sum()}")
+    _kv("Window", f"{df['ts'].min()} -> {df['ts'].max()}")
+    _kv("Trade cash", f"${tr['USD_Amount'].sum():,.2f}")
+    _kv("Fee premium", f"${tr['fee'].sum():,.2f} "
+        f"({tr['fee'].sum() / tr['gross'].sum() * 100:.2f}% of gross notional)")
+    _kv("Gross notional", f"${tr['gross'].sum():,.2f}")
+    _kv("Redeem cash", f"${rd['USD_Amount'].sum():,.2f}")
+    _kv("Rebates", f"${rb['USD_Amount'].sum():,.2f}")
+    _kv("Net", f"${rd['USD_Amount'].sum() - tr['USD_Amount'].sum():,.2f} before rebates, "
+        f"${rd['USD_Amount'].sum() - tr['USD_Amount'].sum() + rb['USD_Amount'].sum():,.2f} after")
+    _kv("Markets", f"{tr['Condition_ID'].nunique():,} traded | "
+        f"{tr['Token_ID'].nunique():,} tokens | "
+        f"{rd['Condition_ID'].nunique():,} settled | "
+        f"{len(set(tr['Condition_ID']) - set(rd['Condition_ID']))} unredeemed")
 
     day = (
         tr.groupby(tr["ts"].dt.date)
@@ -168,7 +246,7 @@ def section_a(df, tr, rd, rb, m):
 
 
 def section_b(tr, m):
-    print("\n## B. Dual-sided inventory\n")
+    _section("B. Dual-sided inventory")
     both = m[m["sh_up"] > 0]
     both = both[both["sh_dn"] > 0]
     print(f"Markets with both sides: {len(both)} / {len(m)} ({len(both) / len(m) * 100:.1f}%)")
@@ -233,7 +311,7 @@ def section_b(tr, m):
 
 
 def section_c(m, rb):
-    print("\n## C. PnL attribution\n")
+    _section("C. PnL attribution")
     s = m[m["settled"]]
     print(f"Settled markets {len(s)} of {len(m)}; unresolved {len(m) - len(s)}")
     print(f"Gross trading PnL ${s['pnl_gross'].sum():,.2f} | fees ${-s['fees'].sum():,.2f} | "
@@ -275,7 +353,7 @@ def section_c(m, rb):
     print(f"Market-level net equity (fees, no rebates): max drawdown ${(meq - meq.cummax()).min():,.2f}; "
           f"worst point ${meq.min():,.2f}")
     print(f"Per-market gross PnL: mean ${s['pnl_gross'].mean():.2f}, std ${s['pnl_gross'].std():.2f}, "
-          f"weekly Sharpe-like t = {s['pnl_gross'].mean() / s['pnl_gross'].std() * np.sqrt(len(s)):.2f}")
+          f"Sharpe-like t per market = {s['pnl_gross'].mean() / s['pnl_gross'].std() * np.sqrt(len(s)):.2f}")
     print(f"Per-market residual: mean ${s['residual'].mean():.2f}, std ${s['residual'].std():.2f}, "
           f"t = {s['residual'].mean() / s['residual'].std() * np.sqrt(len(s)):.2f}")
     print(f"Locked share of gross trading PnL: {100 * s['locked'].sum() / s['pnl_gross'].sum():.1f}%")
@@ -284,7 +362,7 @@ def section_c(m, rb):
 
 
 def section_d(tr, m):
-    print("\n## D. Timing fingerprint\n")
+    _section("D. Timing fingerprint")
     sbc = tr["secs_before_close"]
     print(f"secs_before_close: {q(sbc)}; mean {sbc.mean():.1f}")
     bins = [0, 15, 30, 60, 90, 120, 180, 240, 300]
@@ -320,7 +398,7 @@ def section_d(tr, m):
 
 
 def section_e(tr, m):
-    print("\n## E. Price behavior & calibration\n")
+    _section("E. Price behavior & calibration")
     print(f"Fill price: {q(tr['Price'])}; mean {tr['Price'].mean():.4f}")
     for lo, hi in [(0, 0.1), (0.9, 1.01)]:
         sub = tr[(tr["Price"] >= lo) & (tr["Price"] < hi)]
@@ -410,7 +488,7 @@ def section_e(tr, m):
 
 
 def section_f(tr, m):
-    print("\n## F. Sizing & risk\n")
+    _section("F. Sizing & risk")
     print(f"USD per fill: {q(tr['USD_Amount'])}; mean {tr['USD_Amount'].mean():.2f}")
     print(f"Shares per fill: {q(tr['Shares'])}; mean {tr['Shares'].mean():.2f}; "
           f"exactly 30: {100 * (tr['Shares'].round(2) == 30).mean():.1f}%")
@@ -456,12 +534,13 @@ def section_f(tr, m):
         peak = max(peak, cur)
     print(f"\nPeak concurrent cash committed across overlapping windows: ${peak:,.2f}")
     print(f"Sum of all market cost / markets: ${m['cost'].sum():,.0f} / {len(m)}")
+    n_days = max(tr["ts"].dt.date.nunique(), 1)
     print("Working bankroll lower bound (peak deployed): see above; turnover/day "
-          f"${m['cost'].sum() / 7:,.0f}")
+          f"${m['cost'].sum() / n_days:,.0f}")
 
 
 def section_g(tr, m, rb):
-    print("\n## G. Regime change\n")
+    _section("G. Regime change")
     s = m[m["settled"]].copy()
     s["day"] = pd.to_datetime(s["open_ts"], unit="s", utc=True).dt.date
     tr2 = tr.copy()
@@ -497,22 +576,23 @@ def section_g(tr, m, rb):
     r["rebate_bps"] = r["rebates"] / r["notional"] * 10000
     print(md(r, ".2f"))
 
-    print("\nPhase comparison:\n")
-    phases = {"Nov 2-5 (full)": ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05"],
-              "Nov 6 (decay)": ["2026-11-06"], "Nov 7-8 (low)": ["2026-11-07", "2026-11-08"]}
-    out = []
-    for name, ds in phases.items():
-        x = r[r["day"].isin(ds)]
-        out.append({"phase": name, "trades/mkt": x["trades"].sum() / x["markets"].sum(),
-                    "med_fill_usd": x["med_fill_usd"].median(), "med_price": x["med_price"].median(),
-                    "taker_pct": x["taker_pct"].mean(), "gross_bps": x["gross_bps"].mean(),
-                    "net_bps": x["net_bps"].mean(), "rebate_bps": x["rebate_bps"].mean(),
-                    "net_per_mkt": x["net"].sum() / x["markets"].sum()})
-    print(md(pd.DataFrame(out), ".2f"))
+    day_list = sorted(r["day"].unique())
+    if len(day_list) >= 3:
+        print("\nPhase comparison (thirds of the covered span):\n")
+        out = []
+        for phase in split_thirds(day_list):
+            x = r[r["day"].isin(phase)]
+            out.append({"phase": f"{phase[0]} to {phase[-1]}",
+                        "trades/mkt": x["trades"].sum() / x["markets"].sum(),
+                        "med_fill_usd": x["med_fill_usd"].median(), "med_price": x["med_price"].median(),
+                        "taker_pct": x["taker_pct"].mean(), "gross_bps": x["gross_bps"].mean(),
+                        "net_bps": x["net_bps"].mean(), "rebate_bps": x["rebate_bps"].mean(),
+                        "net_per_mkt": x["net"].sum() / x["markets"].sum()})
+        print(md(pd.DataFrame(out), ".2f"))
 
 
 def section_h(tr, m, tok):
-    print("\n## H. Within-market replay\n")
+    _section("H. Within-market replay")
 
     def show(cid, label):
         mm = m.loc[cid]
@@ -545,7 +625,7 @@ def section_h(tr, m, tok):
 
 
 def section_i(tr, m, rb):
-    print("\n## I. Rebate mechanics\n")
+    _section("I. Rebate mechanics")
     r = rb.copy()
     r["day"] = r["ts"].dt.date
     piv = r.pivot_table(index="day", columns="Type", values="USD_Amount", aggfunc="sum").fillna(0)
@@ -565,18 +645,51 @@ def section_i(tr, m, rb):
 
 
 def main():
+    try:
+        run()
+    except Exception as exc:
+        print(f"Cannot analyse {PATH}: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def run():
+    if not os.path.isfile(PATH):
+        sys.exit(
+            f"Ledger not found: {PATH}\n"
+            "Pass a ledger .csv path, set TRADES_CSV, or pull one first with "
+            "save-trades-to-csv.py."
+        )
+    if os.path.getsize(PATH) == 0:
+        sys.exit(f"Ledger is empty: {PATH}")
     df, tr, rd, rb = load()
     tok, m = build_markets(tr, rd)
-    print("# Weekly strategy reverse-engineering - computed sections")
-    section_a(df, tr, rd, rb, m)
-    section_b(tr, m)
-    section_c(m, rb)
-    section_d(tr, m)
-    section_e(tr, m)
-    section_f(tr, m)
-    section_g(tr, m, rb)
-    section_h(tr, m, tok)
-    section_i(tr, m, rb)
+    if tr.empty:
+        sys.exit(f"No TRADE rows in {PATH}; nothing to analyse.")
+    target = analysis_target(PATH, "_strategy.md")
+    tmp = target.with_name(target.name + ".tmp")
+    original = sys.stdout
+    try:
+        with open(tmp, "w", encoding="utf-8") as handle:
+            sys.stdout = Tee(original, handle)
+            try:
+                print("# Strategy reverse-engineering - computed sections")
+                _kv("Ledger", PATH)
+                section_a(df, tr, rd, rb, m)
+                section_b(tr, m)
+                section_c(m, rb)
+                section_d(tr, m)
+                section_e(tr, m)
+                section_f(tr, m)
+                section_g(tr, m, rb)
+                section_h(tr, m, tok)
+                section_i(tr, m, rb)
+            finally:
+                sys.stdout = original
+        os.replace(tmp, target)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    print(f"\nWrote {target}")
 
 
 if __name__ == "__main__":

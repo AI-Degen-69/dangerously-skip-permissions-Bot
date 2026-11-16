@@ -1,8 +1,10 @@
 # Wallet mechanics — what `0xc533…d69a9` actually does
 
-Source: `scratch/trades_full_history.csv` (the ledger) — 1,191,338 rows,
-2026-07-17 → 2026-11-08, 31,506 markets, wallet
-`0xc53375ff94e96100f2b30a4b5775db35218d69a9`.
+Source: the wallet's full-history ledger, 1,191,338 rows, 2026-07-17 →
+2026-11-08, 31,506 markets, wallet
+`0xc53375ff94e96100f2b30a4b5775db35218d69a9`. Repull it with
+`save-trades-to-csv.py -u dangerously-skip-permissions -d max`; it lands in
+`<account>/<short-tag>_<range>.csv`.
 
 Method: every number below is recomputed from the ledger, not from the HTML
 reports. Fills only — the ledger records what was **filled**, never what was
@@ -10,8 +12,7 @@ quoted. Prices are the printed fill price. P&L treats the book as held to
 resolution: `winning_shares − cost`, fees at `0.07 · p · (1−p)` per share
 weighted for the taker share of cash (76.8%).
 
-Reproduce with `docs/leaderboard-traders/scripts/analyze_mechanics.py`,
-`analyze_first_leg.py`, `analyze_levels.py`, `analyze_sequence.py`.
+Reproduce with `docs/leaderboard-traders/scripts/analyze_mechanics.py <ledger.csv>`.
 
 ---
 
@@ -115,33 +116,43 @@ Fills at prices exactly on the 5c grid: **80,548**, against ~226,000 at each of
 the four other cent residues (0.35×). It sits just inside the round level, where
 the queue is shortest — not on it.
 
-## 7. Economics: the trading loses money, the rebate pays
+## 7. Economics: the trading is positive before rebates
 
 | | |
 |---|---|
-| gross trading | +$161,292 (**+119 bps**) |
-| fees | −$309,585 (**−228 bps**) |
-| **net before rebate** | **−$148,293 (−109 bps)** |
-| rebates (taker $149.7k + maker $18.4k) | +$168,081 (**+124 bps**) |
-| **net** | **+$19,788 (+15 bps)** |
+| trade cash out | $13,643,474 |
+| fees inside that | $311,814 (**228 bps**) |
+| redeem cash in | $13,764,713 |
+| **net before rebate** | **+$121,239 (+89 bps)** |
+| rebates (taker $149.7k + maker $18.4k) | +$168,081 (**+123 bps**) |
+| **net** | **+$289,319 (+212 bps)** |
 
-The taker rebate is ~48% of the modelled taker fee, which independently confirms
-the fee model. This wallet is a **near-zero-sum volume machine kept alive by
-rebates**. Copying its trading copies a −109 bps business.
+The fee premium is already inside the cash out, so the net line is after fees.
+An earlier version of this table subtracted the modelled fee a second time and
+reported **−109 bps**; that was arithmetic, not a finding. The wallet is not a
+zero-sum volume machine kept alive by rebates — its trading earns about +89 bps
+on its own, and the rebate adds roughly another +123 bps.
+
+Basis: every market the wallet touched (31,506), with the 1,763 positions it let
+expire worthless counted at −cost. Restricting to markets it redeemed from
+(29,739) lifts the pre-rebate figure to about +119 bps, because those dropped
+markets are all losses.
 
 ### P&L by when the first leg happened
 
 | first leg at | n | net > 0 | net median bps |
 |---|---|---|---|
-| 0–15 s | 16,909 | 45.8% | **−168** |
-| 16–30 s | 4,851 | 49.4% | −41 |
-| 31–60 s | 3,272 | 54.2% | +329 |
-| 61–120 s | 2,773 | 56.3% | +571 |
-| >120 s | 1,934 | 60.0% | **+1,091** |
+| 0–15 s | 17,089 | 50.9% | +31 |
+| 16–30 s | 5,095 | 50.8% | +46 |
+| 31–60 s | 3,595 | 52.2% | **+157** |
+| 61–120 s | 3,255 | 50.1% | +5 |
+| >120 s | 2,468 | 48.6% | **−159** |
 
-Early entry is its **worst** cell. The caveat is real: when the wallet's first
-trade is late it was idle in that market, so this is a selection effect as much
-as timing skill. It is not a licence to build a "wait 90 s" rule.
+No clean timing edge. The median is small in every bucket and the *late* one is
+the worst, the opposite of what this table said before the fee and settlement
+fixes. The old reading came from dropping the 1,763 expired-worthless markets,
+which were all losses. Treat timing as unresolved; the caveat about market
+selection cuts both ways.
 
 ---
 
@@ -214,8 +225,8 @@ Recorded because they shaped v2.6 and are now known to be wrong.
 
 | earlier claim | what the ledger says |
 |---|---|
-| "the wallet enters at the money immediately; first fill 0.50 at +13 s" | true as a median, **but that is its worst-performing cell** (0–15 s, net med −168 bps) |
-| "net-of-fee trading +88 bps" | **−109 bps before rebate**, +15 bps with it. The +88 figure does not survive recomputation |
+| "the wallet enters at the money immediately; first fill 0.50 at +13 s" | true as a median, but timing carries **no clean edge**: the median net is small in every bucket and the *late* one is worst (+31 / +46 / +157 / +5 / −159 bps) |
+| "net-of-fee trading +88 bps" | **+89 bps before rebate**, +212 bps with it. The +88 figure was right; the −109 bps that replaced it subtracted the fee premium twice |
 | "queue at the touch is 1,000+ shares, a clip can never fill" | that was one cherry-picked level. Aggregate queue at our placements is **p50 50 shares**, 14% under 10 |
 | "the 7c ladder belongs to the completing side" | the wallet never buys 33 sh at 7c. It buys **30 sh at every extreme** and **48.7 sh at the money** — the curve is a hump |
 | "the hedge should rest and wait, so move the entry band to 0.55" | the resting hedge is right for *pair completion*; the 0.55 ceiling is still wrong, and the **sizing curve matters more than the ceiling** |
@@ -240,8 +251,9 @@ Ranked by evidence strength, not by size of change.
 4. **Do not add a time gate yet.** The late-entry advantage is confounded by
    market selection. Test it on the paper desk by recording the counterfactual,
    not by hard-coding +90 s.
-5. **Do not copy the taker behaviour.** At ~$5/window our fee arithmetic cannot
-   absorb it; their taker business is what the rebate subsidises.
+5. **Do not copy the taker behaviour yet.** Their taker flow still clears +89 bps
+   after 228 bps of fees, which our ~$5/window arithmetic does not reproduce. The
+   rebate is a second income stream (+123 bps), not a subsidy for a losing book.
 
 ## 12. Open questions
 
