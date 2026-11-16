@@ -508,7 +508,7 @@ export const STRATEGY_PRESETS = {
     symbol: 'H2 Hydrogen-v1.8',
     name: 'Hydrogen v1.8',
     signature: '3-Layer Split Ladder (10→8 sh) · 3-Layer Defense (Heavy Gate + Breakout Taker) · Dollar Gap Cap ($15.00) · Max Buy 85¢',
-    description: 'Accumulates both sides from the open: 2-level off-touch split ladder (-1c, -2c; 10 sh at the open decaying to 8 sh by T+120s) in the 42–58c ATM band with Heavy-Side Floor Gate (<45c when >=10 sh heavy); a 3-layer breakout defense: balanced entries stay in 42–58c under $0.985 pair cost (heavy floor gate blocks <45c above 10 sh lead); rebalance-maker bypasses pair-cost skips up to 85c; breakout rebalance-taker flattens 60–68c ask deficits immediately; never more than $15.00 of unhedged cost. Late gaps are swept with resting no-fee orders. No heavy bulk fills.',
+    description: 'Accumulates both sides from the open: 2-level off-touch split ladder (-1c, -2c; 10 sh at the open decaying to 8 sh by T+120s) in the 42–58c ATM band with Heavy-Side Floor Gate (<45c when >=10 sh heavy); a 3-layer breakout defense: balanced entries stay in 42–58c under $0.995 pair cost (heavy floor gate blocks <45c above 10 sh lead); rebalance-maker bypasses pair-cost skips up to 85c; breakout rebalance-taker flattens 60–68c ask deficits immediately; never more than $15.00 of unhedged cost. Late gaps are swept with resting no-fee orders. No heavy bulk fills.',
     entry: {
       clipSharesDefault: 5,
       maxShares: 10,
@@ -520,7 +520,7 @@ export const STRATEGY_PRESETS = {
       levelSpacing: 0.01,
       benchmarkPairCost: 0.960,
       targetPairCost: 0.960,
-      maxPairCost: 0.985,
+      maxPairCost: 0.995,
       maxUnhedgedShares: 25,
       maxUnhedgedUsd: 15.0,
       startAfterOpenSec: 4,
