@@ -246,6 +246,9 @@ export function Dashboard() {
     tier.rate,
     includeRebates,
   )
+  // Best / Worst / Average sit under the "Last N Windows" heading next to the
+  // 24-bar strip, so scope them to the same trailing slice.
+  const barStats = computeKpiStats(scoped.windows.slice(-24), baseCapital, undefined, tier.rate, includeRebates)
   const currentCapital = stats.currentCapital
   const attainable = attainableOf(scoped.windows)
   // Segment widths for the win/loss bar, so the tick labels above it land on
@@ -508,17 +511,17 @@ export function Dashboard() {
                     Last {Math.min(scoped.windows.length, 24)} Windows
                   </span>
                   <span className="font-mono text-[11.5px] tabular-nums text-faint">
-                    Best{' '}
+                                          Best{' '}
                     <span className="text-success">
-                      {stats.bestUsd > 0 ? `+${usd(stats.bestUsd)}` : usd(stats.bestUsd)}
+                      {barStats.bestUsd > 0 ? `+${usd(barStats.bestUsd)}` : usd(barStats.bestUsd)}
                     </span>
                     {' · '}
                     Worst{' '}
-                    <span className="text-danger">{usd(stats.worstUsd)}</span>
+                    <span className="text-danger">{usd(barStats.worstUsd)}</span>
                     {' · '}
                     Average{' '}
-                    <span className={stats.expectancyUsd >= 0 ? 'text-success' : 'text-danger'}>
-                      {stats.expectancyUsd > 0 ? `+${usd(stats.expectancyUsd)}` : usd(stats.expectancyUsd)}
+                    <span className={barStats.expectancyUsd >= 0 ? 'text-success' : 'text-danger'}>
+                      {barStats.expectancyUsd > 0 ? `+${usd(barStats.expectancyUsd)}` : usd(barStats.expectancyUsd)}
                     </span>
                   </span>
                 </div>
@@ -531,6 +534,9 @@ export function Dashboard() {
             </>
           ) : (
             <div className="mt-3">
+              <div className="mb-2 flex items-center justify-end">
+                <TimeframePicker value={timeframeId} onChange={setTimeframeId} />
+              </div>
               <EmptyState
                 icon={<Target />}
                 title={settled.length > 0 ? 'No settled windows in this timeframe' : 'No settled windows yet'}

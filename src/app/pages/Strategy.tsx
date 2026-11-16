@@ -346,7 +346,7 @@ const TOC_IDS = TOC.flatMap((item) => [item.id, ...item.children.map((child) => 
 
 export function Strategy() {
   const control = useBotControl()
-  const botRunning = Boolean(control.data?.running && !control.data?.isViewOnly)
+  const botRunning = control.data == null ? null : Boolean(control.data.running && !control.data.isViewOnly)
   const setupsQuery = useStrategySetups()
   const allSetups = mergeStrategySetups(setupsQuery.data?.setups, STRATEGY_PRESETS as unknown as Record<string, StrategySetup>)
   const pickedId = control.data?.strategy?.id ?? setupsQuery.data?.activeSetupId
@@ -400,10 +400,16 @@ export function Strategy() {
             <Badge
               tone={picked ? (botRunning ? 'success' : 'neutral') : 'neutral'}
               dot={Boolean(picked)}
-              live={botRunning}
+              live={botRunning === true}
               className="font-mono font-semibold"
             >
-              {picked ? `${picked.symbol} · ${botRunning ? 'Running' : 'Stopped'}` : loading ? 'Reading setup…' : 'Setup unknown'}
+              {picked
+                ? botRunning == null
+                  ? `${picked.symbol} · Checking…`
+                  : `${picked.symbol} · ${botRunning ? 'Running' : 'Stopped'}`
+                : loading
+                  ? 'Reading setup…'
+                  : 'Setup unknown'}
             </Badge>
             <Button variant="outline" size="sm" nativeButton={false} render={<Link to="/config" />}>
               <SlidersHorizontal data-icon="inline-start" className="size-3.5" />
