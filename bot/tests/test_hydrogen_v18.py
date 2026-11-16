@@ -56,6 +56,14 @@ class TestHydrogenV18RegistryAndWiring(unittest.TestCase):
         self.assertEqual(entry["maxFillPrice"], 0.85)
         self.assertEqual(setup["features"].get("sizing"), "split-ladder-v18")
 
+    def test_published_ceiling_matches_enforced_gate(self):
+        # describe_setup must publish the gate the split ladder enforces
+        # (H17_PAIR_SOFT = 0.995), not a stricter unenforced number.
+        _sig, desc, highlights = C.describe_setup(C.STRATEGY_SETUPS["hydrogen-v1.8"])
+        self.assertIn("$0.995", desc)
+        self.assertNotIn("$0.985", desc)
+        self.assertIn("$0.995", highlights["pairGates"])
+
     def test_replay_and_ab_test_mapping(self):
         self.assertEqual(replay.STRATEGY_HYDROGEN, "hydrogen-v1.8")
         self.assertEqual(
@@ -124,8 +132,9 @@ class TestLayer2UnblockedPassiveRebalance(unittest.TestCase):
         self.assertGreater(d.projected_pair_cost, 0.995)
 
     def test_rebalances_outside_atm_even_when_lead_below_big_book_tol(self):
-        # matched=100 -> tol=12, so abs(lead)=5 is under tol inside ATM,
-        # but quotes left ATM (0.39 / 0.61?)Wait: check ask below breakout band (0.59).
+        # matched=100 -> tol=12, so abs(lead)=5 is under tol inside ATM, but the
+        # quotes have already left the 42-58c band and the light ask is still
+        # below the 0.60 breakout taker band, so the passive maker rebalances.
         d = _dec(_q(0.39, 0.41, 0.57, 0.59), _inv(105, 45.0, 100, 50.0))
         self.assertEqual(d.action, "fill")
         self.assertEqual(d.outcome, "Down")
