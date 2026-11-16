@@ -1,26 +1,37 @@
 # Up/Down Paper Trading Desk: User & Operations Guide
 
-Welcome to the **dangerously-skip-permissions** paper trading desk. This system reverse-engineers the 5-minute Bitcoin Up/Down binary options strategy practiced by target Polymarket trader `0xc53375ff94e96100f2b30a4b5775db35218d69a9`.
+Welcome to the **dangerously-skip-permissions** paper trading desk. This system studies the 5-minute Bitcoin Up/Down binary options strategy practiced by target Polymarket trader `0xc53375ff94e96100f2b30a4b5775db35218d69a9`.
 
-The environment runs **100% paper-only**—no live funds, private keys, or wallet connections required.
+The environment runs **100% paper-only**—no live funds, private keys, or wallet connections required. The engine is **maker-first**: it rests bids on both outcomes, manages the queue ahead of each resting clip, and balances inventory instead of blindly taking the ask.
 
 ---
 
 ## 1. Quick Start (Launch Everything in 2 Steps)
 
 ### Step 1: Start the Python Desk API
-The desk API runs a lightweight loopback service on `127.0.0.1:8789`. It coordinates the background execution process, streams WebSocket/REST market data, and manages run-scoped sessions.
+The desk API is a lightweight stdlib loopback service. Its default bind is `127.0.0.1:8789` (set in `bot/api.py` and mirrored in `src/app/lib/bot.ts`); it coordinates the background loop, streams book/print data, and serves run-scoped metrics.
 
 ```bash
-# Terminal 1: Launch Backend API
+# Terminal 1: Launch Backend API (default 127.0.0.1:8789)
 python bot/api.py
+
+# Optional: bind a different port
+python bot/api.py --port 8790
+# If you do, point the UI at it: VITE_BOT_ORIGIN=http://127.0.0.1:8790 bun run dev
 ```
+
 *Verify:* Navigate to `http://127.0.0.1:8789/api/bot/control` in your browser. You should receive a JSON status response (`"running": false`, `"mode": "paper"`).
+
+On Windows, `bot/restart_api.ps1` does a clean restart: it finds any process holding the API port or running `bot/api.py`, stops it, waits until the port is released, spawns a fresh background instance, and verifies the control endpoint responds:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File bot/restart_api.ps1
+```
 
 ---
 
 ### Step 2: Start the Web Desk UI
-The frontend is a React + Vite dashboard.
+The frontend is a React + Vite dashboard with six sections.
 
 ```bash
 # Terminal 2: Launch Frontend Desk
@@ -34,7 +45,7 @@ Open **[http://localhost:5173/](http://localhost:5173/)** in your web browser.
 ### Step 3: Start the Paper Trading Loop
 You can start the trading loop in one of two ways:
 
-- **Via the UI:** Click the blue **`Start bot`** button in the header bar of the **Dashboard** or **Live Desk**.
+- **Via the UI:** Click the blue **`Start bot`** button in the header bar of the **Dashboard** or **Live Desk**, or launch a candidate run from **A/B Lab**.
 - **Via the Terminal (Manual / Headless):**
   ```bash
   # Continuous loop across all 5-minute windows:
@@ -45,13 +56,32 @@ You can start the trading loop in one of two ways:
 
   # Target an explicit 5-minute epoch:
   python bot/live_paper.py --slot 1794086700
+
+  # Name the run workspace explicitly:
+  python bot/live_paper.py --loop --run-id run_20261116_103120_paper_h2_hydrogen_v1_8
   ```
+
+### Step 4: Analyze a Run Offline (no live feed needed)
+Every run records a tape of book snapshots and trade prints under `bot/runs/<run_id>/tape/`. You can replay it deterministically or re-audit fills without touching the live engine:
+
+```bash
+# Counterfactual replay of one recorded run with a placement rule:
+python -m bot.replay --run bot/runs/run_20261113_080232_paper_dsp_v2_6 --rule v2.6
+
+# Replay every recorded run (canned v2.7 / hydrogen rules also available):
+python -m bot.replay --runs all --rule hydrogen
+
+# Re-stamp a whole run's verified / attainable verdicts from its tape:
+python bot/verify_run.py --run-id run_20261116_103120_paper_h2_hydrogen_v1_8 --audit
+```
+
+Replay never reads a window's own fills to drive the simulation—only its condition id, slug (start epoch), and winner for scoring. Fills are re-derived from the recorded book and prints via `bot.fill_model`.
 
 ---
 
 ## 2. Navigating the Desk UI
 
-The web desk consists of 4 main sections accessible from the sidebar navigation:
+The web desk consists of **6 sections** accessible from the sidebar navigation: Dashboard, Live Desk, A/B Lab, Config, Strategy, and Settings.
 
 ### 1. Dashboard (`/`) — Performance & Run History
 The command center for analyzing execution performance across settled windows.
@@ -90,42 +120,52 @@ The command center for analyzing execution performance across settled windows.
 Watch the bot make trading decisions live inside the active 5-minute window.
 
 - **Connection Health Badges:**
-  - `WSS Live (<40ms)`: Live streaming orderbook connected to Polymarket CLOB.
+  - `WSS Live (<40ms)`: Live streaming orderbook connected to Polymarket CLOB (`book`, `price_change`, and `last_trade_price` trade prints).
   - `REST Fallback`: Active background polling (1.0s–1.5s cadence) if WebSocket is stale.
 - **Interactive Depth & Book Panel:**
   - Displays real-time bid/ask prices and depth for both the **Up** and **Down** contracts.
 - **Live Fills Feed:**
-  - Streams every execution ticket: exact minute (M0–M4), outcome, price (cents), shares, and total cost.
+  - Streams every execution ticket: exact minute (M0–M4), outcome, role (maker/taker), price (cents), shares, and total cost.
 - **Pause / Resume Entries Button:**
   - Toggles the soft kill-switch on the fly without stopping the bot process.
 
 ---
 
-### 3. Config (`/config`) — Parameters & Risk Guardrails
-Allows adjusting strategy parameters and safety limits. All values are automatically validated and clamped to safe boundaries.
+### 3. A/B Lab (`/ab-test`) — Run & Setup Comparison
+Run a statistical hypothesis test between a **baseline** run and a **candidate** run/setup.
 
-- **Entry Settings:**
-  - `clipSharesDefault`: Default order clip size (default: 30 shares).
-  - `medianShares`: Target median fill size (default: 13.86 shares).
-  - `maxShares`: Absolute ceiling per clip (default: 50 shares).
-  - `openDelaySec`: Delay after window open before entering initial lean (default: 13s).
-  - `hedgeDelaySec`: Delay before taking the hedge leg for the straddle (default: 15s).
-  - `stopBeforeCloseSec`: Cutoff before window expiry to hold to redeem (default: 15s).
-  - `leanSource`: `microprice` (dynamic alpha) or `dumb` (neutral 50/50 straddle).
-- **Risk Settings:**
-  - `dailyLossCapUsd`: Cumulative daily stop-loss trigger (default: $500).
-  - `maxConcurrentPositions`: Number of simultaneous windows traded (fixed at 1).
-- **Emergency Kill-Switch Card:**
-  - Immediate red button to freeze all new orders.
+- Pick the baseline and candidate by run id or by any entry in `STRATEGY_SETUPS`; a candidate can be launched directly from the page ("Launch Candidate Run (B)") to start gathering samples live.
+- **Welch's one-tailed two-sample t-test** (α = 0.05, 80% power) over *active* windows only (`fills > 0`); zero-fill windows are excluded. The page shows the t-statistic against its dynamic critical value, the rejection boundary `μcrit = μA + tcrit · SE`, means, quartiles, win rate and P&L histograms for both arms. Three gates must pass before promotion: sample size (120 active windows), paired-window coverage (60) and sub-dollar pairs (35).
+- **Pair cost** is broken into buckets (`<$0.96`, `$0.96–$1.00`, `>$1.00`) alongside paired-window and sub-$1.00 progress; this is the cost of locking both sides, not a P&L figure.
+- **Fee-basis toggle:** switch rebates in or out using the account-tier rebate rate (`includeRebates`), so the comparison can be read gross or net of modeled taker rebates. Archived / tainted runs are excluded by `bot/ab_test.py`.
 
 ---
 
-### 4. Strategy (`/strategy`) — Technical Breakdown
-An interactive educational breakdown explaining the 5-minute window mechanics:
-- **Phase 0 (pre-open):** Warm the live book and the tape before the bell. Nothing is booked here — entries start `startAfterOpenSec` after the window opens, and a pre-open price is not a fill.
-- **Phase 1 (opening):** Rest a bid on both contracts, and the order fills first at the opening clip. The opposing leg is a resting bid, not a promise: it becomes a fill only when someone sells into it, and a leg only opens when the opposite ask already completes the pair under the pair-cost cap.
-- **Phase 2 (M1–M3):** Event-driven clipping up to ~45 fills as liquidity refreshes.
-- **Phase 3 (M4):** Fade execution before window close, hold to settlement, and redeem at $1.00 for winning shares.
+### 4. Config (`/config`) — Setup & Risk Guardrails
+Select the active strategy setup and adjust its parameters. `STRATEGY_SETUPS` in `bot/constants.py` is the source of truth: its `signature`, `description`, and `configHighlights` are generated from the entry numbers, so the setup cards stay in sync with the engine. All values are validated and clamped.
+
+- **Strategy setup selector:** choose among the versioned registry entries—`hapcs-v1`, `dangerously-skip-permissions` and `v2.1`–`v2.7`, and the `hydrogen-v1.0`–`v1.8` line (currently `hydrogen-v1.8`). The active id is written to `bot/config.json` and served by `/api/bot/strategy-setups`.
+- **Microstructure ladder & dip curve:** `levelsPerSide` and `levelSpacing` (off-touch levels, e.g. 2 levels at −1¢ / −2¢), `clipSchedule` (e.g. 10→8 shares after T+120s), `wholeLadderClips`, `dipCurve` (`hump` or `{lo, hi, sharesLo, sharesHi}` anchors), plus `minFillPrice` / `maxFillPrice`, `minSpacingMoveSec`, `minSpacingStaticSec`, and `staticRequoteSec`.
+- **Pair-cost caps:** `targetPairCost` (~$0.960), `maxPairCost` (~$0.985) and `rescuePairCostMax` (~$1.02, the late-rescue ceiling). A pair leg opens only when the opposite ask completes it under the applicable cap.
+- **Unhedged inventory caps:** `maxUnhedgedShares` and `maxUnhedgedUsd` bound the light-side lead between hedges.
+- **`hydrogen-v1.8` three-layer imbalance defense** (documented in the setup's highlights): a **heavy-side floor gate** blocks fresh bids below 45¢ when the lead is ≥10 shares inside the 0.42–0.58 ATM band; an **unblocked rebalance-maker** bypasses pair-cost skips up to 85¢ to close a deficit passively; and an emergency **breakout rebalance-taker** crosses 60–68¢ ask when the book runs away.
+- **Timing & risk:** `startAfterOpenSec`, `stopBeforeCloseSec`, `sweepBeforeCloseSec`, `bankrollUsd`, `dailyLossCapUsd`, `maxFillsPerWindow`, and `maxConcurrentPositions` (fixed at 1).
+- **Emergency Kill-Switch Card:** immediate red button to freeze all new orders.
+
+---
+
+### 5. Strategy (`/strategy`) — Technical Breakdown
+An interactive explanation of how the maker-first engine works, with the live setup's own numbers injected from `STRATEGY_SETUPS`.
+
+- **Resting ladders, not a taker schedule:** bids are rested off the touch on both outcomes (e.g. two levels at −1¢ and −2¢ with 10→8 share scheduled clips). A clip becomes a fill only when someone sells into it; the engine never assumes the touch was first in line.
+- **Queue-ahead fill mechanics:** every resting clip records how many shares were already ahead of it at that price. Only taker **SELL** prints (or a complementary BUY on the opposite outcome at `1 − price`) consume that queue first, then the clip. A fill is *verified* when the tape traded your size, *attainable* when the queue could actually have cleared, and *phantom* when the window's tape is complete and it never could.
+- **Inventory balancing:** the engine pairs legs only under the target/max pair-cost caps, then equalizes any remaining deficit with lighter-side maker clips or a patient hedge on the other side. Unhedged lead is bounded by `maxUnhedgedShares` / `maxUnhedgedUsd`, and `hydrogen-v1.8` adds the heavy-side floor gate, unblocked rebalance-maker and breakout rebalance-taker so a breakout cannot strand the position.
+- **Fees & settlement:** passive maker fills pay 0%; taker fills pay the parabolic fee `0.07 · p · (1 − p)` (peaking at 1.75¢/share at 50¢). Inside the 7¢ price floor and the ATM mid-band, the loop only equalizes an existing imbalance; near the close it stops adding and holds winning shares to redeem at $1.00.
+
+---
+
+### 6. Settings (`/settings`) — Workspace & Account
+The general workspace page (not bot-specific): shows the signed-in account and sign-out, lets you rename the workspace, reports connection status for D1 database, R2 file storage and sign-in, and offers destructive **Restore sample data** / **Clear workspace** actions behind confirmation dialogs. Paper-trading controls live in Config, Live Desk and A/B Lab instead.
 
 ---
 
@@ -135,21 +175,49 @@ All bot state, runs, and artifacts live under the `bot/` directory:
 
 ```
 bot/
-├── api.py               # Loopback HTTP server (port 8789)
-├── live_paper.py        # Core execution loop & window manager
-├── ws.py                # Polymarket CLOB & Binance WebSocket engine
-├── signal.py            # Microprice & lean signal calculation
-├── risk.py              # Loss caps, single-window guards, kill-switch
-├── runs/                # Run-scoped session workspaces
-│   ├── active_run.json  # Pointer to currently active run ID
-│   └── run_20261108_... # Session folder:
-│       ├── run_meta.json  # Run status, started/ended timestamps, config snapshot
-│       ├── events.jsonl   # Decision journal for this session
-│       ├── loop.log       # Output log of the loop process
-│       └── windows/       # Settled window JSON results
-├── state.json           # Live fills & heartbeat of active window
-├── events.jsonl         # Global event audit trail
-└── config.json          # Active parameters
+├── api.py                  # Loopback HTTP desk API (default port 8789)
+├── restart_api.ps1         # Windows: clean stop/verify/restart of the desk API
+├── live_paper.py           # Window lifecycle, resting-order + queue-ahead management
+├── executor.py             # Microstructure ladder evaluation, pair-cost gates, rebalance logic
+├── constants.py            # Versioned STRATEGY_SETUPS registry (single source of truth)
+├── signal.py               # Microprice & lean signal calculation
+├── risk.py                 # Loss caps, single-window guards, kill-switch, clip sizing
+├── ws.py                   # CLOB WebSocket (book / price_change / last_trade_price) + tape writer
+├── discovery.py            # Polymarket Gamma 5m window discovery; REST fallback reads
+├── fill_model.py           # Queue-ahead maker fill matching (SELL print / binary complement)
+├── fill_audit.py           # Attainability auditing of maker fills against recorded prints
+├── tape_recorder.py        # Sidecar tape recorder (book + prints, size-rotated segments)
+├── tape_verifier.py        # Verified-only tape check of maker fills
+├── replay.py               # Deterministic offline counterfactual replay of a recorded tape
+├── ab_test.py              # Welch t-test run/setup comparison + promotion gates
+├── runs.py                 # Run workspace manager & tape segment reader
+├── verify_run.py           # Re-stamp a whole run's tape verdicts offline
+├── reconcile.py            # Fidelity comparison vs the target wallet
+├── redeem.py               # Hold-to-redeem settlement helpers
+├── run_paper.py            # Batch / offline paper run helper
+├── config.json             # Active strategy + entry + risk parameters
+├── RUNBOOK.md              # Engine runbook
+├── state.json              # Live fills & heartbeat of the active window
+├── events.jsonl            # Global event audit trail
+├── loop.pid / loop.log     # Active loop process id / output
+├── kill                    # Soft kill-switch flag (touch to pause entries)
+├── tests/                  # pytest suite
+└── runs/
+    ├── active_run.json     # Pointer to the active run ID
+    └── run_YYYYMMDD_HHMMSS_paper_<setup>/
+        ├── run_meta.json   # Status, started/ended timestamps, config snapshot, summary
+        ├── events.jsonl    # Decision journal for this run
+        ├── decisions.jsonl # Uncensored per-evaluation engine log (quotes + guards)
+        ├── summary.json    # Session KPIs
+        ├── loop.pid
+        ├── loop.log
+        ├── windows/        # Settled window JSON results
+        └── tape/           # Recorded market tape (book snapshots + trade prints)
+            ├── book.jsonl
+            ├── prints.jsonl
+            ├── book.<epoch>.jsonl   # Size-rotated segments (128 MB book / 32 MB prints)
+            ├── prints.<epoch>.jsonl
+            └── .tape_stats.json     # Incremental byte counts (avoids rescanning multi-GB tapes)
 ```
 
 ---
@@ -172,13 +240,14 @@ The bot loop checks `bot/kill` before every entry and window transition, safely 
 ### Stopping & Resetting
 - **Stop:** Click **`Stop bot`** in the UI header, or press `Ctrl + C` in the terminal.
 - **Reset:** Click the reset icon (`RotateCcw`) in the UI header. This resets active state, clears current paper runs, and restores the initial paper bankroll.
+- **Clean API restart (Windows):** `powershell -ExecutionPolicy Bypass -File bot/restart_api.ps1`.
 
 ### Running Automated Health Tests
-To verify all engine components, run the test suites:
+To verify all engine components, run the Python suite and the frontend typecheck:
 
 ```bash
-# Run all Python unit & integration tests (53 tests):
-python -m unittest discover -s bot/tests
+# Run all Python unit & integration tests:
+python -X utf8 -m pytest bot/tests -q
 
 # Run frontend typecheck:
 bun run typecheck
