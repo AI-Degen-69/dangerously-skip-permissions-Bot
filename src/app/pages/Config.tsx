@@ -458,6 +458,7 @@ export function Config() {
                               value={value}
                               onChange={(event) => set(field.path, event.target.value)}
                               aria-invalid={fieldError !== undefined || undefined}
+                              aria-describedby={fieldError ? `${field.path}-error` : field.hint ? `${field.path}-hint` : undefined}
                               className="font-mono tabular-nums"
                             />
                             <InputGroupAddon align="inline-end">
@@ -473,9 +474,9 @@ export function Config() {
                             </InputGroupAddon>
                           </InputGroup>
                           {fieldError ? (
-                            <FieldError className="text-xs">{fieldError}</FieldError>
+                            <FieldError id={`${field.path}-error`} className="text-xs">{fieldError}</FieldError>
                           ) : field.hint ? (
-                            <FieldDescription className="text-xs">{field.hint}</FieldDescription>
+                            <FieldDescription id={`${field.path}-hint`} className="text-xs">{field.hint}</FieldDescription>
                           ) : null}
                         </Field>
                       )

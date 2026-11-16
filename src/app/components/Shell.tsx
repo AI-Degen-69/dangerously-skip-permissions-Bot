@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   Moon,
   Search,
+  Settings,
   SlidersHorizontal,
   Sun,
   TrendingUp,
@@ -31,6 +32,7 @@ import {
   SidebarProvider,
   SidebarRail,
   SidebarTrigger,
+  useSidebar,
 } from '@/components/ui/sidebar'
 import { cn } from '@/lib/utils'
 import { useBotControl } from '../lib/bot'
@@ -43,6 +45,7 @@ const links = [
   { to: '/ab-test', label: 'A/B Testing', icon: FlaskConical },
   { to: '/config', label: 'Configuration', icon: SlidersHorizontal },
   { to: '/strategy', label: 'Strategy', icon: BookOpen },
+  { to: '/settings', label: 'Settings', icon: Settings },
 ]
 
 function getInitialTheme(): 'dark' | 'light' {
@@ -50,6 +53,61 @@ function getInitialTheme(): 'dark' | 'light' {
   const saved = localStorage.getItem('bot-theme')
   if (saved === 'dark' || saved === 'light') return saved
   return 'dark'
+}
+
+function SidebarNavLinks({
+  pathname,
+  botRunning,
+  executionModeLabel,
+  isRealMode,
+}: {
+  pathname: string
+  botRunning: boolean
+  executionModeLabel: string
+  isRealMode: boolean
+}) {
+  const { isMobile, setOpenMobile } = useSidebar()
+  return (
+    <>
+      {links.map(({ to, label, icon: Icon, end }) => {
+        const active = end ? pathname === to : pathname === to || pathname.startsWith(`${to}/`)
+        const isLiveLink = to === '/live'
+        const liveStatusLabel = `${executionModeLabel} · ${botRunning ? 'Bot running' : 'Bot stopped'}`
+        return (
+          <SidebarMenuItem key={to}>
+            <SidebarMenuButton
+              isActive={active}
+              tooltip={isLiveLink ? `${label} · ${liveStatusLabel}` : label}
+              render={<NavLink to={to} end={end} />}
+              className={isLiveLink ? 'pr-20' : undefined}
+              onClick={() => {
+                if (isMobile) setOpenMobile(false)
+              }}
+            >
+              <Icon />
+              <span>{label}</span>
+            </SidebarMenuButton>
+            {isLiveLink && (
+              <div className="pointer-events-none absolute top-1/2 right-2 flex -translate-y-1/2 items-center gap-1.5 group-data-[collapsible=icon]:top-1 group-data-[collapsible=icon]:right-1 group-data-[collapsible=icon]:translate-y-0">
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    'h-4 px-1.5 font-mono text-[9.5px] font-semibold tracking-wider uppercase group-data-[collapsible=icon]:hidden',
+                    isRealMode
+                      ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                      : 'border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+                  )}
+                >
+                  {executionModeLabel}
+                </Badge>
+                <StatusDot tone={botRunning ? 'live' : 'stopped'} size="sm" label={liveStatusLabel} />
+              </div>
+            )}
+          </SidebarMenuItem>
+        )
+      })}
+    </>
+  )
 }
 
 export function Shell() {
@@ -136,46 +194,12 @@ export function Shell() {
             <SidebarGroupLabel>Desk</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {links.map(({ to, label, icon: Icon, end }) => {
-                  const active = end
-                    ? location.pathname === to
-                    : location.pathname === to || location.pathname.startsWith(`${to}/`)
-                  const isLiveLink = to === '/live'
-                  const liveStatusLabel = `${executionModeLabel} · ${botRunning ? 'Bot running' : 'Bot stopped'}`
-                  return (
-                    <SidebarMenuItem key={to}>
-                      <SidebarMenuButton
-                        isActive={active}
-                        tooltip={isLiveLink ? `${label} · ${liveStatusLabel}` : label}
-                        render={<NavLink to={to} end={end} />}
-                        className={isLiveLink ? 'pr-20' : undefined}
-                      >
-                        <Icon />
-                        <span>{label}</span>
-                      </SidebarMenuButton>
-                      {isLiveLink && (
-                        <div className="pointer-events-none absolute top-1/2 right-2 flex -translate-y-1/2 items-center gap-1.5 group-data-[collapsible=icon]:top-1 group-data-[collapsible=icon]:right-1 group-data-[collapsible=icon]:translate-y-0">
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              'h-4 px-1.5 font-mono text-[9.5px] font-semibold tracking-wider uppercase group-data-[collapsible=icon]:hidden',
-                              isRealMode
-                                ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-                                : 'border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-400',
-                            )}
-                          >
-                            {executionModeLabel}
-                          </Badge>
-                          <StatusDot
-                            tone={botRunning ? 'live' : 'stopped'}
-                            size="sm"
-                            label={liveStatusLabel}
-                          />
-                        </div>
-                      )}
-                    </SidebarMenuItem>
-                  )
-                })}
+                <SidebarNavLinks
+                  pathname={location.pathname}
+                  botRunning={botRunning}
+                  executionModeLabel={executionModeLabel}
+                  isRealMode={isRealMode}
+                />
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
