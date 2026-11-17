@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>מנוע סיכוני מלאי מכויל מיקרו-מבנה — הסבר ויזואלי וסימולטור</title>
+<!-- KaTeX Stylesheet -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+<style>
+  :root {
+    --bg: #0b0e14;
+    --panel: #12161f;
+    --panel2: #171c28;
+    --line: #232a3a;
+    --txt: #e8ecf4;
+    --mut: #9aa4b8;
+    --good: #34d399;
+    --bad: #f87171;
+    --warn: #fbbf24;
+    --accent: #7c9aff;
+    --cyan: #38bdf8;
+    --code-bg: #0e1420;
+    --radius: 12px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background-color: var(--bg);
+    color: var(--txt);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans Hebrew", Arial, sans-serif;
+    line-height: 1.75;
+    padding: 24px 16px 80px;
+  }
+
+  .wrap { max-width: 1080px; margin: 0 auto; }
+
+  header {
+    text-align: right;
+    margin-bottom: 28px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 3px 12px;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    background: rgba(124, 154, 255, 0.15);
+    color: var(--accent);
+    margin-bottom: 10px;
+  }
+
+  h1 { font-size: 2.1rem; margin-bottom: 6px; color: #fff; }
+  .sub { color: var(--mut); font-size: 1.05rem; margin-bottom: 20px; }
+
+  /* Top Stat Grid */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+    margin: 20px 0 32px;
+  }
+
+  .stat {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+  }
+
+  .stat b { display: block; font-size: 1.5rem; font-weight: 800; }
+  .stat span { color: var(--mut); font-size: 0.85rem; }
+
+  .good { color: var(--good); }
+  .bad { color: var(--bad); }
+  .warn { color: var(--warn); }
+  .acc { color: var(--accent); }
+
+  h2 {
+    font-size: 1.4rem;
+    margin: 36px 0 14px;
+    display: flex;
+    align-items: center;
+    color: #fff;
+  }
+
+  h2 .n {
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #0b0e14;
+    font-weight: 800;
+    align-items: center;
+    justify-content: center;
+    margin-left: 10px;
+    font-size: 0.95rem;
+  }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    margin: 14px 0;
+  }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+
+  @media (max-width: 768px) {
+    .grid-2 { grid-template-columns: 1fr; }
+  }
+
+  /* BiDi & Code Isolation */
+  code, .num {
+    direction: ltr;
+    unicode-bidi: isolate;
+    display: inline-block;
+    font-family: Consolas, "Courier New", monospace;
+  }
+
+  code {
+    background: var(--code-bg);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 1px 7px;
+    font-size: 0.9em;
+    color: #93c5fd;
+  }
+
+  .katex-display {
+    direction: ltr !important;
+    unicode-bidi: isolate !important;
+    margin: 0.5em 0 !important;
+    text-align: center;
+  }
+
+  .katex {
+    direction: ltr !important;
+    unicode-bidi: isolate !important;
+    font-size: 1.15em !important;
+    color: #93c5fd;
+  }
+
+  .callout {
+    border-right: 4px solid var(--warn);
+    background: rgba(251, 191, 36, 0.08);
+    padding: 12px 16px;
+    border-radius: 8px;
+    margin: 14px 0;
+    font-size: 0.95rem;
+  }
+
+  /* 5-Step Pipeline */
+  .step-flow { display: flex; flex-direction: column; gap: 12px; margin: 14px 0; }
+
+  .step-row {
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px 20px;
+    display: grid;
+    grid-template-columns: 50px 180px 1.2fr 1.3fr;
+    align-items: center;
+    gap: 16px;
+  }
+
+  @media (max-width: 900px) {
+    .step-row { grid-template-columns: 1fr; gap: 10px; }
+  }
+
+  .step-idx { font-size: 1.5rem; font-weight: 800; color: var(--accent); }
+  .step-name { font-weight: 700; color: #fff; font-size: 1.05rem; }
+  .step-calc { background: var(--code-bg); padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line); overflow-x: auto; }
+  .step-why { font-size: 0.88rem; color: var(--mut); line-height: 1.6; }
+
+  /* Interactive Simulator */
+  .sim-box {
+    background: var(--panel);
+    border: 1px solid #2b3a4f;
+    border-radius: var(--radius);
+    padding: 22px;
+    margin: 20px 0;
+  }
+
+  .sim-grid {
+    display: grid;
+    grid-template-columns: 1fr 1.15fr;
+    gap: 22px;
+  }
+
+  @media (max-width: 860px) {
+    .sim-grid { grid-template-columns: 1fr; }
+  }
+
+  .ctrl-item { margin-bottom: 14px; }
+  .ctrl-head {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--mut);
+    margin-bottom: 4px;
+  }
+
+  input[type=range] {
+    width: 100%;
+    height: 6px;
+    background: #232a3a;
+    border-radius: 4px;
+    outline: none;
+    -webkit-appearance: none;
+  }
+
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+  }
+
+  .out-panel {
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px 18px;
+  }
+
+  .metric-line {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    font-size: 0.95rem;
+  }
+
+  .metric-line:last-child { border-bottom: none; }
+
+  .bar-ladder {
+    margin-top: 16px;
+    background: var(--code-bg);
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+  }
+
+  .quote-bar {
+    height: 28px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+
+  .quote-bar.yes {
+    background: rgba(52, 211, 153, 0.2);
+    border-right: 4px solid var(--good);
+    color: var(--good);
+  }
+
+  .quote-bar.no {
+    background: rgba(248, 113, 113, 0.2);
+    border-right: 4px solid var(--bad);
+    color: var(--bad);
+  }
+
+  /* Table */
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; margin: 14px 0; }
+  th, td { border: 1px solid var(--line); padding: 9px 12px; text-align: right; }
+  th { background: var(--panel2); color: var(--mut); font-weight: 600; }
+
+  /* Timeline */
+  .timeline {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin: 16px 0;
+  }
+
+  @media (max-width: 768px) {
+    .timeline { grid-template-columns: 1fr; }
+  }
+
+  .t-step {
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px;
+    position: relative;
+  }
+
+  .t-step::before {
+    content: "";
+    position: absolute;
+    top: 0; right: 0; left: 0; height: 3px;
+    border-radius: 10px 10px 0 0;
+  }
+
+  .t-step.s1::before { background: var(--good); }
+  .t-step.s2::before { background: var(--warn); }
+  .t-step.s3::before { background: var(--bad); }
+
+  .t-head {
+    font-size: 0.95rem;
+    font-weight: 700;
+    margin-bottom: 6px;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  footer {
+    text-align: center;
+    margin-top: 40px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    color: var(--mut);
+    font-size: 0.85rem;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="badge">ארכיטקטורה, מתמטיקה ומכניקת ביצוע</div>
+    <h1>מנוע סיכוני מלאי מכויל מיקרו-מבנה</h1>
+    <div class="sub">שליטה סטוכסטית במלאי (אביאנלדה-סטויקוב), ציטוט מייקר דו-צדדי תחת חוק "הכל ביד", נעילת ארביטראז' מתחת ל-$1.00 ומיחזור בטוחות אטומי בחוזה ה-CTF בפולימרקט.</div>
+  </header>
+
+  <!-- סרגל נתונים עליון -->
+  <div class="grid">
+    <div class="stat"><b class="good">הכל פקודות ביד</b><span>מודל כניסה בידיים ריקות (רק מזומן USDC)</span></div>
+    <div class="stat"><b class="acc">0.00% עמלות</b><span>פוסט-אונלי מייקר בלבד + החזר עמלות של 20%</span></div>
+    <div class="stat"><b class="good">&le; $0.990</b><span>עלות זוג מקסימלית — מרווח ארביטראז' מובטח</span></div>
+    <div class="stat"><b class="warn">&plusmn; היסטרזיס</b><span>שמירה על תור FIFO ומניעת שחיקת קצב בקשות</span></div>
+  </div>
+
+  <!-- הרעיון במשפט אחד -->
+  <h2><span class="n">1</span>הרעיון במשפט אחד</h2>
+  <div class="card">
+    <p>במקום לנחש כיוון ולהסתכן בהפסד מלא — מצטטים פקודות קנייה (Bids) על <b>שני הצדדים במקביל</b> (YES ו-NO) כך שסכום המחירים שלהם נמוך בהגדרה מ-<b>$1.00</b> (למשל <span class="num">$0.48 + $0.48 = $0.96</span>). ברגע ששני הצדדים מתמלאים, מפעילים מיזוג אטומי בחוזה החכם (<code>mergePositions</code>), שורפים את שני הטוקנים, גובים <b>$1.00 USDC</b> במזומן מובטח, ומקבלים רווח ארביטראז' נעול של <b>4¢ למניה</b> ללא סיכון פקיעה.</p>
+  </div>
+
+  <!-- 5 שלבי המנוע המתמטי -->
+  <h2><span class="n">2</span>איך המנוע מחשב מחיר וגודל (5 שלבי KaTeX)</h2>
+  <div class="step-flow">
+    
+    <!-- שלב 1 -->
+    <div class="step-row">
+      <div class="step-idx">01</div>
+      <div class="step-name">כיול עוצמת זרימה (&kappa;)</div>
+      <div class="step-calc">
+        <span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>κ</mi><mo>=</mo><mo>−</mo><mfrac><mrow><mi mathvariant="normal">∂</mi><mi>ln</mi><mo>⁡</mo><mi>λ</mi><mo stretchy="false">(</mo><mi>δ</mi><mo stretchy="false">)</mo></mrow><mrow><mi mathvariant="normal">∂</mi><mi>δ</mi></mrow></mfrac></mrow><annotation encoding="application/x-tex">\kappa = -\frac{\partial \ln \lambda(\delta)}{\partial \delta}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal">κ</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.113em;vertical-align:-0.686em;"></span><span class="mord">−</span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.427em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord" style="margin-right:0.0556em;">∂</span><span class="mord mathnormal" style="margin-right:0.0379em;">δ</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord" style="margin-right:0.0556em;">∂</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mop">ln</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">λ</span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.0379em;">δ</span><span class="mclose">)</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.686em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span></span></span></span></span>
+      </div>
+      <div class="step-why">מחשב את קצב דעיכת הנזילות בספר ככל שמתרחקים ממחיר האמצע. מונע ציטוט רחב מדי בשוק רגוע (פספוס מילויים) או ציטוט צמוד מדי בהתרסקות (דריסה על ידי זרימה רעילה).</div>
+    </div>
+
+    <!-- שלב 2 -->
+    <div class="step-row">
+      <div class="step-idx">02</div>
+      <div class="step-name">מרווח אופטימלי (s*)</div>
+      <div class="step-calc">
+        <span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msup><mi>s</mi><mo>∗</mo></msup><mo>=</mo><mfrac><mn>2</mn><mi>γ</mi></mfrac><mi>ln</mi><mo>⁡</mo><mrow><mo fence="true">(</mo><mn>1</mn><mo>+</mo><mfrac><mi>γ</mi><mi>κ</mi></mfrac><mo fence="true">)</mo></mrow></mrow><annotation encoding="application/x-tex">s^* = \frac{2}{\gamma} \ln\left(1 + \frac{\gamma}{\kappa}\right)</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.7387em;"></span><span class="mord"><span class="mord mathnormal">s</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7387em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">∗</span></span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.2019em;vertical-align:-0.8804em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.3214em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0556em;">γ</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord">2</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.8804em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mop">ln</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="minner"><span class="mopen delimcenter" style="top:0em;"><span class="delimsizing size2">(</span></span><span class="mord">1</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.1076em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord mathnormal">κ</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0556em;">γ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.686em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mclose delimcenter" style="top:0em;"><span class="delimsizing size2">)</span></span></span></span></span></span></span>
+        <div style="font-size:0.8rem;color:var(--mut);margin-top:4px;text-align:center;">גבול תיאורטי: <span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><munder><mrow><mi>lim</mi><mo>⁡</mo></mrow><mrow><mi>γ</mi><mo>→</mo><mn>0</mn></mrow></munder><msup><mi>s</mi><mo>∗</mo></msup><mo>=</mo><mfrac><mn>2</mn><mi>κ</mi></mfrac></mrow><annotation encoding="application/x-tex">\lim_{\gamma \to 0} s^* = \frac{2}{\kappa}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1.5919em;vertical-align:-0.8532em;"></span><span class="mop op-limits"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.6944em;"><span style="top:-2.3829em;margin-left:0em;"><span class="pstrut" style="height:3em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0556em;">γ</span><span class="mrel mtight">→</span><span class="mord mtight">0</span></span></span></span><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span><span class="mop">lim</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.8532em;"><span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">s</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7387em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">∗</span></span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.0074em;vertical-align:-0.686em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.3214em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord mathnormal">κ</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord">2</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.686em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span></span></span></span></span></div>
+      </div>
+      <div class="step-why">נוסחת אביאנלדה-סטויקוב. קובעת את רוחב המרווח הכולל שאינו תלוי במלאי הנוכחי ומבטיח פיצוי מספק על סיכון התנודתיות. מטופל בנומריקה יציבה באמצעות טור טיילור כש-&gamma; קטן.</div>
+    </div>
+
+    <!-- שלב 3 -->
+    <div class="step-row">
+      <div class="step-idx">03</div>
+      <div class="step-name">מחיר אדישות (r<sub>i</sub>)</div>
+      <div class="step-calc">
+        <span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>r</mi><mi>i</mi></msub><mo stretchy="false">(</mo><mi mathvariant="bold">s</mi><mo separator="true">,</mo><mi mathvariant="bold">q</mi><mo separator="true">,</mo><mi>t</mi><mo stretchy="false">)</mo><mo>=</mo><msub><mi>s</mi><mi>i</mi></msub><mo>−</mo><mi>γ</mi><mo stretchy="false">(</mo><mi>T</mi><mo>−</mo><mi>t</mi><mo stretchy="false">)</mo><munderover><mo>∑</mo><mrow><mi>j</mi><mo>=</mo><mn>1</mn></mrow><mi>d</mi></munderover><msub><mi mathvariant="normal">Σ</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><msub><mi>q</mi><mi>j</mi></msub></mrow><annotation encoding="application/x-tex">r_i(\mathbf{s}, \mathbf{q}, t) = s_i - \gamma(T - t) \sum_{j=1}^d \Sigma_{ij} q_j</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">r</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathbf">s</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathbf">q</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">t</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.7333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">s</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.0556em;">γ</span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.1389em;">T</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:3.2499em;vertical-align:-1.4138em;"></span><span class="mord mathnormal">t</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mop op-limits"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.8361em;"><span style="top:-1.8723em;margin-left:0em;"><span class="pstrut" style="height:3.05em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0572em;">j</span><span class="mrel mtight">=</span><span class="mord mtight">1</span></span></span></span><span style="top:-3.05em;"><span class="pstrut" style="height:3.05em;"></span><span><span class="mop op-symbol large-op">∑</span></span></span><span style="top:-4.3em;margin-left:0em;"><span class="pstrut" style="height:3.05em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">d</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:1.4138em;"><span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord">Σ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0572em;">ij</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0359em;">q</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span></span></span></span></span>
+        <div style="margin-top:6px;"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>r</mi><mtext>NO</mtext></msub><mo>≡</mo><mn>1.00</mn><mo>−</mo><msub><mi>r</mi><mtext>YES</mtext></msub></mrow><annotation encoding="application/x-tex">r_{\text{NO}} \equiv 1.00 - r_{\text{YES}}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6138em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">r</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord text mtight"><span class="mord mtight">NO</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">≡</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.7278em;vertical-align:-0.0833em;"></span><span class="mord">1.00</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">r</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord text mtight"><span class="mord mtight">YES</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></span></div>
+      </div>
+      <div class="step-why">מסיט את מרכז הציטוט כנגד עודף המלאי (דיסאונט על הצד הכבד) כדי למנוע צבירת רעל. משקלל שונות בינארית <span class="math">4s(1-s)</span> ונועל שוויון הדדי מוחלט בין שני הצדדים.</div>
+    </div>
+
+    <!-- שלב 4 -->
+    <div class="step-row">
+      <div class="step-idx">04</div>
+      <div class="step-name">מחירי יעד בדידים</div>
+      <div class="step-calc">
+        <span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msubsup><mi>p</mi><mtext>bid</mtext><mo>∗</mo></msubsup><mo>=</mo><msub><mrow><mo fence="true">⌊</mo><msub><mi>r</mi><mi>i</mi></msub><mo>−</mo><mfrac><msup><mi>s</mi><mo>∗</mo></msup><mn>2</mn></mfrac><mo fence="true">⌋</mo></mrow><mtext>tick</mtext></msub></mrow><annotation encoding="application/x-tex">p_{\text{bid}}^* = \left\lfloor r_i - \frac{s^*}{2} \right\rfloor_{\text{tick}}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.9857em;vertical-align:-0.247em;"></span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.7387em;"><span style="top:-2.453em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord text mtight"><span class="mord mtight">bid</span></span></span></span></span><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">∗</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.247em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.4497em;vertical-align:-0.9997em;"></span><span class="minner"><span class="minner"><span class="mopen delimcenter" style="top:0em;"><span class="delimsizing size3">⌊</span></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">r</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.3657em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord">2</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord"><span class="mord mathnormal">s</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6887em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">∗</span></span></span></span></span></span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.686em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mclose delimcenter" style="top:0em;"><span class="delimsizing size3">⌋</span></span></span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:-0.5136em;"><span style="top:-1.7003em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord text mtight"><span class="mord mtight">tick</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.9997em;"><span></span></span></span></span></span></span></span></span></span></span>
+        <div style="margin-top:6px;"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msubsup><mi>p</mi><mtext>bid</mtext><mtext>YES</mtext></msubsup><mo>+</mo><msubsup><mi>p</mi><mtext>bid</mtext><mtext>NO</mtext></msubsup><mo>=</mo><mn>1.00</mn><mo>−</mo><msup><mi>s</mi><mo>∗</mo></msup><mo>&lt;</mo><mi mathvariant="normal">$</mi><mn>1.00</mn></mrow><annotation encoding="application/x-tex">p_{\text{bid}}^{\text{YES}} + p_{\text{bid}}^{\text{NO}} = 1.00 - s^* &lt; \$1.00</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1.1383em;vertical-align:-0.247em;"></span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.8913em;"><span style="top:-2.453em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord text mtight"><span class="mord mtight">bid</span></span></span></span></span><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord text mtight"><span class="mord mtight">YES</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.247em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.1383em;vertical-align:-0.247em;"></span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.8913em;"><span style="top:-2.453em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord text mtight"><span class="mord mtight">bid</span></span></span></span></span><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord text mtight"><span class="mord mtight">NO</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.247em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.7278em;vertical-align:-0.0833em;"></span><span class="mord">1.00</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.7778em;vertical-align:-0.0391em;"></span><span class="mord"><span class="mord mathnormal">s</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7387em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">∗</span></span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">&lt;</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8056em;vertical-align:-0.0556em;"></span><span class="mord">$1.00</span></span></span></span></span></div>
+      </div>
+      <div class="step-why">עיגול כלפי מטה בלבד (רצפת טיק). מכיוון ש-<span class="math">r<sub>YES</sub> + r<sub>NO</sub> = 1.00</span>, מובטח מתמטית שסכום הבידים נשאר תמיד נמוך מ-<b>$1.00</b> ללא סטייה או חריגה.</div>
+    </div>
+
+    <!-- שלב 5 -->
+    <div class="step-row">
+      <div class="step-idx">05</div>
+      <div class="step-name">שומר התור (&epsilon;)</div>
+      <div class="step-calc">
+        <span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mtext>Action</mtext><mo>=</mo><mrow><mo fence="true">{</mo><mtable rowspacing="0.36em" columnalign="left left" columnspacing="1em"><mtr><mtd><mstyle scriptlevel="0" displaystyle="false"><mtext>Hold</mtext></mstyle></mtd><mtd><mstyle scriptlevel="0" displaystyle="false"><mrow><mi mathvariant="normal">∣</mi><mi mathvariant="normal">Δ</mi><mi>p</mi><mi mathvariant="normal">∣</mi><mo>&lt;</mo><mi>ϵ</mi></mrow></mstyle></mtd></mtr><mtr><mtd><mstyle scriptlevel="0" displaystyle="false"><mtext>Cancel &amp; Replace</mtext></mstyle></mtd><mtd><mstyle scriptlevel="0" displaystyle="false"><mrow><mi mathvariant="normal">∣</mi><mi mathvariant="normal">Δ</mi><mi>p</mi><mi mathvariant="normal">∣</mi><mo>≥</mo><mi>ϵ</mi></mrow></mstyle></mtd></mtr></mtable></mrow></mrow><annotation encoding="application/x-tex">\text{Action} = \begin{cases} \text{Hold} &amp; |\Delta p| &lt; \epsilon \\ \text{Cancel \&amp; Replace} &amp; |\Delta p| \ge \epsilon \end{cases}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord text"><span class="mord">Action</span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:3em;vertical-align:-1.25em;"></span><span class="minner"><span class="mopen delimcenter" style="top:0em;"><span class="delimsizing size4">{</span></span><span class="mord"><span class="mtable"><span class="col-align-l"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.69em;"><span style="top:-3.69em;"><span class="pstrut" style="height:3.008em;"></span><span class="mord"><span class="mord text"><span class="mord">Hold</span></span></span></span><span style="top:-2.25em;"><span class="pstrut" style="height:3.008em;"></span><span class="mord"><span class="mord text"><span class="mord">Cancel &amp; Replace</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:1.19em;"><span></span></span></span></span></span><span class="arraycolsep" style="width:1em;"></span><span class="col-align-l"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.69em;"><span style="top:-3.69em;"><span class="pstrut" style="height:3.008em;"></span><span class="mord"><span class="mord">∣Δ</span><span class="mord mathnormal">p</span><span class="mord">∣</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">&lt;</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mord mathnormal">ϵ</span></span></span><span style="top:-2.25em;"><span class="pstrut" style="height:3.008em;"></span><span class="mord"><span class="mord">∣Δ</span><span class="mord mathnormal">p</span><span class="mord">∣</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">≥</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mord mathnormal">ϵ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:1.19em;"><span></span></span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span></span></span></span></span>
+      </div>
+      <div class="step-why">מגן על קדימות התור (FIFO) מפני ביטולים מיותרים עקב רעש של חלקיקי סנט. משתמש בסף אסימטרי: צמוד בזרימה לרעתנו (<span class="num">0.5 tick</span>) ורחב בזרימה לטובתנו (<span class="num">1.5 tick</span>).</div>
+    </div>
+
+  </div>
+
+  <!-- סימולטור חי ואינטראקטיבי -->
+  <h2><span class="n">3</span>סימולטור חי: כוונן פרמטרים וראה את המנוע בפעולה</h2>
+  <div class="sim-box">
+    <div class="sim-grid">
+      <!-- בקרים -->
+      <div>
+        <div class="ctrl-item">
+          <div class="ctrl-head"><span>מחיר אמצע YES (<span class="num">s</span>)</span><span class="num acc" id="val-mid">0.50</span></div>
+          <input type="range" id="slider-mid" min="0.05" max="0.95" step="0.01" value="0.50">
+        </div>
+
+        <div class="ctrl-item">
+          <div class="ctrl-head"><span>מלאי מוחזק YES (<span class="num">q<sub>YES</sub></span>)</span><span class="num good" id="val-qyes">40 מניות</span></div>
+          <input type="range" id="slider-qyes" min="0" max="200" step="5" value="40">
+        </div>
+
+        <div class="ctrl-item">
+          <div class="ctrl-head"><span>מלאי מוחזק NO (<span class="num">q<sub>NO</sub></span>)</span><span class="num bad" id="val-qno">10 מניות</span></div>
+          <input type="range" id="slider-qno" min="0" max="200" step="5" value="10">
+        </div>
+
+        <div class="ctrl-item">
+          <div class="ctrl-head"><span>שנאת סיכון (&gamma;)</span><span class="num" id="val-gamma">0.05</span></div>
+          <input type="range" id="slider-gamma" min="0.01" max="0.30" step="0.01" value="0.05">
+        </div>
+
+        <div class="ctrl-item">
+          <div class="ctrl-head"><span>דעיכת זרימה (&kappa;)</span><span class="num" id="val-kappa">15.0</span></div>
+          <input type="range" id="slider-kappa" min="2.0" max="80.0" step="1.0" value="15.0">
+        </div>
+
+        <div class="ctrl-item">
+          <div class="ctrl-head"><span>זמן שנותר בחלון (<span class="num">T - t</span>)</span><span class="num warn" id="val-time">180 שניות</span></div>
+          <input type="range" id="slider-time" min="10" max="300" step="10" value="180">
+        </div>
+      </div>
+
+      <!-- פאנל תוצאות בזמן אמת -->
+      <div class="out-panel">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+          <b style="font-size:1.05rem;">סטטוס ציטוט מחושב</b>
+          <span class="badge" style="background:rgba(52,211,153,0.15);color:var(--good);">נעילת זוג מתחת ל-$1.00 פעילה</span>
+        </div>
+
+        <div class="metric-line">
+          <span style="color:var(--mut);">מרווח אופטימלי (s*)</span>
+          <span class="num acc" id="out-spread">0.1333</span>
+        </div>
+        <div class="metric-line">
+          <span style="color:var(--mut);">מחירי אדישות (r<sub>YES</sub> / r<sub>NO</sub>)</span>
+          <span><span class="num good" id="out-ryes">0.4850</span> / <span class="num bad" id="out-rno">0.5150</span></span>
+        </div>
+        <div class="metric-line">
+          <span style="color:var(--mut);">מחירי ביד מחושבים (קנייה)</span>
+          <span><span class="num good" id="out-bidyes">$0.41</span> + <span class="num bad" id="out-bidno">$0.44</span></span>
+        </div>
+        <div class="metric-line">
+          <span style="color:var(--mut);">עלות זוג משולבת</span>
+          <span class="num acc" style="font-size:1.15rem;font-weight:800;" id="out-combined">$0.8500</span>
+        </div>
+        <div class="metric-line">
+          <span style="color:var(--mut);">רווח ארביטראז' לזוג מלא</span>
+          <span class="num good" style="font-weight:800;" id="out-arb">+$0.1500 (15.0%)</span>
+        </div>
+        <div class="metric-line">
+          <span style="color:var(--mut);">גדלים מותאמי מלאי (LIIC)</span>
+          <span class="num" id="out-sizes">20 מניות / 28 מניות</span>
+        </div>
+
+        <div class="bar-ladder">
+          <div style="font-size:0.75rem;color:var(--mut);margin-bottom:6px;">ספר פקודות פנימי — פקודות עומדות:</div>
+          <div class="quote-bar yes" id="bar-yes">BUY YES @ $0.41 (20 מניות)</div>
+          <div class="quote-bar no" id="bar-no">BUY NO @ $0.44 (28 מניות)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- מאיפה הכסף בא ומה הורג אותנו -->
+  <h2><span class="n">4</span>מאיפה הכסף בא ומה הורג אותנו</h2>
+  <div class="grid-2">
+    <div class="card">
+      <h3 style="color:var(--good);margin-bottom:8px;">מה שעובד: ארביטראז' מבני + החזרי מייקר</h3>
+      <ul style="padding-right:20px;font-size:0.95rem;color:var(--txt);">
+        <li><b>נעילה סינתטית מתחת ל-$1.00:</b> קניית שני הצדדים בפחות מדולר מבטיחה פדיון של $1.00 בחוזה — ללא קשר לתוצאת השוק.</li>
+        <li><b>0% עמלות מייקר:</b> הזנת פקודות <span class="num">Post-Only</span> בלבד אינה משלמת סנט עמלה ומזכה ב-20% מהעמלות שמשלמים הטייקרים.</li>
+        <li><b>תגמולי נזילות (Rewards):</b> ציטוט רציף בתוך תחום המרווח המזכה צובר תגמולים יומיים מפולימרקט.</li>
+      </ul>
+      <div style="margin-top:12px;background:var(--code-bg);padding:10px;border-radius:8px;">
+        <div style="font-size:0.8rem;color:var(--mut);margin-bottom:4px;">נוסחת גודל דינמי במלאי (LIIC):</div>
+        <span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>S</mi><mo stretchy="false">(</mo><mi>q</mi><mo stretchy="false">)</mo><mo>=</mo><msub><mi>S</mi><mn>0</mn></msub><mo>⋅</mo><mi>max</mi><mo>⁡</mo><mrow><mo fence="true">(</mo><mn>0</mn><mo separator="true">,</mo><mn>1</mn><mo>−</mo><msup><mrow><mo fence="true">(</mo><mfrac><mi>q</mi><msub><mi>Q</mi><mi>max</mi><mo>⁡</mo></msub></mfrac><mo fence="true">)</mo></mrow><mi>α</mi></msup><mo fence="true">)</mo></mrow></mrow><annotation encoding="application/x-tex">S(q) = S_0 \cdot \max\left(0, 1 - \left(\frac{q}{Q_{\max}}\right)^\alpha\right)</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.0576em;">S</span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.0359em;">q</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0576em;">S</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.0576em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">⋅</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.4543em;vertical-align:-0.95em;"></span><span class="mop">max</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="minner"><span class="mopen delimcenter" style="top:0em;"><span class="delimsizing size3">(</span></span><span class="mord">0</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord">1</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="minner"><span class="minner"><span class="mopen delimcenter" style="top:0em;"><span class="delimsizing size3">(</span></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.1076em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord"><span class="mord mathnormal">Q</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mop mtight"><span class="mtight">m</span><span class="mtight">a</span><span class="mtight">x</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0359em;">q</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.8804em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mclose delimcenter" style="top:0em;"><span class="delimsizing size3">)</span></span></span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:1.5043em;"><span style="top:-3.9029em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0037em;">α</span></span></span></span></span></span></span></span><span class="mclose delimcenter" style="top:0em;"><span class="delimsizing size3">)</span></span></span></span></span></span></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="color:var(--bad);margin-bottom:8px;">מה שהורג: מלכודת עמלות טייקר וזנב חשוף</h3>
+      <ul style="padding-right:20px;font-size:0.95rem;color:var(--txt);">
+        <li><b>עקומת עמלות פרבולית בטייקר:</b> טייקר משלם עמלה חדה המגיעה ל-<b>1.75%</b> בסנט 50 (3.5% הלוך-חזור). חציית הספר מוחקת את כל הרווח!</li>
+        <li><b>זנב לא מגודר בפקיעה:</b> אם נשארים עם 100 מניות YES ו-0 מניות NO בשנייה האחרונה והשוק פוקע ל-NO — מפסידים 100% מהקרן על אותו עודף.</li>
+      </ul>
+      <div style="margin-top:12px;background:var(--code-bg);padding:10px;border-radius:8px;">
+        <div style="font-size:0.8rem;color:var(--mut);margin-bottom:4px;">עקומת עמלות טייקר בפולימרקט (KaTeX):</div>
+        <span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mtext>Fee</mtext><mo>=</mo><mn>0.07</mn><mo>×</mo><mtext>Size</mtext><mo>×</mo><mi>p</mi><mo stretchy="false">(</mo><mn>1</mn><mo>−</mo><mi>p</mi><mo stretchy="false">)</mo></mrow><annotation encoding="application/x-tex">\text{Fee} = 0.07 \times \text{Size} \times p(1 - p)</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord text"><span class="mord">Fee</span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.7278em;vertical-align:-0.0833em;"></span><span class="mord">0.07</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">×</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.7667em;vertical-align:-0.0833em;"></span><span class="mord text"><span class="mord">Size</span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">×</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">p</span><span class="mopen">(</span><span class="mord">1</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">p</span><span class="mclose">)</span></span></span></span></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ציר הזמן של החלון בן 5 הדקות -->
+  <h2><span class="n">5</span>ציר הזמן: 3 הפאזות בניהול סיכונים לחלון</h2>
+  <div class="timeline">
+    <div class="t-step s1">
+      <div class="t-head"><span class="good">ציטוט דו-צדדי מלא</span><span class="num">t &lt; T - 90s</span></div>
+      <p style="font-size:0.85rem;color:var(--mut);">ציטוט מייקר דו-צדדי רציף. צבירת מניות זוגיות תוך שמירה על יחס 3:1 בתגמולי הנזילות והגנה מתמטית על תור ה-FIFO.</p>
+    </div>
+
+    <div class="t-step s2">
+      <div class="t-head"><span class="warn">סגירת פוזיציות (Unwind)</span><span class="num">T-90s &le; t &lt; T-60s</span></div>
+      <p style="font-size:0.85rem;color:var(--mut);">עצירת צבירת סיכון חדש. אם יש עודף בצד מסוים, מפסיקים לקנות אותו ומצטטים אך ורק את הרגל הסוגרת כדי להגיע לפקיעה מאוזנים לחלוטין.</p>
+    </div>
+
+    <div class="t-step s3">
+      <div class="t-head"><span class="bad">משיכת פקודות (Cutoff)</span><span class="num">t &ge; T - 60s</span></div>
+      <p style="font-size:0.85rem;color:var(--mut);">משיכה מיידית של כל הפקודות העומדות בספר. 60 השניות האחרונות מאופיינות בזרימה רעילה של בוטים מול שערי בינאנס — יציאה מלאה מסיכון.</p>
+    </div>
+  </div>
+
+  <!-- מיזוג אטומי -->
+  <h2><span class="n">6</span>מיזוג אטומי בחוזה ה-CTF (מיחזור בטוחות)</h2>
+  <div class="card" style="border-right:4px solid var(--accent);">
+    <p style="font-size:0.95rem;margin-bottom:12px;">ברגע שהצטברו מניות זוגיות (<span class="num">M = min(q<sub>YES</sub>, q<sub>NO</sub>) &ge; 20</span>), המנוע מפעיל <code>mergePositions</code> בחוזה הפוליגון:</p>
+    
+    <div style="background:var(--code-bg);padding:14px;border-radius:8px;margin:12px 0;">
+      <div style="font-size:0.8rem;color:var(--mut);margin-bottom:4px;">מכניקת המיזוג וחישוב רווח הארביטראז' (KaTeX):</div>
+      <span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mn>1</mn><mtext> YES</mtext><mo>+</mo><mn>1</mn><mtext> NO</mtext><mover><mo stretchy="true" minsize="3.0em">→</mo><mpadded width="+0.6em" lspace="0.3em"><mtext>mergePositions</mtext></mpadded></mover><mi mathvariant="normal">$</mi><mn>1.00</mn><mtext> USDC</mtext></mrow><annotation encoding="application/x-tex">1\text{ YES} + 1\text{ NO} \xrightarrow{\text{mergePositions}} \$1.00\text{ USDC}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.7667em;vertical-align:-0.0833em;"></span><span class="mord">1</span><span class="mord text"><span class="mord"> YES</span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.1113em;vertical-align:-0.011em;"></span><span class="mord">1</span><span class="mord text"><span class="mord"> NO</span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel x-arrow"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.1003em;"><span style="top:-3.322em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight x-arrow-pad"><span class="mord mtight"><span class="mord text mtight"><span class="mord mtight">mergePositions</span></span></span></span></span><span class="svg-align" style="top:-2.689em;"><span class="pstrut" style="height:2.7em;"></span><span class="hide-tail" style="height:0.522em;min-width:1.469em;"><svg xmlns="http://www.w3.org/2000/svg" width="400em" height="0.522em" viewBox="0 0 400000 522" preserveAspectRatio="xMaxYMin slice"><path d="M0 241v40h399891c-47.3 35.3-84 78-110 128
+-16.7 32-27.7 63.7-33 95 0 1.3-.2 2.7-.5 4-.3 1.3-.5 2.3-.5 3 0 7.3 6.7 11 20
+ 11 8 0 13.2-.8 15.5-2.5 2.3-1.7 4.2-5.5 5.5-11.5 2-13.3 5.7-27 11-41 14.7-44.7
+ 39-84.5 73-119.5s73.7-60.2 119-75.5c6-2 9-5.7 9-11s-3-9-9-11c-45.3-15.3-85
+-40.5-119-75.5s-58.3-74.8-73-119.5c-4.7-14-8.3-27.3-11-40-1.3-6.7-3.2-10.8-5.5
+-12.5-2.3-1.7-7.5-2.5-15.5-2.5-14 0-21 3.7-21 11 0 2 2 10.3 6 25 20.7 83.3 67
+ 151.7 139 205zm0 0v40h399900v-40z"/></svg></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.011em;"><span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8056em;vertical-align:-0.0556em;"></span><span class="mord">$1.00</span><span class="mord text"><span class="mord"> USDC</span></span></span></span></span></span>
+      <div style="margin-top:8px;"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mtext>PnL</mtext><mo>=</mo><mi>M</mi><mo>×</mo><mrow><mo fence="true">(</mo><mn>1.00</mn><mo>−</mo><mo stretchy="false">(</mo><msup><mi>p</mi><mtext>YES</mtext></msup><mo>+</mo><msup><mi>p</mi><mtext>NO</mtext></msup><mo stretchy="false">)</mo><mo fence="true">)</mo></mrow><mo>&gt;</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">\text{PnL} = M \times \left(1.00 - (p^{\text{YES}} + p^{\text{NO}})\right) &gt; 0</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord text"><span class="mord">PnL</span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.7667em;vertical-align:-0.0833em;"></span><span class="mord mathnormal" style="margin-right:0.109em;">M</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">×</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.2413em;vertical-align:-0.35em;"></span><span class="minner"><span class="mopen delimcenter" style="top:0em;"><span class="delimsizing size1">(</span></span><span class="mord">1.00</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8913em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord text mtight"><span class="mord mtight">YES</span></span></span></span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8913em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord text mtight"><span class="mord mtight">NO</span></span></span></span></span></span></span></span></span></span><span class="mclose">)</span><span class="mclose delimcenter" style="top:0em;"><span class="delimsizing size1">)</span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">&gt;</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">0</span></span></span></span></span></div>
+    </div>
+
+    <div class="grid" style="margin:10px 0;">
+      <div class="stat"><span style="color:var(--mut);">1. מניות משולבות</span><b style="color:#fff;">50 YES + 50 NO</b><span>עלות רכישה: $48.50</span></div>
+      <div class="stat"><span style="color:var(--mut);">2. שריפה בחוזה</span><b class="acc">mergePositions()</b><span>ביצוע אטומי על הבלוקצ'יין</span></div>
+      <div class="stat"><span style="color:var(--mut);">3. שחרור מזומן</span><b class="good">$50.00 USDC</b><span>רווח נעול: +$1.50</span></div>
+    </div>
+    <div class="callout" style="margin-top:12px;">
+      <b>נעילה אופטימית:</b> המניות מנוכות מיתרת הציטוט מיד עם שליחת העסקה (לפני אישור הבלוק), כדי למנוע קריאות כפולות וחיכוך גז.
+    </div>
+  </div>
+
+  <!-- חלוקת מודולים בקוד -->
+  <h2><span class="n">7</span>מבנה המודולים בקוד (<span class="num">bot/microstructure_engine/</span>)</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>מודול</th>
+        <th>מחלקה מרכזית</th>
+        <th>תפקיד ואחריות</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>math_engine</code></td>
+        <td><code>MicrostructureMathEngine</code></td>
+        <td>מנוע מתמטי טהור (ללא רשת): חישוב &kappa;, s*, r<sub>i</sub>, גדלי LIIC, רצפת טיקים והחלטת היסטרזיס.</td>
+      </tr>
+      <tr>
+        <td><code>market_feed</code></td>
+        <td><code>UnifiedMarketFeed</code></td>
+        <td>הזרמת נתוני ספר פקודות L2 מפולימרקט וטיקר בינאנס BTC עם זיהוי מהיר של שוקי תנודתיות (Toxicity Fast-Path).</td>
+      </tr>
+      <tr>
+        <td><code>risk_and_size_manager</code></td>
+        <td><code>RiskAndSizeManager</code></td>
+        <td>אכיפת תקרות מלאי קשיחות, עמידה ביחס תגמולים 3:1, מעבר לפאזת Unwind וסגירת כל הפקודות ב-60 השניות האחרונות.</td>
+      </tr>
+      <tr>
+        <td><code>execution_router</code></td>
+        <td><code>ExecutionRouter</code></td>
+        <td>חתימת פקודות ב-EIP-712 לרשת פוליגון, פקודות Post-Only בלבד, וניהול החלפה מול החזקה לפי היסטרזיס.</td>
+      </tr>
+      <tr>
+        <td><code>settlement_manager</code></td>
+        <td><code>SettlementManager</code></td>
+        <td>האזנה למילויים זוגיים, הפעלת מיזוג אטומי (mergePositions), נעילה אופטימית וניהול רישומי רווח ארביטראז'.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <footer>
+    <p>מנוע סיכוני מלאי מכויל מיקרו-מבנה &bull; מערכת עשיית שוק ואלגוריתמיקה לפולימרקט</p>
+  </footer>
+</div>
+
+<script>
+  const sliderMid = document.getElementById('slider-mid');
+  const sliderQyes = document.getElementById('slider-qyes');
+  const sliderQno = document.getElementById('slider-qno');
+  const sliderGamma = document.getElementById('slider-gamma');
+  const sliderKappa = document.getElementById('slider-kappa');
+  const sliderTime = document.getElementById('slider-time');
+
+  const valMid = document.getElementById('val-mid');
+  const valQyes = document.getElementById('val-qyes');
+  const valQno = document.getElementById('val-qno');
+  const valGamma = document.getElementById('val-gamma');
+  const valKappa = document.getElementById('val-kappa');
+  const valTime = document.getElementById('val-time');
+
+  const outSpread = document.getElementById('out-spread');
+  const outRyes = document.getElementById('out-ryes');
+  const outRno = document.getElementById('out-rno');
+  const outBidyes = document.getElementById('out-bidyes');
+  const outBidno = document.getElementById('out-bidno');
+  const outCombined = document.getElementById('out-combined');
+  const outArb = document.getElementById('out-arb');
+  const outSizes = document.getElementById('out-sizes');
+  const barYes = document.getElementById('bar-yes');
+  const barNo = document.getElementById('bar-no');
+
+  function update() {
+    const s = parseFloat(sliderMid.value);
+    const qy = parseFloat(sliderQyes.value);
+    const qn = parseFloat(sliderQno.value);
+    const gamma = parseFloat(sliderGamma.value);
+    const kappa = parseFloat(sliderKappa.value);
+    const trem = parseFloat(sliderTime.value);
+
+    valMid.textContent = s.toFixed(2);
+    valQyes.textContent = qy + ' מניות';
+    valQno.textContent = qn + ' מניות';
+    valGamma.textContent = gamma.toFixed(2);
+    valKappa.textContent = kappa.toFixed(1);
+    valTime.textContent = trem + ' שניות';
+
+    // 1. Optimal spread s*
+    let s_star = gamma < 1e-5 ? (2.0 / kappa) : (2.0 / gamma) * Math.log(1.0 + gamma / kappa);
+    s_star = Math.max(0.01, Math.min(0.25, s_star));
+
+    // 2. Reservation Price
+    const tau = trem / 300.0;
+    const net_q = qy - qn;
+    const binary_dampener = 4.0 * s * (1.0 - s);
+    const penalty = gamma * tau * binary_dampener * 0.04 * net_q;
+    let r_yes = Math.max(0.01, Math.min(0.99, s - penalty));
+    let r_no = 1.00 - r_yes;
+
+    // 3. Quotes with floor quantization
+    const half_s = s_star / 2.0;
+    let bid_y = Math.floor((r_yes - half_s) * 100) / 100;
+    let bid_n = Math.floor((r_no - half_s) * 100) / 100;
+    bid_y = Math.max(0.01, Math.min(0.99, bid_y));
+    bid_n = Math.max(0.01, Math.min(0.99, bid_n));
+
+    let combined = bid_y + bid_n;
+    if (combined > 0.990) {
+      const diff = combined - 0.990;
+      if (qy >= qn) bid_y = Math.floor((bid_y - diff) * 100) / 100;
+      else bid_n = Math.floor((bid_n - diff) * 100) / 100;
+      combined = bid_y + bid_n;
+    }
+
+    // 4. Sizing (LIIC)
+    const base_sz = 25;
+    const q_max = 200;
+    let sz_y = Math.floor(base_sz * Math.max(0, 1.0 - (qy / q_max)));
+    let sz_n = Math.floor(base_sz * Math.max(0, 1.0 - (qn / q_max)));
+    if (net_q > 0) sz_n = Math.min(50, Math.floor(sz_n * (1.0 + net_q / q_max)));
+    else if (net_q < 0) sz_y = Math.min(50, Math.floor(sz_y * (1.0 + Math.abs(net_q) / q_max)));
+
+    const arb = 1.00 - combined;
+    const arbPct = (arb / combined) * 100;
+
+    outSpread.textContent = s_star.toFixed(4);
+    outRyes.textContent = r_yes.toFixed(4);
+    outRno.textContent = r_no.toFixed(4);
+    outBidyes.textContent = '$' + bid_y.toFixed(2);
+    outBidno.textContent = '$' + bid_n.toFixed(2);
+    outCombined.textContent = '$' + combined.toFixed(4);
+    outArb.textContent = '+$' + arb.toFixed(4) + ' (' + arbPct.toFixed(1) + '%)';
+    outSizes.textContent = sz_y + ' מניות / ' + sz_n + ' מניות';
+
+    barYes.textContent = 'BUY YES @ $' + bid_y.toFixed(2) + ' (' + sz_y + ' מניות) [r_YES: ' + r_yes.toFixed(2) + ']';
+    barNo.textContent = 'BUY NO @ $' + bid_n.toFixed(2) + ' (' + sz_n + ' מניות) [r_NO: ' + r_no.toFixed(2) + ']';
+  }
+
+  [sliderMid, sliderQyes, sliderQno, sliderGamma, sliderKappa, sliderTime].forEach(el => {
+    el.addEventListener('input', update);
+  });
+
+  update();
+</script>
+</body>
+</html>
