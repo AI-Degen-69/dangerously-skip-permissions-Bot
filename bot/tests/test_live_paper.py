@@ -695,7 +695,7 @@ class LivePaperLoopTests(unittest.TestCase):
         }
         dec = evaluate_microstructure_ladder(
             quotes=quotes, inv=inv, fill_idx=1, minute=0,
-            strategy_id="hydrogen-v1.2", min_fill=0.07, max_fill=0.48,
+            strategy_id="hydrogen-v1.0", min_fill=0.07, max_fill=0.48,
             default_clip=10.0, max_clip=10.0,             max_pair_cost=0.985,
             leg1_max_price=0.48, leg2_max_price=0.75,
             open_orders=open_orders,
@@ -730,7 +730,7 @@ class LivePaperLoopTests(unittest.TestCase):
         }
         dec = evaluate_microstructure_ladder(
             quotes=quotes_74, inv=inv, fill_idx=1, minute=0,
-            strategy_id="hydrogen-v1.2", min_fill=0.07, max_fill=0.48,
+            strategy_id="hydrogen-v1.0", min_fill=0.07, max_fill=0.48,
             default_clip=10.0, max_clip=10.0,             max_pair_cost=0.985,
             leg1_max_price=0.48, leg2_max_price=0.75,
         )
@@ -746,7 +746,7 @@ class LivePaperLoopTests(unittest.TestCase):
         }
         dec_ceil = evaluate_microstructure_ladder(
             quotes=quotes_85, inv=inv, fill_idx=1, minute=0,
-            strategy_id="hydrogen-v1.2", min_fill=0.07, max_fill=0.48,
+            strategy_id="hydrogen-v1.0", min_fill=0.07, max_fill=0.48,
             default_clip=10.0, max_clip=10.0,             max_pair_cost=0.985,
             leg1_max_price=0.48, leg2_max_price=0.75,
         )
@@ -766,7 +766,7 @@ class LivePaperLoopTests(unittest.TestCase):
         mock_state_path.__fspath__.return_value = str(self.tmp_path / "state.json")
         mock_runs_dir.mkdir.return_value = None
         mock_load_cfg.return_value = {
-            "strategy": {"id": "hydrogen-v1.2", "symbol": "H2", "name": "Hydrogen v1.2"},
+            "strategy": {"id": "hydrogen-v1.0", "symbol": "H2", "name": "Hydrogen v1.0"},
             "entry": {
                 "startAfterOpenSec": 0,
                 "stopBeforeCloseSec": 30,
@@ -779,7 +779,6 @@ class LivePaperLoopTests(unittest.TestCase):
                 "maxShares": 10.0,
                 "maxPairCost": 0.985,
                 "takerDipEntryMax": 0.36,
-                "takerDipBalancedOnly": True,
                 "minSpacingStaticSec": 0.0,
                 "minSpacingMoveSec": 0.0,
             },

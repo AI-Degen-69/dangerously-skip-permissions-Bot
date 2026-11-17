@@ -1,6 +1,5 @@
-"""Hydrogen v1.4: wallet-timed, wallet-sized candidate (no share veto)."""
+"""Wallet-timed clip schedule: opening size decays toward the close."""
 import unittest
-from bot import ab_test as ab
 from bot.executor import evaluate_microstructure_ladder
 
 
@@ -16,7 +15,7 @@ class TestClipSchedule(unittest.TestCase):
         kw = dict(
             quotes={"Up": {"bid": 0.33, "ask": 0.34}, "Down": {"bid": 0.60, "ask": 0.62}},
             inv=_inv(0, 0.0, 0, 0.0),
-            fill_idx=0, minute=1, strategy_id="hydrogen-v1.4",
+            fill_idx=0, minute=1, strategy_id="hydrogen-v1.0",
             min_fill=0.07, max_fill=0.48, default_clip=30.0, max_clip=30.0,
             max_pair_cost=0.985, elapsed_sec=elapsed,
             clip_schedule=[[0, 30.0], [120, 15.0]],
@@ -40,17 +39,11 @@ class TestClipSchedule(unittest.TestCase):
         dec = evaluate_microstructure_ladder(
             quotes={"Up": {"bid": 0.33, "ask": 0.34}, "Down": {"bid": 0.60, "ask": 0.62}},
             inv=_inv(0, 0.0, 0, 0.0),
-            fill_idx=0, minute=1, strategy_id="hydrogen-v1.3",
+            fill_idx=0, minute=1, strategy_id="hydrogen-v1.0",
             min_fill=0.07, max_fill=0.48, default_clip=10.0, max_clip=10.0,
             max_pair_cost=0.985,
         )
         self.assertEqual((dec.action, dec.outcome, dec.shares), ("fill", "Up", 10.0))
-
-    def test_strategy_id_mapping_covers_v14(self):
-        self.assertEqual(
-            ab._run_strategy_id("run_20261116_020000_paper_hydrogen_v1_4"),
-            "hydrogen-v1.4",
-        )
 
 
 if __name__ == "__main__":

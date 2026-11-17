@@ -3,9 +3,9 @@ import unittest
 from bot.executor import evaluate_microstructure_ladder
 
 
-class TestDspV21Family(unittest.TestCase):
-    def test_v21_is_treated_as_dsp(self):
-        """Regression: v2.1 id must get DSP rules — it once fell through to HAPCS rules."""
+class TestDspFamilyFallback(unittest.TestCase):
+    def test_retired_arm_ids_still_get_dsp_rules(self):
+        """Archived runs replay through the family prefix; they once fell through to HAPCS rules."""
         inv = {
             "Up": {"shares": 30.0, "cost": 8.4},
             "Down": {"shares": 0.0, "cost": 0.0},

@@ -88,7 +88,7 @@ class DepthCapTests(unittest.TestCase):
     def test_depth_cap_on_caps_maker(self):
         dec = evaluate_microstructure_ladder(
             quotes=self._quotes(), inv=self._inv(), fill_idx=2, minute=1,
-            strategy_id='dangerously-skip-permissions-v2.4',
+            strategy_id='dangerously-skip-permissions',
             min_fill=0.07, max_fill=0.45, default_clip=33.0, max_clip=45.0,
             benchmark_pair_cost=0.965, max_pair_cost=0.985,
             max_depth_shares=100.0, resting_size={'Up': 12.0, 'Down': 100.0},
@@ -99,7 +99,7 @@ class DepthCapTests(unittest.TestCase):
             dec2 = evaluate_microstructure_ladder(
                 quotes={'Up': {'bid': 0.20, 'ask': 0.21}, 'Down': {'bid': 0.75, 'ask': 0.76}},
                 inv=self._inv(), fill_idx=2, minute=1,
-                strategy_id='dangerously-skip-permissions-v2.4',
+                strategy_id='dangerously-skip-permissions',
                 min_fill=0.07, max_fill=0.45, default_clip=33.0, max_clip=45.0,
                 benchmark_pair_cost=0.965, max_pair_cost=0.985,
                 max_depth_shares=100.0, resting_size=12.0,
@@ -111,13 +111,13 @@ class DepthCapTests(unittest.TestCase):
     def test_depth_cap_off_reproduces_today(self):
         base = evaluate_microstructure_ladder(
             quotes=self._quotes(), inv=self._inv(), fill_idx=2, minute=1,
-            strategy_id='dangerously-skip-permissions-v2.4',
+            strategy_id='dangerously-skip-permissions',
             min_fill=0.07, max_fill=0.45, default_clip=33.0, max_clip=45.0,
             benchmark_pair_cost=0.965, max_pair_cost=0.985,
         )
         capped = evaluate_microstructure_ladder(
             quotes=self._quotes(), inv=self._inv(), fill_idx=2, minute=1,
-            strategy_id='dangerously-skip-permissions-v2.4',
+            strategy_id='dangerously-skip-permissions',
             min_fill=0.07, max_fill=0.45, default_clip=33.0, max_clip=45.0,
             benchmark_pair_cost=0.965, max_pair_cost=0.985,
             max_depth_shares=0.0, resting_size={'Up': 1.0, 'Down': 1.0},
@@ -128,7 +128,7 @@ class DepthCapTests(unittest.TestCase):
         quotes = {'Up': {'bid': 0.20, 'ask': 0.30}, 'Down': {'bid': 0.79, 'ask': 0.80}}
         dec = evaluate_microstructure_ladder(
             quotes=quotes, inv=self._inv(), fill_idx=2, minute=1,
-            strategy_id='dangerously-skip-permissions-v2.4',
+            strategy_id='dangerously-skip-permissions',
             min_fill=0.07, max_fill=0.45, default_clip=33.0, max_clip=45.0,
             benchmark_pair_cost=0.965, max_pair_cost=0.985,
             max_depth_shares=100.0, resting_size={'Up': 1.0, 'Down': 100.0},

@@ -1,4 +1,4 @@
-"""Hydrogen v1.3 promotion: post-PR #56 candidate registry + archive isolation."""
+"""Paper economics: rebate tiers, rebated stats, wallet benchmark, archive isolation."""
 import unittest
 from unittest.mock import patch
 import bot.live_paper as lp
@@ -12,16 +12,6 @@ class TestArchivedRunExclusion(unittest.TestCase):
         self.assertFalse(ab._is_archived_run("run_20990101_000000_paper_hydrogen_v9_9"))
         self.assertFalse(ab._is_archived_run(None))
         self.assertFalse(ab._is_archived_run(""))
-
-    def test_strategy_id_mapping_covers_v13(self):
-        self.assertEqual(
-            ab._run_strategy_id("run_20261116_120000_paper_hydrogen_v1_3"),
-            "hydrogen-v1.3",
-        )
-        self.assertEqual(
-            ab._run_strategy_id("run_20261115_233630_paper_hydrogen_v1_2"),
-            "hydrogen-v1.2",
-        )
 
 
 class TestPaperRebate(unittest.TestCase):

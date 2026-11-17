@@ -123,23 +123,23 @@ class TestBaselineIdentity(unittest.TestCase):
     def test_default_baseline_is_hydrogen_v1_0(self):
         self.assertEqual(ab.DEFAULT_BASELINE_ID,
                          "run_20261113_183248_paper_hydrogen_v1_0")
-        self.assertIn(ab.DEFAULT_CANDIDATE_ID, ("hydrogen-v1.5", "hydrogen-v1.9", "hydrogen-v2.0"))
+        self.assertEqual(ab.DEFAULT_CANDIDATE_ID, "hydrogen-v2.0")
         self.assertEqual(ab.TARGET_SAMPLE_SIZE, 120)
         self.assertEqual(ab.TARGET_PAIRED_WINDOWS, 60)
         self.assertEqual(ab.TARGET_SUB_DOLLAR_PAIRS, 35)
 
-    def test_hypothesis_names_hydrogen_v1_5_vs_hydrogen_v1_0(self):
-        h0 = ab._hypothesis_text("hydrogen-v1.5", null=True,
+    def test_hypothesis_names_hydrogen_v2_0_vs_hydrogen_v1_0(self):
+        h0 = ab._hypothesis_text("hydrogen-v2.0", null=True,
                                  baseline_id=ab.DEFAULT_BASELINE_ID)
-        h1 = ab._hypothesis_text("hydrogen-v1.5", null=False,
+        h1 = ab._hypothesis_text("hydrogen-v2.0", null=False,
                                  baseline_id=ab.DEFAULT_BASELINE_ID)
-        self.assertTrue(h0.startswith("H₀: μ_Hydrogen_v1.5 ≤ μ_Hydrogen_v1.0 (and ≤ 0)"))
-        self.assertTrue(h1.startswith("H₁: μ_Hydrogen_v1.5 > μ_Hydrogen_v1.0 and > 0"))
-        self.assertIn("Hydrogen_v1.5", h0)
+        self.assertTrue(h0.startswith("H₀: μ_Hydrogen_v2.0 ≤ μ_Hydrogen_v1.0 (and ≤ 0)"))
+        self.assertTrue(h1.startswith("H₁: μ_Hydrogen_v2.0 > μ_Hydrogen_v1.0 and > 0"))
+        self.assertIn("Hydrogen_v2.0", h0)
         self.assertIn("Hydrogen_v1.0", h0)
-        self.assertIn("Hydrogen_v1.5", h1)
+        self.assertIn("Hydrogen_v2.0", h1)
         self.assertIn("Hydrogen_v1.0", h1)
-        for banned in ("v2.0", "v2.2", "Confidence", "DSP_v2.6"):
+        for banned in ("v2.2", "Confidence", "DSP"):
             self.assertNotIn(banned, h0)
             self.assertNotIn(banned, h1)
 

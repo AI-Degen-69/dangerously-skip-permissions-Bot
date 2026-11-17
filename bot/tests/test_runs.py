@@ -224,7 +224,7 @@ class TestRunScopedSessions(unittest.TestCase):
             self.assertIn("error", handler.sent_data)
 
     def test_session_label_from_strategy_symbol(self):
-        self.assertEqual(api.session_label({"strategy": {"symbol": "⚡ DSP-v2.2"}}), "dsp_v2_2")
+        self.assertEqual(api.session_label({"strategy": {"symbol": "⚡ DSP-v2.6"}}), "dsp_v2_6")
         self.assertEqual(api.session_label({"strategy": {"symbol": "🎯 HAPCS-v1"}}), "hapcs_v1")
         self.assertEqual(api.session_label({}), "default")
 
@@ -246,11 +246,11 @@ class TestRunScopedSessions(unittest.TestCase):
                 self.sent_status = status
                 self.sent_data = payload
 
-        new_id = "run_20261110_000000_paper_dsp_v2_2"
+        new_id = "run_20261110_000000_paper_dsp_v2_6"
         handler = DummyHandler("/api/bot/start", {"newSession": True})
         with patch.object(api, "stop_loop_process", return_value=None), \
              patch.object(api, "start_loop_process", return_value=4242) as start_mock, \
-             patch.object(api, "load_config", return_value={"strategy": {"symbol": "⚡ DSP-v2.2"}}), \
+             patch.object(api, "load_config", return_value={"strategy": {"symbol": "⚡ DSP-v2.6"}}), \
              patch.object(api, "make_run_id", return_value=new_id) as make_mock, \
              patch.object(api, "RunWorkspace", side_effect=lambda rid: RunWorkspace(rid, runs_root=self.tmp)), \
              patch.object(api, "RUNS_DIR", self.tmp / "paper_runs"), \
@@ -261,12 +261,12 @@ class TestRunScopedSessions(unittest.TestCase):
 
         self.assertEqual(handler.sent_status, 200)
         self.assertEqual(handler.sent_data["runId"], new_id)
-        make_mock.assert_called_once_with(mode="paper", label="dsp_v2_2")
+        make_mock.assert_called_once_with(mode="paper", label="dsp_v2_6")
         start_mock.assert_called_once_with(run_id=new_id)
         self.assertEqual(get_active_run_id(), new_id)
         meta = RunWorkspace(new_id, runs_root=self.tmp).read_meta()
-        self.assertEqual(meta.label, "dsp_v2_2")
-        self.assertEqual(meta.config_snapshot["strategy"]["symbol"], "⚡ DSP-v2.2")
+        self.assertEqual(meta.label, "dsp_v2_6")
+        self.assertEqual(meta.config_snapshot["strategy"]["symbol"], "⚡ DSP-v2.6")
         # Fresh session starts with an empty event journal.
         self.assertFalse((self.tmp / "events.jsonl").exists())
 

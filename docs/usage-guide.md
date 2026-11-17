@@ -58,7 +58,7 @@ You can start the trading loop in one of two ways:
   python bot/live_paper.py --slot 1794086700
 
   # Name the run workspace explicitly:
-  python bot/live_paper.py --loop --run-id run_20261116_103120_paper_h2_hydrogen_v1_8
+  python bot/live_paper.py --loop --run-id run_20261117_005536_paper_hydrogen_v2_0
   ```
 
 ### Step 4: Analyze a Run Offline (no live feed needed)
@@ -72,7 +72,7 @@ python -m bot.replay --run bot/runs/run_20261113_080232_paper_dsp_v2_6 --rule v2
 python -m bot.replay --runs all --rule hydrogen
 
 # Re-stamp a whole run's verified / attainable verdicts from its tape:
-python bot/verify_run.py --run-id run_20261116_103120_paper_h2_hydrogen_v1_8 --audit
+python bot/verify_run.py --run-id run_20261117_005536_paper_hydrogen_v2_0 --audit
 ```
 
 Replay never reads a window's own fills to drive the simulation—only its condition id, slug (start epoch), and winner for scoring. Fills are re-derived from the recorded book and prints via `bot.fill_model`.
