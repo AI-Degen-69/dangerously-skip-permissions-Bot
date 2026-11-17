@@ -89,8 +89,6 @@ def redeemable(run_id: str | None = None) -> list[tuple[Path, dict]]:
     candidates: list[tuple[Path, dict]] = []
 
     target_dir = ws.windows_dir if (ws and ws.windows_dir.exists()) else WINDOWS_MIRROR_DIR
-    if ws is None and not target_dir.exists():
-        target_dir = BOT_DIR / "paper_runs"
     if not target_dir.exists():
         return candidates
 

@@ -16,7 +16,6 @@ __pycache__/
 scratch/
 bot/runs/
 bot/windows_mirror/
-bot/paper_runs/
 bot/state.json
 bot/events.jsonl
 bot/loop.pid

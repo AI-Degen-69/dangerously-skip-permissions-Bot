@@ -2130,9 +2130,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Paper desk API (loopback only)")
     ap.add_argument("--port", type=int, default=8789)
     args = ap.parse_args()
-    if migrate_windows_mirror() == "error":
-        print("Windows mirror migration failed; stopping startup. Fix the move error and restart.", file=sys.stderr, flush=True)
-        raise SystemExit(1)
+    migrate_windows_mirror()
     try:
         start_background_sampler()
         server = QuietThreadingHTTPServer(("127.0.0.1", args.port), Handler)

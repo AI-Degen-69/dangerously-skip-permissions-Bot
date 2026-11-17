@@ -95,42 +95,6 @@ class RedeemTests(unittest.TestCase):
         disk_data = json.loads(win_file.read_text())
         self.assertNotIn("redeemedAt", disk_data)
 
-    def test_legacy_only_dry_run_then_migrated_mirror(self):
-        from bot.redeem import main
-        from bot.runs import migrate_windows_mirror
-
-        old = self.tmp / "paper_runs"
-        old.mkdir()
-        self.legacy_runs.rmdir()
-        win = old / "btc-updown-5m-100.json"
-        win.write_text(json.dumps({
-            "winner": "Up", "payout_usd": 30,
-            "fills": [{"shares": 30, "outcome": "Up"}],
-        }))
-        before = {p.relative_to(self.tmp): p.read_bytes()
-                  for p in self.tmp.rglob("*") if p.is_file()}
-        with patch("bot.redeem.BOT_DIR", self.tmp), \
-             patch("bot.redeem.WINDOWS_MIRROR_DIR", self.legacy_runs), \
-             patch("bot.redeem.get_active_run_id", return_value=None), \
-             patch("bot.redeem.migrate_windows_mirror") as migrate, \
-             patch("sys.argv", ["redeem.py", "--dry-run", "--csv", str(self.tmp / "out.csv")]), \
-             patch("sys.stdout", new_callable=io.StringIO) as output:
-            self.assertEqual(main(), 0)
-            self.assertIn("redeemable winning windows: 1 ($30.00)", output.getvalue())
-            migrate.assert_not_called()
-            self.assertEqual(before, {p.relative_to(self.tmp): p.read_bytes()
-                                     for p in self.tmp.rglob("*") if p.is_file()})
-            self.assertFalse(self.legacy_runs.exists())
-            self.assertTrue(old.exists())
-
-            self.assertEqual(migrate_windows_mirror(old, self.legacy_runs), "moved")
-            self.assertEqual(redeemable()[0][0].parent, self.legacy_runs)
-            # If both exist, the new mirror remains authoritative.
-            old.mkdir()
-            (old / "other.json").write_text(win.name)
-            self.assertEqual(len(redeemable()), 1)
-            self.assertEqual(redeemable()[0][0].parent, self.legacy_runs)
-
     def test_execute_redeem_mutates_files_and_syncs_legacy(self):
         ws = self._create_workspace()
         win_file = ws.windows_dir / "btc-updown-5m-100.json"

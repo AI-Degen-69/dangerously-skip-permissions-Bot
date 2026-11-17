@@ -1601,9 +1601,7 @@ def main() -> None:
     ap.add_argument("--run-id", default=None, help="Explicit run_id session directory")
     ap.add_argument("--label", default="msr_v2", help="Label for this run session")
     args = ap.parse_args()
-    if migrate_windows_mirror() == "error":
-        print("Windows mirror migration failed; stopping startup. Fix the move error and restart.", file=sys.stderr, flush=True)
-        raise SystemExit(1)
+    migrate_windows_mirror()
     c = PublicClient()
 
     ws = init_run_session(run_id=args.run_id, label=args.label)
