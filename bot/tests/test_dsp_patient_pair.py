@@ -3,7 +3,7 @@ import unittest
 from bot.executor import evaluate_microstructure_ladder, select_ladder_clip
 
 
-class TestDspV22ConfidenceSizing(unittest.TestCase):
+class TestDspPatientPair(unittest.TestCase):
     def test_preflight_gate_no_longer_blocks_a_lone_leg(self):
         """A leg at 44c with the opposite ask at 57c is allowed to rest.
 
@@ -24,7 +24,7 @@ class TestDspV22ConfidenceSizing(unittest.TestCase):
             inv=inv,
             fill_idx=0,
             minute=0,
-            strategy_id="dangerously-skip-permissions-v2.2",
+            strategy_id="dangerously-skip-permissions",
             min_fill=0.07,
             max_fill=0.88,
             max_pair_cost=0.985,
@@ -34,31 +34,6 @@ class TestDspV22ConfidenceSizing(unittest.TestCase):
         self.assertEqual(dec.outcome, "Up")
         self.assertEqual(dec.price, 0.44)
         self.assertEqual(dec.role, "MAKER")
-
-    def test_atomic_arb_heavy_sizing(self):
-        """Atomic Arb: when the hedge really is there (0.45 bid + 0.51 ask + fee < 0.985), size heavy (60 sh)."""
-        inv = {
-            "Up": {"shares": 0.0, "cost": 0.0},
-            "Down": {"shares": 0.0, "cost": 0.0},
-        }
-        quotes = {
-            "Up": {"bid": 0.45, "ask": 0.46},
-            "Down": {"bid": 0.50, "ask": 0.51},
-        }
-        dec = evaluate_microstructure_ladder(
-            quotes=quotes,
-            inv=inv,
-            fill_idx=0,
-            minute=0,
-            strategy_id="dangerously-skip-permissions-v2.2",
-            min_fill=0.07,
-            max_fill=0.88,
-            max_pair_cost=0.985,
-            rescue_max_pair_cost=0.995,
-            max_clip=60.0,
-        )
-        self.assertEqual(dec.action, "fill")
-        self.assertEqual(dec.shares, 60.0)
 
     def test_hedge_rests_at_the_bid_instead_of_crossing(self):
         """A 30-share Down deficit rests a bid at 0.28, not a taker buy at the 0.30 ask.
@@ -134,7 +109,7 @@ class TestDspV22ConfidenceSizing(unittest.TestCase):
             inv=inv,
             fill_idx=1,
             minute=1,
-            strategy_id="dangerously-skip-permissions-v2.2",
+            strategy_id="dangerously-skip-permissions",
             min_fill=0.07,
             max_fill=0.88,
             max_pair_cost=0.985,

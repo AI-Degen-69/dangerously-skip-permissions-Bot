@@ -106,18 +106,10 @@ def select_ladder_clip(
     max_clip: float = C.MAX_SHARES,
     whole_ladder: bool = True,
     current_lead: float = 0.0,
-    is_v22: bool = False,
-    atomic_arb: bool = False,
-    is_v23: bool = False,
-    target_risk_usd: float | None = None,
     dip_curve: dict | None = None,
     **kwargs,  # absorbs legacy unused kwargs
 ) -> float:
-    """Select clip size. In v2.2, employs Confidence Sizing (Heavy on atomic/deficit, Micro on dips).
-
-    In v2.3, employs Constant Dollar-Risk Sizing: Shares = $4.50 / entry price,
-    floored to 5-share increments and bounded to [10, max_clip] so unhedged
-    downside (shares * entry price) strictly never exceeds $4.50.
+    """Select clip size.
 
     dip_curve (optional): linear inverse-dip curve that overrides the fresh-dip
     clip. Deficit-closing fills are unaffected (they snap to the deficit).
@@ -133,23 +125,6 @@ def select_ladder_clip(
         if curve_clip is not None:
             return curve_clip
         # Unusable curve values: fall through to the flat ladder clip.
-    # DSP v2.2 Confidence-Based Sizing:
-    # 1. Atomic Arb (High Confidence, Risk-Free): Size heavy (up to max_clip = 60 sh)
-    # v2.3 intentionally does NOT take the heavy path here: fresh dips always
-    # use constant-risk sizing so one fill never creates a 60-share lead that
-    # blocks the next micro-cycle.
-    if is_v22 and atomic_arb:
-        return min(clip_shares(max_clip, max_clip), max_clip)
-    # 2a. DSP-v2.3 Speculative Dip Intake (Constant Dollar-Risk Parity):
-    if is_v23:
-        target = target_risk_usd if target_risk_usd is not None else C.TARGET_DOLLAR_RISK_USD
-        raw_shares = target / max(0.01, price)
-        snapped = (int(raw_shares // 5.0)) * 5.0
-        snapped = max(10.0, min(max_clip, snapped))
-        return min(clip_shares(snapped, max_clip), max_clip)
-    # 2b. DSP-v2.2 Speculative Dip Intake (Low Confidence, Directional Risk): Size micro (10 sh)
-    if is_v22:
-        return min(clip_shares(10.0, max_clip), max_clip)
     # Tweak 2: De-escalating clip sizes when leading side accumulates dips
     # Prevents huge runaway deficits from forming during early trending moves
     if current_lead >= 10.0:
@@ -767,7 +742,6 @@ def evaluate_microstructure_ladder(
     leg1_max_price: float | None = None,
     leg2_max_price: float | None = None,
     taker_dip_max: float | None = None,
-    taker_dip_balanced_only: bool = False,
     taker_hedge_max_pair_cost: float | None = None,
     hedge_max_clip: float | None = None,
     late_rescue_start_sec: float | None = None,
@@ -848,11 +822,8 @@ def evaluate_microstructure_ladder(
         if sh > 0 and c > 0:
             return float(c / sh)
         return None
-    # DSP family (v2.0, v2.1, v2.2, ...) shares the same recovery-engine rules.
+    # DSP family shares the same recovery-engine rules.
     is_dsp = strategy_id.startswith("dangerously-skip-permissions")
-    is_v22 = strategy_id.endswith("v2.2")
-    is_v23 = strategy_id.endswith("v2.3")
-    is_confidence = is_v22 or is_v23
     # No share-denominated veto: unhedged inventory is NOT capped by share
     # count. The measured wallet holds triple-digit residuals, so a share
     # veto only suppresses fills without buying safety. Unhedged risk is
@@ -874,8 +845,6 @@ def evaluate_microstructure_ladder(
     _taker_dip = _fnum(taker_dip_max)
     if _taker_dip is None:
         _taker_dip = _fnum(kwargs.get("takerDipEntryMax", kwargs.get("takerDipMax")))
-    _td_balanced_only = bool(taker_dip_balanced_only) or bool(
-        kwargs.get("takerDipBalancedOnly", kwargs.get("taker_dip_balanced_only", False)))
     _th_cap = _fnum(taker_hedge_max_pair_cost)
     if _th_cap is None:
         _th_cap = _fnum(kwargs.get("takerHedgeMaxPairCost", kwargs.get("takerHedgeMaxPair")))
@@ -1039,8 +1008,6 @@ def evaluate_microstructure_ladder(
             default_clip=default_clip,
             max_clip=max_clip,
             whole_ladder=whole_ladder,
-            is_v22=is_v22,
-            is_v23=is_v23,
         )
         # Profit-lock taker hedge (opt-in; None = off = exact legacy behavior).
         # When closing a deficit projects a fee-inclusive pair cost at/below the
@@ -1059,8 +1026,6 @@ def evaluate_microstructure_ladder(
                 default_clip=default_clip,
                 max_clip=h_cap,
                 whole_ladder=whole_ladder,
-                is_v22=is_v22,
-                is_v23=is_v23,
             )
             h_est, _ = compute_fill_usd(h_shares, ask, role="TAKER", include_fee=True)
             h_proj = _projected_pair_cost(inv, side, h_shares, h_est)
@@ -1181,17 +1146,9 @@ def evaluate_microstructure_ladder(
         # "no bid" would silently act like maker-only. Priced with the taker
         # fee via compute_fill_usd, so slippage is never understated. Falls
         # through to the maker path when the taker candidate fails its gates.
-        # No atomic bypass here: a fresh taker dip is never the v2.2 risk-free
-        # atomic pair, and no share veto exists to bind it.
-        # hydrogen-v1.2 balanced-or-light-only taker dip: when the book is
-        # imbalanced (lead > 0 means this side is heavy, since deficit <= 0
-        # here), skip the taker cross and fall through to the maker path.
-        # Balanced books and light-side deficit hedges are unaffected (the
-        # light side has deficit > 0 and never enters this block).
         if (deficit <= 0 and _taker_dip is not None and ask is not None
                 and ask >= min_fill and ask <= min(max_fill, leg1_cap)
-                and ask <= _taker_dip
-                and not (_td_balanced_only and lead > 0)):
+                and ask <= _taker_dip):
             t_clip_cap = min(max_clip, _probe_sh) if (_probe_sh is not None and _probe_sh > 0 and inv[opp]["shares"] <= 0) else max_clip
             t_def_clip = min(default_clip, t_clip_cap)
             t_shares = select_ladder_clip(
@@ -1203,9 +1160,6 @@ def evaluate_microstructure_ladder(
                 max_clip=t_clip_cap,
                 whole_ladder=whole_ladder,
                 current_lead=lead,
-                is_v22=is_v22,
-                atomic_arb=False,
-                is_v23=is_v23,
                 dip_curve=dip_curve,
             )
             t_est, _ = compute_fill_usd(t_shares, ask, role="TAKER", include_fee=True)
@@ -1260,9 +1214,6 @@ def evaluate_microstructure_ladder(
                     saw_unhedged_step = True
                     continue
 
-            # High-Confidence Atomic Arb Detection:
-            # If both sides can be filled immediately with sum <= 0.990, flag atomic_arb = True!
-            is_atomic = bool(is_confidence and opp_ref is not None and (px + opp_ref <= 0.990))
 
             role = "MAKER" if ((bid is not None and px == bid) or bid is None) else "TAKER"
             m_clip_cap = min(max_clip, _probe_sh) if (_probe_sh is not None and _probe_sh > 0 and inv[opp]["shares"] <= 0) else max_clip
@@ -1276,9 +1227,6 @@ def evaluate_microstructure_ladder(
                 max_clip=m_clip_cap,
                 whole_ladder=whole_ladder,
                 current_lead=lead,
-                is_v22=is_v22,
-                atomic_arb=is_atomic,
-                is_v23=is_v23,
                 dip_curve=dip_curve,
             )
             est_usd, _ = compute_fill_usd(shares, px, role=role, include_fee=(role == "TAKER"))
@@ -1318,7 +1266,6 @@ def evaluate_microstructure_ladder(
             # this is the at-the-money entry the ledger shows: the first leg
             # lands near 50c within ~13s of the open. The hedge is not assumed
             # here — it is placed as a resting bid once this leg fills.
-            is_atomic = bool(is_confidence and opp_ref is not None and (px + opp_ref <= 0.990))
             role = "MAKER" if ((bid is not None and px == bid) or bid is None) else "TAKER"
             s_clip_cap = min(max_clip, _probe_sh) if (_probe_sh is not None and _probe_sh > 0 and inv[opp]["shares"] <= 0) else max_clip
             s_def_clip = min(default_clip, s_clip_cap)
@@ -1330,9 +1277,6 @@ def evaluate_microstructure_ladder(
                 default_clip=s_def_clip,
                 max_clip=s_clip_cap,
                 whole_ladder=whole_ladder,
-                is_v22=is_v22,
-                atomic_arb=is_atomic,
-                is_v23=is_v23,
             )
             shares = _cap_for_maker(shares, role, side)
             if shares <= 0:

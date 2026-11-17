@@ -301,7 +301,7 @@ _SETUP_FEATURES = {
 
 
 def _setup_tag(setup_id: str) -> str:
-    """'dangerously-skip-permissions-v2.3' -> 'v2.3', 'hapcs-v1' -> 'v1'."""
+    """'dangerously-skip-permissions-v2.6' -> 'v2.6', 'hapcs-v1' -> 'v1'."""
     tail = str(setup_id).split("-")[-1]
     return tail if tail[:1] == "v" else tail
 
@@ -515,7 +515,6 @@ ACTIVE_WINDOW_SBC = (HARD_CUTOFF_SBC, WINDOW_S + PRE_OPEN_PIPELINE_S)
 # Sizing Parameters (shares)
 CLIP_SHARES_DEFAULT = 30.0     # 30.0 shares = dominant order signature (31.0% of tape)
 MAX_SHARES = 50.0              # 50.0 shares = deficit catch-up cap
-TARGET_DOLLAR_RISK_USD = 4.50  # DSP-v2.3 constant dollar-risk ceiling per unhedged dip clip
 MAX_UNHEDGED_USD = 0.0         # dollar-denominated unhedged-gap veto (0 = off): caps dollars exposed, not shares
 
 # Microstructure Price Bands ($)

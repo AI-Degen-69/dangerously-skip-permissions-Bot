@@ -91,8 +91,7 @@ def make_hump_sizing(max_clip: float):
 
     def sizing(deficit, price, pair_cost=None, fill_idx=0, default_clip=None,
                max_clip=max_clip, whole_ladder=True, current_lead=0.0,
-               is_v22=False, atomic_arb=False, is_v23=False,
-               target_risk_usd=None, dip_curve=None, **kwargs):
+               dip_curve=None, **kwargs):
         if deficit > 0:
             return min(clip_shares(deficit, max_clip), max_clip)
         return hump_shares(price, max_clip)
@@ -291,7 +290,11 @@ def load_slices(run_id: str, runs_root: Path = Path("bot/runs")) -> dict:
             newest = max(p.stat().st_mtime for p in list(tape_dir.glob("*.jsonl")))
             if cache_path.stat().st_mtime >= newest:
                 with open(cache_path, "rb") as f:
-                    return pickle.load(f)
+                    data = pickle.load(f)
+                # A window prune leaves the tape untouched, so the tape mtime alone
+                # would serve slices for windows that no longer exist.
+                if sum(1 for _ in (run_dir / "windows").glob("*.json")) == len(data["windows"]):
+                    return data
         except Exception:
             pass
     return build_slices(run_id, runs_root)
@@ -368,7 +371,6 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
     except (TypeError, ValueError):
         leg2_max = None
     taker_dip_max = entry.get("takerDipEntryMax", entry.get("takerDipMax", None))
-    taker_dip_balanced_only = bool(entry.get("takerDipBalancedOnly", False))
     try:
         taker_dip_max = float(taker_dip_max) if taker_dip_max is not None else None
     except (TypeError, ValueError):
@@ -722,7 +724,6 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
             rescue_max_pair_cost=rescue_max,
             leg1_max_price=leg1_max, leg2_max_price=leg2_max,
             taker_dip_max=taker_dip_max,
-            taker_dip_balanced_only=taker_dip_balanced_only,
             taker_hedge_max_pair_cost=taker_hedge_cap,
             hedge_max_clip=hedge_clip,
             late_rescue_start_sec=late_start,

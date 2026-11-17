@@ -62,7 +62,7 @@ export interface BotHealthView {
   killSwitch: boolean
 }
 
-/** '⚡ DSP-v2.2' -> { icon: '⚡', label: 'DSP-v2.2' } */
+/** '⚡ DSP-v2.6' -> { icon: '⚡', label: 'DSP-v2.6' } */
 function splitSymbol(symbol: string): { icon: string; label: string } {
   const space = symbol.indexOf(' ')
   return space > 0 ? { icon: symbol.slice(0, space), label: symbol.slice(space + 1) } : { icon: '', label: symbol }

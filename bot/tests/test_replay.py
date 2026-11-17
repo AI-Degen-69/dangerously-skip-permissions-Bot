@@ -101,7 +101,6 @@ class MultiLevelTests(unittest.TestCase):
             "maxShares": 10.0,
             "maxPairCost": 0.985,
             "takerDipEntryMax": 0.36,
-            "takerDipBalancedOnly": True,
             "minSpacingStaticSec": 0.0,
             "minSpacingMoveSec": 0.0,
             "includeTakerFee": True,
@@ -116,7 +115,7 @@ class MultiLevelTests(unittest.TestCase):
             (slot + 40, "Up", [[0.64, 10.0]], [[0.66, 10.0]]),
             (slot + 40, "Down", [[0.34, 10.0]], [[0.36, 10.0]]),
         ]
-        res = simulate_window(slot, "Up", book, [], "hydrogen-v1.2", entry, levels=1)
+        res = simulate_window(slot, "Up", book, [], "hydrogen-v1.0", entry, levels=1)
         self.assertEqual(res["n_fills"], 2)
         self.assertEqual(res["fills"][0]["outcome"], "Down")
         self.assertEqual(res["fills"][0]["role"], "TAKER")

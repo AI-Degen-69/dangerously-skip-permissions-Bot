@@ -15,7 +15,7 @@ def _decide(max_unhedged_usd=0.0):
         inv=INV,
         fill_idx=0,
         minute=1,
-        strategy_id="dangerously-skip-permissions-v2.4",
+        strategy_id="dangerously-skip-permissions",
         min_fill=0.07,
         max_fill=0.45,
         default_clip=10.0,
@@ -48,7 +48,7 @@ class TestUnhedgedUsdCap(unittest.TestCase):
 
 
 class TestDipCurveSizing(unittest.TestCase):
-    """DSP-v2.5 sizes a fresh dip from the inverse curve, not from a flat clip."""
+    """A fresh dip is sized from the inverse curve, not from a flat clip."""
 
     CURVE: ClassVar[dict] = {"lo": 0.07, "hi": 0.45, "sharesLo": 33.0, "sharesHi": 8.0}
 
@@ -73,14 +73,14 @@ class TestDipCurveSizing(unittest.TestCase):
             10.0,
         )
 
-    def test_v25_dip_uses_the_curve(self):
+    def test_dip_uses_the_curve(self):
         # 7c bid with a 0.90 hedge ask: the fat end of the curve, 33 sh instead of 10.
         dec = evaluate_microstructure_ladder(
             quotes={"Up": {"bid": 0.07, "ask": 0.08}, "Down": {"bid": 0.89, "ask": 0.90}},
             inv={"Up": {"shares": 0.0, "cost": 0.0}, "Down": {"shares": 0.0, "cost": 0.0}},
             fill_idx=0,
             minute=1,
-            strategy_id="dangerously-skip-permissions-v2.5",
+            strategy_id="dangerously-skip-permissions-v2.6",
             min_fill=0.07,
             max_fill=0.45,
             default_clip=10.0,
@@ -103,7 +103,7 @@ class TestDipCurveSizing(unittest.TestCase):
             inv={"Up": {"shares": 0.0, "cost": 0.0}, "Down": {"shares": 0.0, "cost": 0.0}},
             fill_idx=0,
             minute=1,
-            strategy_id="dangerously-skip-permissions-v2.5",
+            strategy_id="dangerously-skip-permissions-v2.6",
             min_fill=0.07,
             max_fill=0.975,
             default_clip=10.0,

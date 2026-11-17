@@ -708,7 +708,7 @@ export const useStrategySetups = () =>
     retry: false,
   })
 
-/** Union backend setups with local presets so a newly-added preset (e.g. DSP-v2.3)
+/** Union backend setups with local presets so a newly-added preset (e.g. DSP-v2.6)
  *  stays selectable even while an older API process is still serving a stale list. */
 export function mergeStrategySetups(
   backend: StrategySetup[] | undefined,

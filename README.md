@@ -50,7 +50,8 @@ python bot/live_paper.py --slot <epoch>
 anchor, maker dip grid + lagging-leg equalizer, late-window resolution snipe,
 settlement lock); `bot/executor.py` holds the ladder, pair-cost gates and maker
 rebalance; `bot/constants.py` is the versioned strategy registry
-(`dsp-v2.x` → `hydrogen-v1.9`, the current default in `bot/config.json`).
+(`dsp-v2.x` / `hydrogen-v1.x` → `hydrogen-v2.0`, the current default in
+`bot/config.json`).
 
 Risk rails: `maxFillsPerWindow` (500), `dailyLossCapUsd` ($500),
 `maxConcurrentPositions`, and the kill switch — the presence of `bot/kill` pauses
