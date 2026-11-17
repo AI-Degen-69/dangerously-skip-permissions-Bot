@@ -30,7 +30,7 @@ Snapshot taken at `main = a880cee` (17 Nov 2026). Delete this file once every bo
 
 ## Status
 
-Done: Phases 1–8. Still open: the two locked empty folders (they need a reboot) and the #71 → #72 ordering, which is work in other issues, not triage.
+Done: Phases 1–8, with #75 and #76 merged. Still open: the three locked empty folders (they need a reboot) and the #71 → #72 ordering, which is work in other issues, not triage.
 
 ## Phase 1 — Back up every local-only branch
 
@@ -68,7 +68,7 @@ Done: Phases 1–8. Still open: the two locked empty folders (they need a reboot
 ## Phase 5 — Delete merged branches
 
 - [x] `git branch -D feat/execution-health freebuff/chat feat/hydrogen-v2-strategy` — done for `feat/execution-health` and `feat/hydrogen-v2-strategy`; `freebuff/chat` kept because its worktree is live and owned by the freebuff app.
-- [ ] `git branch -D microstructure_inventory_risk_engine` only if Phase 2 chose "drop" — not applicable, kept.
+- [x] `git branch -D microstructure_inventory_risk_engine` only if Phase 2 chose "drop" — it chose keep, and #75 merged, so the branch is deleted locally and on `origin` anyway.
 - [x] `git branch -vv` shows `main` plus nothing you did not consciously keep — `main`, `freebuff/chat`, `microstructure_inventory_risk_engine`.
 
 ## Phase 6 — Uncommitted / untracked work
