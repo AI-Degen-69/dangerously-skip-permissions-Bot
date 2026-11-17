@@ -337,7 +337,7 @@ class LiveWindowVisibilityTests(unittest.TestCase):
 class TradesViewLiveTests(unittest.TestCase):
     """An open window's fills must reach the table before it closes.
 
-    Regression: trades_view() read paper_runs/ only, so the Live fills table
+    Regression: trades_view() read the mirror folder only, so the Live fills table
     froze on the previous window's "awaiting-resolution" row for the whole
     next window.
     """
@@ -360,7 +360,7 @@ class TradesViewLiveTests(unittest.TestCase):
                 "fills": [{"minute": 2, "outcome": "Down", "price": 0.4,
                            "shares": 30, "usd": 12.0}],
             }))
-            with patch.object(api, "RUNS_DIR", runs), patch.object(api, "STATE_PATH", st), patch.object(api, "resolve_run_workspace", return_value=None):
+            with patch.object(api, "WINDOWS_MIRROR_DIR", runs), patch.object(api, "STATE_PATH", st), patch.object(api, "resolve_run_workspace", return_value=None):
                 items = api.trades_view(50)
 
         live = [t for t in items if t["slug"] == "btc-updown-5m-400"]

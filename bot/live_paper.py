@@ -57,12 +57,19 @@ from bot.executor import (
 from bot.fill_audit import attainable_indexes, audit_window
 from bot.fill_model import match_maker_book_cross, match_maker_print
 from bot.risk import RiskState, assert_single_window, check_window, clip_shares, heartbeat
-from bot.runs import RunWorkspace, find_run_id, get_active_run_id, make_run_id, set_active_run_id
+from bot.runs import (
+    WINDOWS_MIRROR_DIR,
+    RunWorkspace,
+    find_run_id,
+    get_active_run_id,
+    make_run_id,
+    migrate_windows_mirror,
+    set_active_run_id,
+)
 from bot.signal import LeanSignal
 from bot.tape_verifier import load_book_for_window, load_prints_for_window, verify_fills
 from bot.ws import LiveBookStreamer
 
-RUNS_DIR = Path("bot/paper_runs")
 STATE_PATH = Path("bot/state.json")
 EVENTS_PATH = Path("bot/events.jsonl")
 CONFIG_PATH = Path("bot/config.json")
@@ -84,9 +91,9 @@ def init_run_session(run_id: str | None = None, label: str = "msr_v2") -> RunWor
     ws = RunWorkspace(rid)
     ws.init_workspace(config=load_cfg(), mode="paper", label=label)
     set_active_run_id(ws.run_id)
-    ws.sync_to_paper_runs(RUNS_DIR)
+    ws.sync_windows_mirror(WINDOWS_MIRROR_DIR)
     try:
-        ws.settle_pending_windows(RUNS_DIR)
+        ws.settle_pending_windows(WINDOWS_MIRROR_DIR)
     except Exception:
         pass
     if ws.events_file.exists() and ws.events_file.stat().st_size > 0:
@@ -363,9 +370,9 @@ def _settled_net_usd(path: Path, day_start: int) -> float:
 
 
 def _current_daily_pnl(day_start: int) -> float:
-    if not RUNS_DIR.exists():
+    if not WINDOWS_MIRROR_DIR.exists():
         return 0.0
-    return sum(_settled_net_usd(p, day_start) for p in RUNS_DIR.glob("btc-updown-5m-*.json"))
+    return sum(_settled_net_usd(p, day_start) for p in WINDOWS_MIRROR_DIR.glob("btc-updown-5m-*.json"))
 
 
 def write_state(
@@ -1401,8 +1408,8 @@ def trade_window(
         "orders_posted": orders_posted,
         "orders_cancelled": orders_cancelled,
     }
-    RUNS_DIR.mkdir(parents=True, exist_ok=True)
-    (RUNS_DIR / f"{slug}.json").write_text(json.dumps(result, indent=2))
+    WINDOWS_MIRROR_DIR.mkdir(parents=True, exist_ok=True)
+    (WINDOWS_MIRROR_DIR / f"{slug}.json").write_text(json.dumps(result, indent=2))
     ws = get_current_workspace()
     if ws:
         try:
@@ -1535,8 +1542,8 @@ def settle_slug(slug: str, snap: dict, origin: str | None, budget_s: int = 900) 
     else:
         result["pending"] = True
     try:
-        RUNS_DIR.mkdir(parents=True, exist_ok=True)
-        (RUNS_DIR / f"{slug}.json").write_text(json.dumps(result, indent=2))
+        WINDOWS_MIRROR_DIR.mkdir(parents=True, exist_ok=True)
+        (WINDOWS_MIRROR_DIR / f"{slug}.json").write_text(json.dumps(result, indent=2))
         ws = get_current_workspace()
         if ws:
             ws.windows_dir.mkdir(parents=True, exist_ok=True)
@@ -1594,6 +1601,7 @@ def main() -> None:
     ap.add_argument("--run-id", default=None, help="Explicit run_id session directory")
     ap.add_argument("--label", default="msr_v2", help="Label for this run session")
     args = ap.parse_args()
+    migrate_windows_mirror()
     c = PublicClient()
 
     ws = init_run_session(run_id=args.run_id, label=args.label)

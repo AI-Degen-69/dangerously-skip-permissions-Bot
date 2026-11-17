@@ -37,7 +37,7 @@ python bot/live_paper.py --slot <epoch>
 
 - `bot/state.json` — live fills + `updatedAtMs` heartbeat (one window owns it).
 - `bot/events.jsonl` — decision journal (open / hedge / hold / settle / skip).
-- `bot/paper_runs/<slug>.json` — one JSON per settled window (fills + net).
+- `bot/windows_mirror/<slug>.json` — one JSON per settled window (fills + net).
 - `bot/loop.pid` / `bot/loop.log` — loop process.
 - `bot/kill` — kill-switch file (present = entries paused). See below.
 
@@ -116,7 +116,7 @@ crashed window still owns state).
 
 ```sh
 python bot/redeem.py --dry-run   # list settled-unredeemed (10 on 2026-11-07, no mutation)
-python bot/redeem.py              # mark redeemedAt (mutates paper_runs/)
+python bot/redeem.py              # mark redeemedAt (mutates windows_mirror/)
 python bot/redeem.py --csv out.csv  # also append REDEEM rows (CSV header schema)
 python -m bot.reconcile           # fidelity vs frozen moments
 ```
@@ -124,7 +124,7 @@ python -m bot.reconcile           # fidelity vs frozen moments
 Real on-chain redeem needs live keys and stays out of paper.
 Weekly cadence is acceptable (target account leaves winners unclaimed for weeks).
 The `--dry-run` real run (non-dry) is intentionally not executed in paper —
-it would mutate `paper_runs/`.
+it would mutate `windows_mirror/`.
 
 ## Live micro-size runbook (gate before any funding)
 
@@ -132,7 +132,7 @@ Do NOT fund until ALL pass:
 
 1. `python -m unittest bot.tests.test_bot` — 19/19 green.
 2. `python -m unittest discover -s bot/tests` — all unit tests green.
-3. Desk loop paper ≥ 24h (`paper_runs/` ≥ ~288 settled) with market-neutral
+3. Desk loop paper ≥ 24h (`windows_mirror/` ≥ ~288 settled) with market-neutral
    sub-$1.00 pair-cost arbitrage and both-sides fill rate matching reconstructed tape.
 4. `python bot/redeem.py --dry-run` clean + kill-switch drill above green.
 5. Operator approves: live keys, `dailyLossCapUsd`, max per-window USD.
@@ -144,4 +144,4 @@ Scale only after a profitable held-to-redeem window reconciles end-to-end.
 ## Stop / reset
 
 Desk Stop button (`POST /api/bot/stop`) or kill the loop PID.
-`POST /api/bot/reset` clears `paper_runs/`, `state.json`, `events.jsonl`.
+`POST /api/bot/reset` clears `windows_mirror/`, `state.json`, `events.jsonl`.

@@ -18,7 +18,7 @@ class RedeemTests(unittest.TestCase):
         self.td = tempfile.TemporaryDirectory()
         self.tmp = Path(self.td.name)
         self.runs_root = self.tmp / "runs"
-        self.legacy_runs = self.tmp / "paper_runs"
+        self.legacy_runs = self.tmp / "windows_mirror"
         self.legacy_runs.mkdir(parents=True, exist_ok=True)
         self.events_path = self.tmp / "events.jsonl"
 
@@ -123,7 +123,7 @@ class RedeemTests(unittest.TestCase):
 
         with patch("bot.redeem.WORKSPACES_DIR", self.runs_root), \
              patch("bot.redeem.get_active_run_id", return_value=ws.run_id), \
-             patch("bot.redeem.RUNS_DIR", self.legacy_runs), \
+             patch("bot.redeem.WINDOWS_MIRROR_DIR", self.legacy_runs), \
              patch("bot.redeem.EVENTS_PATH", self.events_path):
             res = execute_redeem(run_id=ws.run_id, dry_run=False)
 
@@ -168,7 +168,7 @@ class RedeemTests(unittest.TestCase):
 
         with patch("bot.redeem.WORKSPACES_DIR", self.runs_root), \
              patch("bot.redeem.get_active_run_id", return_value="run_active_different"), \
-             patch("bot.redeem.RUNS_DIR", self.legacy_runs), \
+             patch("bot.redeem.WINDOWS_MIRROR_DIR", self.legacy_runs), \
              patch("bot.redeem.EVENTS_PATH", self.events_path):
             res = execute_redeem(run_id="run_historical", dry_run=False)
 
@@ -211,7 +211,7 @@ class RedeemTests(unittest.TestCase):
 
         with patch("bot.redeem.WORKSPACES_DIR", self.runs_root), \
              patch("bot.redeem.get_active_run_id", return_value=ws.run_id), \
-             patch("bot.redeem.RUNS_DIR", self.legacy_runs), \
+             patch("bot.redeem.WINDOWS_MIRROR_DIR", self.legacy_runs), \
              patch("bot.redeem.EVENTS_PATH", self.events_path):
             res = execute_redeem(run_id=ws.run_id, dry_run=False, csv_path=str(csv_file))
 

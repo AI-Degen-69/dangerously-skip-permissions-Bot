@@ -32,7 +32,7 @@ if __package__ in (None, ""):  # allow `python bot/verify_run.py`
 
 from bot import constants as C
 from bot.fill_audit import audit_window, load_prints
-from bot.runs import resolve_run_workspace, tape_segments
+from bot.runs import migrate_windows_mirror, resolve_run_workspace, tape_segments
 from bot.tape_verifier import load_book_for_window, verify_fills
 
 
@@ -53,6 +53,9 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="report without writing")
     parser.add_argument("--audit", action="store_true", help="also stamp each window's attainable P&L")
     args = parser.parse_args()
+
+    if not args.dry_run:
+        migrate_windows_mirror()
 
     ws = resolve_run_workspace(args.run_id)
     if ws is None or not ws.windows_dir.exists():
@@ -145,7 +148,7 @@ def main() -> int:
             path.write_text(json.dumps(record, indent=2), encoding="utf-8")
 
     if not args.dry_run:
-        ws.sync_to_paper_runs()
+        ws.sync_windows_mirror()
 
     total_before = sum(before.values())
     total_after = sum(after.values())

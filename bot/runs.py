@@ -33,12 +33,38 @@ logger = logging.getLogger("bot.runs")
 
 ROOT = Path(__file__).resolve().parent.parent
 BOT_DIR = ROOT / "bot"
+# Flat copy of the windows of the run that synced last — not a run store.
+WINDOWS_MIRROR_DIR = BOT_DIR / "windows_mirror"
 RUNS_DIR = BOT_DIR / "runs"
 ACTIVE_RUN_POINTER = RUNS_DIR / "active_run.json"
+_WINDOWS_MIRROR_LEGACY_DIR = BOT_DIR / "paper_runs"
 
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def migrate_windows_mirror(old_dir: Path | None = None, new_dir: Path | None = None) -> str:
+    """Move the pre-rename mirror folder once.
+
+    Returns "moved", "both-exist", "absent" or "error" so callers and tests can
+    tell what happened without parsing logs.
+    """
+    old = old_dir or _WINDOWS_MIRROR_LEGACY_DIR
+    new = new_dir or WINDOWS_MIRROR_DIR
+    old_exists, new_exists = old.exists(), new.exists()
+    if old_exists and new_exists:
+        logger.warning(f"Both {old} and {new} exist; leaving them unchanged — merge by hand")
+        return "both-exist"
+    if not old_exists:
+        return "absent"
+    try:
+        old.replace(new)
+    except OSError as ex:
+        logger.warning(f"Could not move {old} to {new}: {ex}")
+        return "error"
+    logger.info(f"moved windows mirror {old} -> {new}")
+    return "moved"
 
 
 def make_run_id(mode: str = "paper", label: str = "default", runs_root: Path = RUNS_DIR) -> str:
@@ -320,9 +346,9 @@ class RunWorkspace:
                     continue
         return out
 
-    def sync_to_paper_runs(self, target_dir: Path | None = None) -> int:
-        """Mirror all windows from self.windows_dir into active paper_runs, removing stale windows from other runs."""
-        dest = target_dir or (BOT_DIR / "paper_runs")
+    def sync_windows_mirror(self, target_dir: Path | None = None) -> int:
+        """Mirror all windows from self.windows_dir into the shared windows mirror, removing stale windows from other runs."""
+        dest = target_dir or WINDOWS_MIRROR_DIR
         dest.mkdir(parents=True, exist_ok=True)
         self.windows_dir.mkdir(parents=True, exist_ok=True)
         # 1. Mirror all windows from self.windows_dir into dest, preserving redemption info
@@ -360,7 +386,7 @@ class RunWorkspace:
         resolved_slugs = []
         if not self.windows_dir.exists():
             return resolved_slugs
-        dest = target_dir or (BOT_DIR / "paper_runs")
+        dest = target_dir or WINDOWS_MIRROR_DIR
         try:
             from polymarket import PublicClient
             client = PublicClient()
