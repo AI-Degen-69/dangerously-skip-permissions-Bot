@@ -2,7 +2,7 @@ import unittest
 from bot.executor import evaluate_microstructure_ladder
 
 
-class TestHydrogenV11Knobs(unittest.TestCase):
+class TestEntryKnobs(unittest.TestCase):
     def setUp(self):
         self.quotes_dip = {
             "Up": {"bid": 0.34, "ask": 0.35},
@@ -19,7 +19,7 @@ class TestHydrogenV11Knobs(unittest.TestCase):
             inv=inv_flat,
             fill_idx=0,
             minute=0,
-            strategy_id="hydrogen-v1.1",
+            strategy_id="hydrogen-v1.0",
             max_clip=25.0,
             dip_curve="hump",
             taker_dip_max=0.36,
@@ -44,7 +44,7 @@ class TestHydrogenV11Knobs(unittest.TestCase):
             inv=inv_paired,
             fill_idx=2,
             minute=1,
-            strategy_id="hydrogen-v1.1",
+            strategy_id="hydrogen-v1.0",
             max_clip=25.0,
             dip_curve="hump",
             taker_dip_max=0.36,
@@ -68,7 +68,7 @@ class TestHydrogenV11Knobs(unittest.TestCase):
             inv=inv_flat,
             fill_idx=0,
             minute=0,
-            strategy_id="hydrogen-v1.1",
+            strategy_id="hydrogen-v1.0",
             unhedged_step_cents=8.0,
             unhedged_probe_shares=10.0,
             taker_dip_max=0.36,
@@ -92,7 +92,7 @@ class TestHydrogenV11Knobs(unittest.TestCase):
             inv=inv_unhedged,
             fill_idx=1,
             minute=1,
-            strategy_id="hydrogen-v1.1",
+            strategy_id="hydrogen-v1.0",
             unhedged_step_cents=8.0,
             unhedged_probe_shares=10.0,
             taker_dip_max=0.36,
@@ -118,7 +118,7 @@ class TestHydrogenV11Knobs(unittest.TestCase):
             inv=inv_unhedged,
             fill_idx=1,
             minute=1,
-            strategy_id="hydrogen-v1.1",
+            strategy_id="hydrogen-v1.0",
             unhedged_step_cents=8.0,
             unhedged_probe_shares=10.0,
             taker_dip_max=0.36,
@@ -146,7 +146,7 @@ class TestHydrogenV11Knobs(unittest.TestCase):
             inv=inv_both,
             fill_idx=2,
             minute=1,
-            strategy_id="hydrogen-v1.1",
+            strategy_id="hydrogen-v1.0",
             unhedged_step_cents=8.0,
             unhedged_probe_shares=10.0,
             taker_dip_max=0.36,
@@ -175,8 +175,8 @@ class TestHydrogenV11Knobs(unittest.TestCase):
         self.assertEqual(dec.action, "fill")
         self.assertEqual(dec.shares, 25.0)
 
-    def test_taker_dip_entry_max_threshold_v11(self):
-        # v1.1 takerDipEntryMax is 0.36 (v1.0 was 0.42)
+    def test_taker_dip_entry_max_threshold(self):
+        # A 0.36 toggle rejects a 0.38 ask.
         inv_flat = {
             "Up": {"shares": 0.0, "cost": 0.0},
             "Down": {"shares": 0.0, "cost": 0.0},
@@ -191,7 +191,7 @@ class TestHydrogenV11Knobs(unittest.TestCase):
             inv=inv_flat,
             fill_idx=0,
             minute=0,
-            strategy_id="hydrogen-v1.1",
+            strategy_id="hydrogen-v1.0",
             taker_dip_max=0.36,
             unhedged_probe_shares=10.0,
             unhedged_step_cents=8.0,

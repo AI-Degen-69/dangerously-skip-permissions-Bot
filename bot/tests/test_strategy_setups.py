@@ -113,7 +113,7 @@ class TestStrategySetups(unittest.TestCase):
         self.assertEqual(dec.action, "fill")
         self.assertEqual(dec.outcome, "Down")
 
-    def test_v23_no_gap_veto(self):
+    def test_no_gap_veto_at_the_open(self):
         """The share veto is gone: pair-gated fills happen at any lead."""
         def decide(up_sh, down_sh):
             inv = {
@@ -126,7 +126,7 @@ class TestStrategySetups(unittest.TestCase):
                 inv=inv,
                 fill_idx=2,
                 minute=1,
-                strategy_id="dangerously-skip-permissions-v2.3",
+                strategy_id="dangerously-skip-permissions",
                 min_fill=0.07,
                 max_fill=0.45,
                 default_clip=10.0,
@@ -142,8 +142,8 @@ class TestStrategySetups(unittest.TestCase):
         dec_gap = decide(20, 10)
         self.assertEqual(dec_gap.outcome, "Down")
 
-    def test_v24_no_gap_veto(self):
-        """v2.4: a fresh 10 sh clip fills; a 10 sh gap is hedged, not widened."""
+    def test_no_gap_veto_on_a_fresh_clip(self):
+        """A fresh 10 sh clip fills; a 10 sh gap is hedged, not widened."""
         def decide(up_sh, down_sh):
             inv = {
                 "Up": {"shares": float(up_sh), "cost": round(up_sh * 0.44, 2)},
@@ -155,7 +155,7 @@ class TestStrategySetups(unittest.TestCase):
                 inv=inv,
                 fill_idx=2,
                 minute=1,
-                strategy_id="dangerously-skip-permissions-v2.4",
+                strategy_id="dangerously-skip-permissions",
                 min_fill=0.07,
                 max_fill=0.45,
                 default_clip=10.0,

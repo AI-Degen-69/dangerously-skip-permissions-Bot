@@ -80,7 +80,7 @@ def set_selected_run_id(run_id: str | None) -> None:
 
 
 def session_label(cfg: dict) -> str:
-    """Run-id label for a new session, from the active strategy symbol ('⚡ DSP-v2.2' -> 'dsp_v2_2')."""
+    """Run-id label for a new session, from the active strategy symbol ('⚡ DSP-v2.6' -> 'dsp_v2_6')."""
     strat = cfg.get("strategy") or {}
     raw = str(strat.get("symbol") or strat.get("id") or "")
     clean = "_".join("".join(c.lower() if c.isalnum() else " " for c in raw).split())
@@ -1974,7 +1974,6 @@ class Handler(BaseHTTPRequestHandler):
                     "clipSchedule",
                     "maxUnhedgedUsd",
                     "maxUnhedgedShares",
-                    "takerDipBalancedOnly",
                     "takerDipEntryMax",
                     "leg1MaxPrice",
                     "maxLeg1Price",
