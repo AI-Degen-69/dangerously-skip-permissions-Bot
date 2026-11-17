@@ -28,22 +28,26 @@ Snapshot taken at `main = a880cee` (17 Nov 2026). Delete this file once every bo
 | `feat/hydrogen-v2-strategy` @ `1a7aa7f` | 2 | yes — `hydrogen-v2.0` in `bot/config.json:9`, m4 fix is `968f8df` (#66) | delete after push |
 | `freebuff/chat`, `feat/execution-health`, `microstructure_inventory_risk_engine` | — | see table above | branch per row |
 
+## Status
+
+Done: Phases 1, 4, and the parts of 5/6/8 that were safe to do now. Open: a PR for the microstructure branch (Phase 2), the placement doc (Phase 3), the rescued CSV's home (Phase 6), optional disk work (Phase 7), and #71 → #72 sequencing.
+
 ## Phase 1 — Back up every local-only branch
 
-- [ ] Push each unmerged branch so nothing depends on a worktree folder:
+- [x] Push each unmerged branch so nothing depends on a worktree folder:
   `git push origin feat/execution-health freebuff/chat microstructure_inventory_risk_engine feat/hydrogen-v2-strategy`
-- [ ] Confirm they landed: `git ls-remote --heads origin` lists 5 heads including `main`.
-- [ ] Record the detached SHAs that have no branch, so they stay reachable if any is ever needed:
+- [x] Confirm they landed: `git ls-remote --heads origin` lists 5 heads including `main`.
+- [x] Record the detached SHAs that have no branch, so they stay reachable if any is ever needed:
   `git tag wip/calm-harbor-90ed8fc 90ed8fc` and `git push origin wip/calm-harbor-90ed8fc`
-  (same pattern for `beac431` if its content is still doubted)
+  (same pattern for `beac431` if its content is still doubted) — done for both, tags pushed.
 
 ## Phase 2 — Decide the one branch with unique code
 
-- [ ] Read the branch: `git log --oneline main..microstructure_inventory_risk_engine` and `git diff --stat main microstructure_inventory_risk_engine -- bot/`
-- [ ] Pick one and record the choice here:
-  - [ ] **Keep as work**: open a PR from `microstructure_inventory_risk_engine` (it now exists on origin, so the worktree can go regardless).
-  - [ ] **Drop**: `git branch -D microstructure_inventory_risk_engine` after the worktree is removed.
-- [ ] Confirm `bot/microstructure_engine/` is still absent from `main` before dropping, so the decision is not based on a stale snapshot.
+- [x] Read the branch: `git log --oneline main..microstructure_inventory_risk_engine` and `git diff --stat main microstructure_inventory_risk_engine -- bot/` — log reviewed; the full `bot/` diff is still open.
+- [x] Pick one and record the choice here:
+  - [x] **Keep as work**: open a PR from `microstructure_inventory_risk_engine` (it now exists on origin, so the worktree can go regardless). — keep chosen; PR still to open.
+  - [ ] **Drop**: `git branch -D microstructure_inventory_risk_engine` after the worktree is removed. — not chosen.
+- [x] Confirm `bot/microstructure_engine/` is still absent from `main` before dropping, so the decision is not based on a stale snapshot. — absent, so the branch stays.
 
 ## Phase 3 — Settle the uncertain commit
 
@@ -53,26 +57,26 @@ Snapshot taken at `main = a880cee` (17 Nov 2026). Delete this file once every bo
 
 ## Phase 4 — Remove worktrees (one at a time, verify each)
 
-- [ ] `git worktree remove "C:/Users/Tiger/.local/share/opencode/worktree/7c551f/calm-harbor"`
-- [ ] `git worktree remove "C:/Users/Tiger/.local/share/opencode/worktree/7c551f/kind-circuit"`
-- [ ] `git worktree remove "C:/Users/Tiger/.local/share/opencode/worktree/7c551f/curious-wizard"`
-- [ ] `git worktree remove "C:/Users/Tiger/.gemini/antigravity/worktrees/dangerously-skip-permissions-bot/microstructure_inventory_risk_engine"` — only after Phase 2 is decided and pushed
-- [ ] `git worktree prune`
-- [ ] `git worktree list` shows only the main checkout, the freebuff chat checkout and `tidy-meadow`
-- [ ] Retry the stuck folder: `Remove-Item "C:/Users/Tiger/.local/share/opencode/worktree/7c551f/swift-eagle" -Recurse -Force`; if it still refuses, leave a note and retry after reboot (it holds 0 files)
+- [x] `git worktree remove "C:/Users/Tiger/.local/share/opencode/worktree/7c551f/calm-harbor"`
+- [x] `git worktree remove "C:/Users/Tiger/.local/share/opencode/worktree/7c551f/kind-circuit"`
+- [x] `git worktree remove "C:/Users/Tiger/.local/share/opencode/worktree/7c551f/curious-wizard"`
+- [x] `git worktree remove "C:/Users/Tiger/.gemini/antigravity/worktrees/dangerously-skip-permissions-bot/microstructure_inventory_risk_engine"` — only after Phase 2 is decided and pushed
+- [x] `git worktree prune`
+- [x] `git worktree list` shows only the main checkout, the freebuff chat checkout and `tidy-meadow`
+- [ ] Retry the stuck folder: `Remove-Item "C:/Users/Tiger/.local/share/opencode/worktree/7c551f/swift-eagle" -Recurse -Force`; if it still refuses, leave a note and retry after reboot (it holds 0 files) — refused twice; retry after reboot. The microstructure folder is in the same state (0 files, deregistered).
 
 ## Phase 5 — Delete merged branches
 
-- [ ] `git branch -D feat/execution-health freebuff/chat feat/hydrogen-v2-strategy`
-- [ ] `git branch -D microstructure_inventory_risk_engine` only if Phase 2 chose "drop"
-- [ ] `git branch -vv` shows `main` plus nothing you did not consciously keep
+- [x] `git branch -D feat/execution-health freebuff/chat feat/hydrogen-v2-strategy` — done for `feat/execution-health` and `feat/hydrogen-v2-strategy`; `freebuff/chat` kept because its worktree is live and owned by the freebuff app.
+- [ ] `git branch -D microstructure_inventory_risk_engine` only if Phase 2 chose "drop" — not applicable, kept.
+- [x] `git branch -vv` shows `main` plus nothing you did not consciously keep — `main`, `freebuff/chat`, `microstructure_inventory_risk_engine`.
 
 ## Phase 6 — Uncommitted / untracked work
 
-- [ ] `docs/avellaneda-stoikov/01-architecture-overview.md` — committed as `a880cee`; `git status` clean. Nothing to do beyond confirming it is on `origin/main`.
-- [ ] Rescued CSV `data/0xb55fa1…csv` (77 MB, pulled 16 Nov) — confirm it belongs with the other pulled history under `data/dangerously-skip-permissions-trades/`, move it there or keep it at the root deliberately.
-- [ ] `freebuff` chat sessions (8 folders holding only `*.thread.json`) — leave them to the freebuff app; deleting a folder erases that conversation.
-- [ ] `bot/tests/__pycache__`, `bot/__pycache__`, `.pytest_cache`, empty `.worktrees/` — already removed; they are regenerated by running tests.
+- [x] `docs/avellaneda-stoikov/01-architecture-overview.md` — committed as `a880cee`; `git status` clean. Nothing to do beyond confirming it is on `origin/main`.
+- [ ] Rescued CSV `data/0xb55fa1…csv` (77 MB, pulled 16 Nov) — confirm it belongs with the other pulled history under `data/dangerously-skip-permissions-trades/`, move it there or keep it at the root deliberately. — still at `data/` root.
+- [x] `freebuff` chat sessions (8 folders holding only `*.thread.json`) — leave them to the freebuff app; deleting a folder erases that conversation.
+- [x] `bot/tests/__pycache__`, `bot/__pycache__`, `.pytest_cache`, empty `.worktrees/` — already removed; they are regenerated by running tests.
 
 ## Phase 7 — Optional disk work (decide, do not default)
 
@@ -82,17 +86,17 @@ Snapshot taken at `main = a880cee` (17 Nov 2026). Delete this file once every bo
 
 ## Phase 8 — Closeout gates
 
-- [ ] `git worktree list` matches the intended set.
-- [ ] `git branch -vv` shows no branch you cannot explain.
-- [ ] `git status --short` is clean on `main`.
-- [ ] `main` equals `origin/main`: `git rev-parse HEAD origin/main` returns the same SHA.
-- [ ] `python -m pytest bot/tests -q` passes (320 tests).
+- [x] `git worktree list` matches the intended set.
+- [x] `git branch -vv` shows no branch you cannot explain.
+- [x] `git status --short` is clean on `main`.
+- [x] `main` equals `origin/main`: `git rev-parse HEAD origin/main` returns the same SHA. — both `76b7eb5`.
+- [x] `python -m pytest bot/tests -q` passes (320 tests). — 320 passed.
 - [ ] Repo size sanity: `git count-objects -vH` — run `git gc --prune=now` only after every branch you dropped is unreachable by design.
 
 ## Sequencing with open work
 
 - [ ] #71 (rename the flat window mirror) lands before #72 (move runtime data to `data/`), because #72 moves the folder #71 renames.
-- [ ] This checklist can land in parallel: it touches `docs/` only.
+- [x] This checklist can land in parallel: it touches `docs/` only. — landed as #73.
 
 ## Rollback
 
