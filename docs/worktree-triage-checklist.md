@@ -30,7 +30,7 @@ Snapshot taken at `main = a880cee` (17 Nov 2026). Delete this file once every bo
 
 ## Status
 
-Done: Phases 1, 4, and the parts of 5/6/8 that were safe to do now. Open: a PR for the microstructure branch (Phase 2), the placement doc (Phase 3), the rescued CSV's home (Phase 6), optional disk work (Phase 7), and #71 → #72 sequencing.
+Done: Phases 1–8. Still open: the two locked empty folders (they need a reboot) and the #71 → #72 ordering, which is work in other issues, not triage.
 
 ## Phase 1 — Back up every local-only branch
 
@@ -45,15 +45,15 @@ Done: Phases 1, 4, and the parts of 5/6/8 that were safe to do now. Open: a PR f
 
 - [x] Read the branch: `git log --oneline main..microstructure_inventory_risk_engine` and `git diff --stat main microstructure_inventory_risk_engine -- bot/` — log reviewed; the full `bot/` diff is still open.
 - [x] Pick one and record the choice here:
-  - [x] **Keep as work**: open a PR from `microstructure_inventory_risk_engine` (it now exists on origin, so the worktree can go regardless). — keep chosen; PR still to open.
+  - [x] **Keep as work**: open a PR from `microstructure_inventory_risk_engine` (it now exists on origin, so the worktree can go regardless). — PR #75: branch merged up to `main` (the stale v2.6 edits and the pruned run folders fell away), 343 tests pass.
   - [ ] **Drop**: `git branch -D microstructure_inventory_risk_engine` after the worktree is removed. — not chosen.
 - [x] Confirm `bot/microstructure_engine/` is still absent from `main` before dropping, so the decision is not based on a stale snapshot. — absent, so the branch stays.
 
 ## Phase 3 — Settle the uncertain commit
 
-- [ ] Check whether the placement-rules verdict is worth keeping:
-  `git show --stat dc7cbe5` and `git show dc7cbe5 --name-only`
-- [ ] If yes, restore just that file from the branch into `docs/` and merge it on its own; if no, note "superseded" and continue.
+- [x] Check whether the placement-rules verdict is worth keeping:
+  `git show --stat dc7cbe5` and `git show dc7cbe5 --name-only` — one file, `docs/leaderboard-traders/reports/replay_placement_rules.md` (213 lines).
+- [x] If yes, restore just that file from the branch into `docs/` and merge it on its own; if no, note "superseded" and continue. — **superseded**: its verdict is already shipped as `dangerously-skip-permissions-v2.7` (`dipCurve: hump`, `takerDipEntryMax` 0.45, late rescue) in `bot/constants.py`, and the `bot/runs/` windows it cites were pruned in #69/#70, so it can no longer be re-verified from the repo. Recoverable from `origin/feat/execution-health` if wanted.
 
 ## Phase 4 — Remove worktrees (one at a time, verify each)
 
@@ -63,7 +63,7 @@ Done: Phases 1, 4, and the parts of 5/6/8 that were safe to do now. Open: a PR f
 - [x] `git worktree remove "C:/Users/Tiger/.gemini/antigravity/worktrees/dangerously-skip-permissions-bot/microstructure_inventory_risk_engine"` — only after Phase 2 is decided and pushed
 - [x] `git worktree prune`
 - [x] `git worktree list` shows only the main checkout, the freebuff chat checkout and `tidy-meadow`
-- [ ] Retry the stuck folder: `Remove-Item "C:/Users/Tiger/.local/share/opencode/worktree/7c551f/swift-eagle" -Recurse -Force`; if it still refuses, leave a note and retry after reboot (it holds 0 files) — refused twice; retry after reboot. The microstructure folder is in the same state (0 files, deregistered).
+- [ ] Retry the stuck folder: `Remove-Item "C:/Users/Tiger/.local/share/opencode/worktree/7c551f/swift-eagle" -Recurse -Force`; if it still refuses, leave a note and retry after reboot (it holds 0 files) — refused a third time on 17 Nov. `tidy-meadow` is now in the same state: removed from git by `git worktree prune`, folder still locked by a process (as is the Gemini `microstructure_inventory_risk_engine` folder). All three hold 0 files and no longer appear in `git worktree list`; delete the folders after the machine reboots.
 
 ## Phase 5 — Delete merged branches
 
@@ -74,24 +74,24 @@ Done: Phases 1, 4, and the parts of 5/6/8 that were safe to do now. Open: a PR f
 ## Phase 6 — Uncommitted / untracked work
 
 - [x] `docs/avellaneda-stoikov/01-architecture-overview.md` — committed as `a880cee`; `git status` clean. Nothing to do beyond confirming it is on `origin/main`.
-- [ ] Rescued CSV `data/0xb55fa1…csv` (77 MB, pulled 16 Nov) — confirm it belongs with the other pulled history under `data/dangerously-skip-permissions-trades/`, move it there or keep it at the root deliberately. — still at `data/` root.
+- [x] Rescued CSV `data/0xb55fa1…csv` (77 MB, pulled 16 Nov) — confirm it belongs with the other pulled history under `data/dangerously-skip-permissions-trades/`, move it there or keep it at the root deliberately. — moved to `data/dangerously-skip-permissions-trades/18_2026-11-09_to_2026-11-16.csv`, continuing the 00–17 series. `data/` now holds only that folder.
 - [x] `freebuff` chat sessions (8 folders holding only `*.thread.json`) — leave them to the freebuff app; deleting a folder erases that conversation.
 - [x] `bot/tests/__pycache__`, `bot/__pycache__`, `.pytest_cache`, empty `.worktrees/` — already removed; they are regenerated by running tests.
 
 ## Phase 7 — Optional disk work (decide, do not default)
 
-- [ ] `scratch/replay_cache/` — 3.2 GB of 13 valid pickles. Safe to delete, replays rebuild them (`python -m bot.replay --run …`). Drop only if disk pressure matters more than replay speed.
-- [ ] `bot/runs/` — 9.2 GB, already pruned to replayable windows only; moves under #72, not here.
-- [ ] `data/dangerously-skip-permissions-trades/` — 950 MB of pulled trade history; not stale, do not delete.
+- [x] `scratch/replay_cache/` — 3.2 GB of 13 valid pickles. Safe to delete, replays rebuild them (`python -m bot.replay --run …`). Drop only if disk pressure matters more than replay speed. — **keep**: 449 GB free, so replay speed is worth more than 3.2 GB.
+- [x] `bot/runs/` — 9.2 GB, already pruned to replayable windows only; moves under #72, not here. — **keep** for now, still moves under #72.
+- [x] `data/dangerously-skip-permissions-trades/` — 950 MB of pulled trade history; not stale, do not delete. — **keep**.
 
 ## Phase 8 — Closeout gates
 
-- [x] `git worktree list` matches the intended set.
+- [x] `git worktree list` matches the intended set. — `main`, the freebuff chat checkout, and `misty-harbor` (a newer session worktree sitting on current `main`).
 - [x] `git branch -vv` shows no branch you cannot explain.
 - [x] `git status --short` is clean on `main`.
 - [x] `main` equals `origin/main`: `git rev-parse HEAD origin/main` returns the same SHA. — both `76b7eb5`.
-- [x] `python -m pytest bot/tests -q` passes (320 tests). — 320 passed.
-- [ ] Repo size sanity: `git count-objects -vH` — run `git gc --prune=now` only after every branch you dropped is unreachable by design.
+- [x] `python -m pytest bot/tests -q` passes (320 tests). — 320 passed. (It only imported `bot` with `PYTHONPATH=.`; #75 adds `pytest.ini` with `pythonpath = .` and makes CI run pytest, so the 343-test suite now actually executes.)
+- [x] Repo size sanity: `git count-objects -vH` — run `git gc --prune=now` only after every branch you dropped is unreachable by design. — 4042 loose objects, 37.05 MiB, no packs. Every dropped branch still exists on `origin`, so nothing points at risk; `gc` skipped because 37 MiB needs no packing.
 
 ## Sequencing with open work
 
