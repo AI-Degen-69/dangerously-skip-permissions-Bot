@@ -290,7 +290,11 @@ def load_slices(run_id: str, runs_root: Path = Path("bot/runs")) -> dict:
             newest = max(p.stat().st_mtime for p in list(tape_dir.glob("*.jsonl")))
             if cache_path.stat().st_mtime >= newest:
                 with open(cache_path, "rb") as f:
-                    return pickle.load(f)
+                    data = pickle.load(f)
+                # A window prune leaves the tape untouched, so the tape mtime alone
+                # would serve slices for windows that no longer exist.
+                if sum(1 for _ in (run_dir / "windows").glob("*.json")) == len(data["windows"]):
+                    return data
         except Exception:
             pass
     return build_slices(run_id, runs_root)
