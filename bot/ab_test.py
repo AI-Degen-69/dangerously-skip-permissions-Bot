@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -420,14 +421,10 @@ def _run_strategy_id(run_id: str | None) -> str:
             pass
     if run_id is None:
         return DEFAULT_CANDIDATE_ID
-    if "hydrogen_v1_0" in str(run_id).lower() or "hydrogen-v1.0" in str(run_id).lower():
-        return "hydrogen-v1.0"
-    if "hydrogen_v2_0" in str(run_id).lower() or "hydrogen-v2.0" in str(run_id).lower():
-        return "hydrogen-v2.0"
-    if "hydrogen_v1_9" in str(run_id).lower() or "hydrogen-v1.9" in str(run_id).lower():
-        return "hydrogen-v1.9"
-    if "hydrogen" in str(run_id).lower():
-        return DEFAULT_CANDIDATE_ID
+    # Archived runs without meta label from the name: hydrogen_v1_4 -> hydrogen-v1.4.
+    m = re.search(r"hydrogen[-_]v(\d+)[._](\d+)", str(run_id).lower())
+    if m:
+        return f"hydrogen-v{m.group(1)}.{m.group(2)}"
     return "hydrogen-v1.0"
 
 

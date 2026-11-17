@@ -129,12 +129,14 @@ class DepthCapTests(unittest.TestCase):
         dec = evaluate_microstructure_ladder(
             quotes=quotes, inv=self._inv(), fill_idx=2, minute=1,
             strategy_id='dangerously-skip-permissions',
+            taker_dip_max=0.30,
             min_fill=0.07, max_fill=0.45, default_clip=33.0, max_clip=45.0,
             benchmark_pair_cost=0.965, max_pair_cost=0.985,
             max_depth_shares=100.0, resting_size={'Up': 1.0, 'Down': 100.0},
         )
-        if dec.action == 'fill' and dec.role == 'TAKER':
-            self.assertGreater(dec.shares, 1.0)
+        self.assertEqual(dec.action, 'fill')
+        self.assertEqual(dec.role, 'TAKER')
+        self.assertGreater(dec.shares, 1.0)
 
 
 class WsPrintTests(unittest.TestCase):
