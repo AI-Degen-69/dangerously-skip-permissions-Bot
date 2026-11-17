@@ -15,7 +15,7 @@ __pycache__/
 # Runtime bot state & session runs
 scratch/
 bot/runs/
-bot/paper_runs/
+bot/windows_mirror/
 bot/state.json
 bot/events.jsonl
 bot/loop.pid

@@ -15,6 +15,7 @@ from bot.runs import (
     get_active_run_id,
     list_all_runs,
     make_run_id,
+    migrate_windows_mirror,
     set_active_run_id,
 )
 
@@ -22,7 +23,7 @@ from bot.runs import (
 class TestRunScopedSessions(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
-        self.orig_runs_dir = api.RUNS_DIR
+        self.orig_runs_dir = api.WINDOWS_MIRROR_DIR
         self.orig_runs_root = runs.RUNS_DIR
         self.orig_active_pointer = runs.ACTIVE_RUN_POINTER
         runs.RUNS_DIR = self.tmp
@@ -113,21 +114,21 @@ class TestRunScopedSessions(unittest.TestCase):
         self.assertEqual(meta2.status, "running")
         self.assertIsNone(meta2.ended_at)
 
-    def test_sync_to_paper_runs(self):
+    def test_sync_windows_mirror(self):
         ws = RunWorkspace("run_test_sync", runs_root=self.tmp)
         ws.init_workspace()
         (ws.windows_dir / "btc-1.json").write_text(json.dumps({"trades": 10}))
         (ws.windows_dir / "btc-2.json").write_text(json.dumps({"trades": 20}))
 
-        paper_dir = self.tmp / "active_paper"
-        paper_dir.mkdir(parents=True, exist_ok=True)
-        (paper_dir / "stale-other-run.json").write_text(json.dumps({"trades": 99}))
+        mirror_dir = self.tmp / "active_windows_mirror"
+        mirror_dir.mkdir(parents=True, exist_ok=True)
+        (mirror_dir / "stale-other-run.json").write_text(json.dumps({"trades": 99}))
 
-        count = ws.sync_to_paper_runs(paper_dir)
+        count = ws.sync_windows_mirror(mirror_dir)
         self.assertEqual(count, 2)
-        self.assertTrue((paper_dir / "btc-1.json").exists())
-        self.assertTrue((paper_dir / "btc-2.json").exists())
-        self.assertFalse((paper_dir / "stale-other-run.json").exists())
+        self.assertTrue((mirror_dir / "btc-1.json").exists())
+        self.assertTrue((mirror_dir / "btc-2.json").exists())
+        self.assertFalse((mirror_dir / "stale-other-run.json").exists())
 
     def test_resume_run_handler(self):
         from io import BytesIO
@@ -156,7 +157,7 @@ class TestRunScopedSessions(unittest.TestCase):
              patch.object(api, "start_loop_process", return_value=12345), \
              patch.object(api, "find_run_id", return_value=ws_old.run_id), \
              patch.object(api, "RunWorkspace", side_effect=lambda rid: RunWorkspace(rid, runs_root=self.tmp)), \
-             patch.object(api, "RUNS_DIR", self.tmp / "paper_runs"), \
+             patch.object(api, "WINDOWS_MIRROR_DIR", self.tmp / "windows_mirror"), \
              patch.object(api, "EVENTS_PATH", self.tmp / "events.jsonl"), \
              patch.object(api, "STATE_PATH", self.tmp / "state.json"), \
              patch.object(api, "KILL_PATH", self.tmp / "kill"):
@@ -185,7 +186,7 @@ class TestRunScopedSessions(unittest.TestCase):
         win_file = ws.windows_dir / "settled_window_1.json"
         win_file.write_text(json.dumps({"slug": "btc-1", "net_usd": 15.0}), encoding="utf-8")
 
-        dest_dir = self.tmp / "paper_runs"
+        dest_dir = self.tmp / "windows_mirror"
         dest_dir.mkdir(parents=True, exist_ok=True)
         # Destination already redeemed
         (dest_dir / "settled_window_1.json").write_text(
@@ -193,7 +194,7 @@ class TestRunScopedSessions(unittest.TestCase):
             encoding="utf-8"
         )
 
-        ws.sync_to_paper_runs(dest_dir)
+        ws.sync_windows_mirror(dest_dir)
         # Check source was updated with redemption info
         src_data = json.loads(win_file.read_text(encoding="utf-8"))
         self.assertTrue(src_data.get("redeemed"))
@@ -253,7 +254,7 @@ class TestRunScopedSessions(unittest.TestCase):
              patch.object(api, "load_config", return_value={"strategy": {"symbol": "⚡ DSP-v2.6"}}), \
              patch.object(api, "make_run_id", return_value=new_id) as make_mock, \
              patch.object(api, "RunWorkspace", side_effect=lambda rid: RunWorkspace(rid, runs_root=self.tmp)), \
-             patch.object(api, "RUNS_DIR", self.tmp / "paper_runs"), \
+             patch.object(api, "WINDOWS_MIRROR_DIR", self.tmp / "windows_mirror"), \
              patch.object(api, "EVENTS_PATH", self.tmp / "events.jsonl"), \
              patch.object(api, "STATE_PATH", self.tmp / "state.json"), \
              patch.object(api, "KILL_PATH", self.tmp / "kill"):
@@ -269,6 +270,69 @@ class TestRunScopedSessions(unittest.TestCase):
         self.assertEqual(meta.config_snapshot["strategy"]["symbol"], "⚡ DSP-v2.6")
         # Fresh session starts with an empty event journal.
         self.assertFalse((self.tmp / "events.jsonl").exists())
+
+
+class TestMigrateWindowsMirror(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.old = self.tmp / "old_windows"
+        self.new = self.tmp / "new_windows"
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _seed(self, folder: Path, name: str = "w.json", body: str = '{"a": 1}') -> Path:
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / name
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    def test_old_only_is_moved_and_keeps_files(self):
+        seed = self._seed(self.old)
+        body = seed.read_text(encoding="utf-8")
+
+        self.assertEqual(migrate_windows_mirror(self.old, self.new), "moved")
+        self.assertFalse(self.old.exists())
+        self.assertEqual((self.new / "w.json").read_text(encoding="utf-8"), body)
+
+    def test_both_existing_are_left_unchanged(self):
+        self._seed(self.old, "old.json", '{"old": 1}')
+        self._seed(self.new, "new.json", '{"new": 1}')
+
+        with self.assertLogs("bot.runs", level="WARNING") as logs:
+            self.assertEqual(migrate_windows_mirror(self.old, self.new), "both-exist")
+
+        self.assertTrue((self.old / "old.json").exists())
+        self.assertTrue((self.new / "new.json").exists())
+        message = "\n".join(logs.output)
+        self.assertIn(str(self.old), message)
+        self.assertIn(str(self.new), message)
+
+    def test_neither_folder_does_nothing(self):
+        self.assertEqual(migrate_windows_mirror(self.old, self.new), "absent")
+        self.assertFalse(self.old.exists())
+        self.assertFalse(self.new.exists())
+
+    def test_new_only_does_nothing(self):
+        self._seed(self.new)
+        self.assertEqual(migrate_windows_mirror(self.old, self.new), "absent")
+        self.assertTrue((self.new / "w.json").exists())
+
+    def test_oserror_leaves_old_files_and_does_not_raise(self):
+        seed = self._seed(self.old)
+
+        with patch.object(Path, "replace", side_effect=OSError("boom")):
+            with self.assertLogs("bot.runs", level="WARNING"):
+                self.assertEqual(migrate_windows_mirror(self.old, self.new), "error")
+
+        self.assertTrue(seed.exists())
+        self.assertFalse(self.new.exists())
+
+    def test_second_call_after_move_is_a_noop(self):
+        self._seed(self.old)
+        self.assertEqual(migrate_windows_mirror(self.old, self.new), "moved")
+        self.assertEqual(migrate_windows_mirror(self.old, self.new), "absent")
+        self.assertTrue((self.new / "w.json").exists())
 
 
 if __name__ == "__main__":

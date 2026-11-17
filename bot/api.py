@@ -8,7 +8,8 @@ paper fills, replay KPIs.
   python bot/api.py            # serve on 127.0.0.1:8789
   python bot/api.py --port 8789
 
-Backed by: bot/config.json, bot/paper_runs/*.json, bot/state.json,
+Backed by: bot/config.json, run windows (bot/runs/<run_id>/windows/*.json, read
+first) with bot/windows_mirror/*.json as fallback, bot/state.json,
 bot/events.jsonl. Live market reads via PublicClient (public, no keys).
 """
 
@@ -31,11 +32,13 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from bot.runs import (
+    WINDOWS_MIRROR_DIR,
     RunWorkspace,
     find_run_id,
     get_active_run_id,
     list_all_runs,
     make_run_id,
+    migrate_windows_mirror,
     resolve_run_workspace,
     set_active_run_id,
 )
@@ -44,7 +47,6 @@ from bot import constants as C
 
 BOT_DIR = ROOT / "bot"
 CONFIG_PATH = BOT_DIR / "config.json"
-RUNS_DIR = BOT_DIR / "paper_runs"
 STATE_PATH = BOT_DIR / "state.json"
 EVENTS_PATH = BOT_DIR / "events.jsonl"
 PID_PATH = BOT_DIR / "loop.pid"
@@ -109,8 +111,8 @@ def runs() -> list[dict]:
     if ws and ws.windows_dir.exists():
         return ws.list_windows()
     out = []
-    if RUNS_DIR.exists():
-        for p in sorted(RUNS_DIR.glob("*.json")):
+    if WINDOWS_MIRROR_DIR.exists():
+        for p in sorted(WINDOWS_MIRROR_DIR.glob("*.json")):
             try:
                 out.append(json.loads(p.read_text()))
             except Exception:
@@ -1018,10 +1020,11 @@ def _mean(values: list[float]) -> float:
 def perf() -> dict:
     """Performance and execution health for the straddle paper loop.
 
-    Everything here is computed from bot/paper_runs/*.json (no network), so the
-    desk can answer two questions in one read: how much did the paper loop make,
-    and is it executing the way the strategy intends — both legs covered, pair
-    cost under its own cap, fills a real bid could have got.
+    Everything here is computed from run windows (bot/runs/<run_id>/windows/*.json)
+    with bot/windows_mirror/*.json as fallback (no network), so the desk can
+    answer two questions in one read: how much did the paper loop make, and is it
+    executing the way the strategy intends — both legs covered, pair cost under
+    its own cap, fills a real bid could have got.
     """
     from bot import constants as C
 
@@ -1762,9 +1765,9 @@ class Handler(BaseHTTPRequestHandler):
                             set_selected_run_id(None)
                             ws = RunWorkspace(resolved_id)
                             ws.init_workspace(config=load_config(), mode="paper", label=label)
-                            ws.sync_to_paper_runs(RUNS_DIR)
+                            ws.sync_windows_mirror(WINDOWS_MIRROR_DIR)
                             try:
-                                ws.settle_pending_windows(RUNS_DIR, max_windows=15)
+                                ws.settle_pending_windows(WINDOWS_MIRROR_DIR, max_windows=15)
                             except Exception:
                                 pass
                             if ws.events_file.exists() and ws.events_file.stat().st_size > 0:
@@ -1834,9 +1837,9 @@ class Handler(BaseHTTPRequestHandler):
                     set_active_run_id(resolved_id)
                     set_selected_run_id(None)
                     ws.init_workspace(config=load_config(), mode="paper")
-                    ws.sync_to_paper_runs(RUNS_DIR)
+                    ws.sync_windows_mirror(WINDOWS_MIRROR_DIR)
                     try:
-                        ws.settle_pending_windows(RUNS_DIR, max_windows=15)
+                        ws.settle_pending_windows(WINDOWS_MIRROR_DIR, max_windows=15)
                     except Exception:
                         pass
                     if ws.events_file.exists() and ws.events_file.stat().st_size > 0:
@@ -1908,7 +1911,7 @@ class Handler(BaseHTTPRequestHandler):
                 if is_view_only():
                     self._send(400, {"error": "Cannot reset while in view-only mode", "isViewOnly": True})
                     return
-                for p in RUNS_DIR.glob("*.json"):
+                for p in WINDOWS_MIRROR_DIR.glob("*.json"):
                     p.unlink()
                 active_ws = resolve_run_workspace(None)
                 if active_ws and active_ws.windows_dir.exists():
@@ -2127,6 +2130,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Paper desk API (loopback only)")
     ap.add_argument("--port", type=int, default=8789)
     args = ap.parse_args()
+    migrate_windows_mirror()
     try:
         start_background_sampler()
         server = QuietThreadingHTTPServer(("127.0.0.1", args.port), Handler)

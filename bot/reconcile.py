@@ -25,18 +25,19 @@ def summarize_with_sdk(client, proxy: str = TARGET_PROXY) -> dict:
 
 
 # --- paper fidelity job -------------------------------------------------
-# Compares live paper_runs/*.json against the frozen CSV moments in
+# Compares live windows_mirror/*.json against the frozen CSV moments in
 # bot.constants (45 median trades/market, 280/288 both-sides, M0-M4 shape).
 # Same gate the plan requires before any live size.
-def fidelity(runs_dir: str = "bot/paper_runs") -> dict:
+def fidelity(runs_dir: str | None = None) -> dict:
     import json
     import statistics
     from pathlib import Path
 
     from . import constants as C
+    from .runs import WINDOWS_MIRROR_DIR
 
     runs = []
-    for p in sorted(Path(runs_dir).glob("*.json")):
+    for p in sorted(Path(runs_dir or WINDOWS_MIRROR_DIR).glob("*.json")):
         try:
             runs.append(json.loads(p.read_text()))
         except Exception:
@@ -67,4 +68,8 @@ def fidelity(runs_dir: str = "bot/paper_runs") -> dict:
 
 if __name__ == "__main__":
     import json as _json
+
+    from .runs import migrate_windows_mirror
+
+    migrate_windows_mirror()
     print(_json.dumps(fidelity(), indent=2))

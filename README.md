@@ -70,9 +70,10 @@ loop.pid          loop process id
 ```
 
 Everything under `bot/runs/` is runtime output and gitignored, as are
-`bot/state.json`, `bot/events.jsonl`, `bot/paper_runs/`, `bot/kill` and
-`scratch/`. The one recorded run kept in the repo carries its `run_meta.json` and
-`windows/`; its journal has been pruned.
+`bot/state.json`, `bot/events.jsonl`, `bot/kill` and `scratch/`.
+`bot/windows_mirror/` is gitignored too: a flat copy of the windows of the run
+that synced last, not a run store. The one recorded run kept in the repo carries
+its `run_meta.json` and `windows/`; its journal has been pruned.
 
 ## Tape, verification and replay
 
@@ -153,6 +154,6 @@ harmless, but do not rename one without the others.
 ## Paper-only boundary
 
 Nothing here touches funds or keys. Settlement is modeled from the resolved window,
-`bot/redeem.py` only marks `redeemedAt` in paper runs, and the live micro-size
-gate (funding, keys, per-window dollar caps) stays closed until the runbook's
-checklist passes.
+`bot/redeem.py` only marks `redeemedAt` in run windows and the
+`bot/windows_mirror/` copy, and the live micro-size gate (funding, keys,
+per-window dollar caps) stays closed until the runbook's checklist passes.

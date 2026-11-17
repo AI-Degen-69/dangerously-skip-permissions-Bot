@@ -1,8 +1,8 @@
 """Paper redeem batch job — hold-to-redeem without keys, no funding.
 
 Scans settled windows (winner known, not pending) that have not been
-redeemed yet, marks them redeemedAt across active run workspaces (and legacy
-bot/paper_runs/ for backward compatibility), and can dump REDEEM rows in the
+redeemed yet, marks them redeemedAt across active run workspaces (and the
+shared bot/windows_mirror/ mirror), and can dump REDEEM rows in the
 same CSV schema as docs/dangerously-skip-permissions/scripts/save-trades-to-csv.py
 so the existing reconcile pattern keeps working.
 
@@ -32,10 +32,16 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from bot.runs import RUNS_DIR as WORKSPACES_DIR, RunWorkspace, get_active_run_id, resolve_run_workspace
+from bot.runs import (
+    WINDOWS_MIRROR_DIR,
+    RUNS_DIR as WORKSPACES_DIR,
+    RunWorkspace,
+    get_active_run_id,
+    migrate_windows_mirror,
+    resolve_run_workspace,
+)
 
 BOT_DIR = ROOT / "bot"
-RUNS_DIR = BOT_DIR / "paper_runs"
 EVENTS_PATH = BOT_DIR / "events.jsonl"
 
 CSV_HEADER = [
@@ -54,7 +60,7 @@ def get_target_workspace(run_id: str | None = None) -> RunWorkspace | None:
     """Resolve target RunWorkspace for redemption, rejecting invalid explicit IDs.
 
     When run_id is omitted, only the currently active run workspace is used.
-    If no active run exists, falls back to None (legacy paper_runs storage).
+    If no active run exists, falls back to None (legacy windows_mirror storage).
     """
     if run_id == "legacy":
         return None
@@ -82,7 +88,7 @@ def redeemable(run_id: str | None = None) -> list[tuple[Path, dict]]:
     ws = get_target_workspace(run_id)
     candidates: list[tuple[Path, dict]] = []
 
-    target_dir = ws.windows_dir if (ws and ws.windows_dir.exists()) else RUNS_DIR
+    target_dir = ws.windows_dir if (ws and ws.windows_dir.exists()) else WINDOWS_MIRROR_DIR
     if not target_dir.exists():
         return candidates
 
@@ -193,9 +199,9 @@ def execute_redeem(
         data_str = json.dumps(r, indent=2)
         p.write_text(data_str, encoding="utf-8")
 
-        # Sync to legacy directory ONLY if modifying the active run
-        if is_active_run and RUNS_DIR.exists() and p.parent.resolve() != RUNS_DIR.resolve():
-            legacy_file = RUNS_DIR / p.name
+        # Sync to the shared mirror ONLY if modifying the active run
+        if is_active_run and WINDOWS_MIRROR_DIR.exists() and p.parent.resolve() != WINDOWS_MIRROR_DIR.resolve():
+            legacy_file = WINDOWS_MIRROR_DIR / p.name
             if legacy_file.exists():
                 try:
                     legacy_file.write_text(data_str, encoding="utf-8")
@@ -261,8 +267,8 @@ def execute_redeem(
             r["redeemedAt"] = now
             data_str = json.dumps(r, indent=2)
             p.write_text(data_str, encoding="utf-8")
-            if is_active_run and RUNS_DIR.exists() and p.parent.resolve() != RUNS_DIR.resolve():
-                legacy_file = RUNS_DIR / p.name
+            if is_active_run and WINDOWS_MIRROR_DIR.exists() and p.parent.resolve() != WINDOWS_MIRROR_DIR.resolve():
+                legacy_file = WINDOWS_MIRROR_DIR / p.name
                 if legacy_file.exists():
                     legacy_file.write_text(data_str, encoding="utf-8")
             if ws is None and active_ws and active_ws.windows_dir.exists() and p.parent.resolve() != active_ws.windows_dir.resolve():
@@ -283,13 +289,16 @@ def main() -> int:
     ap.add_argument("--csv", default=None, help="append REDEEM rows to this CSV")
     args = ap.parse_args()
 
+    if not args.dry_run:
+        migrate_windows_mirror()
+
     try:
         res = execute_redeem(run_id=args.run_id, dry_run=args.dry_run, csv_path=args.csv)
     except ValueError as err:
         print(f"error: {err}", file=sys.stderr)
         return 1
 
-    target_name = res.get("runId") or "legacy paper_runs"
+    target_name = res.get("runId") or "legacy windows_mirror"
     print(f"target workspace: {target_name}")
     print(f"redeemable winning windows: {res['redeemedCount']} (${res['payoutUsd']:.2f})")
     for d in res["details"]:
