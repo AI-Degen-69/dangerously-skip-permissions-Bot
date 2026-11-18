@@ -40,7 +40,7 @@ class TestPaperRebate(unittest.TestCase):
             self.assertEqual(C.PAPER_REBATE_TAKER_RATE, 0.50)
 
     def test_tier_range_documents_volume_ladder(self):
-        self.assertEqual(C.PAPER_REBATE_TIER_RANGE, (0.32, 0.44, 0.50))
+        self.assertEqual(C.PAPER_REBATE_TIER_RANGE, (0.25, 0.40, 0.50, 0.60))
 
 
 class TestRebatedStats(unittest.TestCase):

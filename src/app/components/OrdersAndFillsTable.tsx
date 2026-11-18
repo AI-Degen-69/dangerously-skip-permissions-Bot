@@ -257,7 +257,7 @@ export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsP
 
                   // The run file records the fee it charged, and a stored zero is a
                   // real value (no fee on that fill). Only fills with no recorded fee
-                  // fall back to the 0.07 · p · (1 − p) formula.
+                  // fall back to the 0.05 · p · (1 − p) formula.
                   const detailFee = typeof detail?.feeUsd === 'number' ? detail.feeUsd : null
                   const feeUsd = isSettled
                     ? null
@@ -271,7 +271,7 @@ export function OrdersAndFillsTable({ items, windowSlugs = [] }: OrdersAndFillsP
                   const rebateUsd =
                     !includeRebates || feeUsd == null
                       ? null
-                      : rebateFor(trade.price, trade.shares, !!isMaker, tier.rate, feeUsd)
+                      : rebateFor(trade.price, trade.shares, !!isMaker, tier.rate, feeUsd, tier.makerRate)
                   const tapeStatus = (detail?.tapeStatus as string | undefined) ?? undefined
                   // Attainable is the stronger verdict: it is the only check that
                   // knows the queue ahead and the sell side. Live it only ever

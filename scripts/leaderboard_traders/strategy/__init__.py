@@ -9,7 +9,7 @@ The same text is saved as `<csv-stem>_strategy.md` in
 `data/leaderboard/<account>/raw/`, otherwise next to the CSV.
 
 Key recovered facts the script relies on:
-  - USD_Amount = Shares * Price * (1 + fee), fee per share = 0.07 * p * (1-p) when taker.
+  - USD_Amount = Shares * Price * (1 + fee), fee per share = 0.05 * p * (1-p) when taker.
   - Zero-fee fills are maker fills; the two never mix inside one transaction hash.
     Newer ledgers drop the hash, so row order is the sort tiebreaker for them.
   - REDEEM USD_Amount ~= Shares => winning token, 0 => losing token.
@@ -40,7 +40,7 @@ REQUIRED_COLUMNS = (
     "Timestamp_UTC", "Type", "Market_Slug", "Condition_ID",
     "Outcome", "Token_ID", "Price", "Shares", "USD_Amount",
 )
-FEE_RATE = 0.07
+FEE_RATE = 0.05
 def load():
     df = pd.read_csv(PATH)
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]

@@ -6,7 +6,7 @@ from bot import constants as C
 
 
 def taker_fee_per_share(price: float, coeff: float = C.TAKER_FEE_COEFF) -> float:
-    """Polymarket parabolic taker fee: fee_per_share = 0.07 * p * (1 - p)."""
+    """Polymarket parabolic taker fee: fee_per_share = coeff * p * (1 - p)."""
     if price <= 0.0 or price >= 1.0 or coeff <= 0.0:
         return 0.0
     return coeff * price * (1.0 - price)
@@ -21,7 +21,7 @@ def compute_fill_usd(
     """Return (total_usd, fee_usd) for a fill.
 
     Maker fills (0% fee): USD_Amount = round(shares * price, 2).
-    Taker fills: USD_Amount = round(shares * (price + 0.07 * p * (1 - p)), 2).
+    Taker fills: USD_Amount = round(shares * (price + coeff * p * (1 - p)), 2).
     """
     if role == "TAKER" and include_fee:
         fee_ps = taker_fee_per_share(price)

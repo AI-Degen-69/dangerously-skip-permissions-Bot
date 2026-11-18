@@ -1,5 +1,5 @@
 import type { PerfWindow } from './bot'
-import { windowRebate } from './rebates'
+import { MAKER_REBATE_SHARE, windowRebate } from './rebates'
 
 export interface Timeframe {
   id: string
@@ -41,9 +41,10 @@ export function scopeWindows(
   tierRate: number,
   includeRebates: boolean,
   startingCapital: number,
+  makerRate: number = MAKER_REBATE_SHARE,
 ): ScopedView {
   const netOf = (w: PerfWindow) =>
-    (w.netUsd ?? 0) + (includeRebates ? windowRebate(w, tierRate) : 0)
+    (w.netUsd ?? 0) + (includeRebates ? windowRebate(w, tierRate, makerRate) : 0)
   const scoped = windows.filter((w) => w.startMs >= cutoff)
   const baseCapital =
     startingCapital +

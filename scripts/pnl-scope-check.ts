@@ -48,20 +48,20 @@ assert.equal(all.baseCapital, 1000)
 // account held when the hour began: 1000 + the older window's net (+ its rebate).
 const hour = scopeWindows(windows, timeframeStart(TIMEFRAMES[0], NOW), 0.5, true, 1000)
 assert.equal(hour.windows.length, 1)
-assert.equal(hour.baseCapital, 1000 + 5 + (0.5 * 20 + 0.2 * 100))
+assert.equal(hour.baseCapital, 1000 + 5 + (0.5 * 20 + 0.15 * 100))
 
 // The rebate toggle reaches every stat: net, win rate and the capital curve.
 const tierRate = 0.5
 const withRebates = computeKpiStats(windows, 1000, undefined, tierRate, true)
 const withoutRebates = computeKpiStats(windows, 1000, undefined, tierRate, false)
-// Taker rebate 0.5 × 30 fees, maker rebate 0.2 × 150 matched fees.
-assert.equal(withRebates.rebatesUsd, 45)
-assert.equal(withRebates.netUsd, 3 + 45)
+// Taker rebate 0.5 × 30 fees, maker rebate 0.15 × 150 matched fees.
+assert.equal(withRebates.rebatesUsd, 37.5)
+assert.equal(withRebates.netUsd, 3 + 37.5)
 assert.equal(withoutRebates.netUsd, 3)
 assert.equal(withoutRebates.netBeforeRebateUsd, 3)
 assert.equal(withoutRebates.rebatesCounted, false)
 assert.equal(withRebates.rebatesCounted, true)
-// The rebate reaches the win rate too: the losing window earns 15 in rebates,
+// The rebate reaches the win rate too: the losing window earns 12.5 in rebates,
 // so it closes positive and the win count moves.
 assert.equal(withoutRebates.winsCount, 1)
 assert.equal(withRebates.winsCount, 2)
@@ -75,7 +75,7 @@ const scopedStats = computeKpiStats(
   true,
 )
 assert.equal(scopedStats.currentCapital, hour.baseCapital + scopedStats.netUsd)
-assert.equal(scopedStats.netUsd, -2 + (0.5 * 10 + 0.2 * 50))
+assert.equal(scopedStats.netUsd, -2 + (0.5 * 10 + 0.15 * 50))
 
 // Verified Only: a window carries the numbers its verified fills make, and a
 // window without a verified fill drops out of the view entirely.

@@ -385,14 +385,14 @@ class LivePaperLoopTests(unittest.TestCase):
     def test_msr_v2_parabolic_taker_fee_and_maker_zero_fee(self):
         from bot.executor import compute_fill_usd, taker_fee_per_share
 
-        self.assertAlmostEqual(taker_fee_per_share(0.50), 0.0175, places=6)
-        self.assertAlmostEqual(taker_fee_per_share(0.20), 0.0112, places=6)
+        self.assertAlmostEqual(taker_fee_per_share(0.50), 0.0125, places=6)
+        self.assertAlmostEqual(taker_fee_per_share(0.20), 0.008, places=6)
         maker_usd, maker_fee = compute_fill_usd(30.0, 0.50, role="MAKER")
         self.assertEqual(maker_usd, 15.00)
         self.assertEqual(maker_fee, 0.0)
         taker_usd, taker_fee = compute_fill_usd(30.0, 0.50, role="TAKER")
-        self.assertEqual(taker_usd, 15.52)
-        self.assertAlmostEqual(taker_fee, 0.525, places=3)
+        self.assertEqual(taker_usd, 15.37)
+        self.assertAlmostEqual(taker_fee, 0.375, places=3)
 
     def test_msr_v2_lagging_leg_equalizer_and_ceiling_guard(self):
         from bot.executor import evaluate_microstructure_ladder
@@ -801,7 +801,7 @@ class LivePaperLoopTests(unittest.TestCase):
         quote_seq = [
             {"Up": {"bid": 0.73, "ask": 0.74}, "Down": {"bid": 0.25, "ask": 0.26}},
             {"Up": {"bid": 0.68, "ask": 0.70}, "Down": {"bid": 0.30, "ask": 0.32}},
-            {"Up": {"bid": 0.66, "ask": 0.70}, "Down": {"bid": 0.30, "ask": 0.34}},
+            {"Up": {"bid": 0.66, "ask": 0.70}, "Down": {"bid": 0.31, "ask": 0.34}},
             {"Up": {"bid": 0.64, "ask": 0.66}, "Down": {"bid": 0.34, "ask": 0.36}},
         ]
         idx = [0]
