@@ -2,7 +2,7 @@
 
 Scans settled windows (winner known, not pending) that have not been
 redeemed yet, marks them redeemedAt across active run workspaces (and the
-shared bot/windows_mirror/ mirror), and can dump REDEEM rows in the
+shared data/windows_mirror/ mirror), and can dump REDEEM rows in the
 same CSV schema as docs/dangerously-skip-permissions/scripts/save-trades-to-csv.py
 so the existing reconcile pattern keeps working.
 
@@ -33,16 +33,14 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from bot.runs import (
+    EVENTS_PATH,
     WINDOWS_MIRROR_DIR,
     RUNS_DIR as WORKSPACES_DIR,
     RunWorkspace,
+    ensure_data_dir,
     get_active_run_id,
     migrate_windows_mirror,
-    resolve_run_workspace,
 )
-
-BOT_DIR = ROOT / "bot"
-EVENTS_PATH = BOT_DIR / "events.jsonl"
 
 CSV_HEADER = [
     "Proxy_Wallet", "Timestamp_UTC", "Type", "Market", "Outcome",
@@ -114,7 +112,10 @@ def log_event(kind: str, reason: str, slug: str, events_path: Path | None = None
     }
     rec.update(kw)
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
+        if target == EVENTS_PATH:
+            ensure_data_dir()
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec) + "\n")
     except Exception:
@@ -224,14 +225,7 @@ def execute_redeem(
             events_path=events_file,
             detail={"winner": r.get("winner"), "payout": payout, "shares": wshares},
         )
-        if events_file.resolve() != EVENTS_PATH.resolve() and EVENTS_PATH.exists():
-            log_event(
-                "redeem",
-                "paper-redeem",
-                r.get("event_slug", p.stem),
-                events_path=EVENTS_PATH,
-                detail={"winner": r.get("winner"), "payout": payout, "shares": wshares},
-            )
+        # Single journal write: the run journal above is the record.
 
         rows.append([
             "paper",

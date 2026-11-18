@@ -15,7 +15,7 @@ FILLS = [
 
 
 def paper_run(slug: str, fills: list[dict], winner: str | None) -> dict:
-    """Shaped like bot/windows_mirror/<slug>.json."""
+    """Shaped like data/windows_mirror/<slug>.json."""
     cost = round(sum(f["usd"] for f in fills), 2)
     won = sum(f["shares"] for f in fills if f["outcome"] == winner) if winner else 0.0
     payout = round(won, 2)

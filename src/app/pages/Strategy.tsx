@@ -70,7 +70,7 @@ function Badge({
 }
 
 // ----------------------------------------------------------------------
-// This page documents whatever setup bot/config.json currently selects.
+// This page documents whatever setup data/config.json currently selects.
 // Every number below is read from the active setup's live entry block, so
 // switching setups on the Config page changes this text. The only fixed
 // content is the reference tape section, which is explicitly not live.
@@ -650,7 +650,7 @@ export function Strategy() {
                     <Sigma className="size-4" />
                   </span>
                   <h3 className="font-heading text-base font-semibold text-foreground">
-                    2. Active parameters &amp; gates (<code className="font-mono text-[14px]">bot/config.json</code>)
+                    2. Active parameters &amp; gates (<code className="font-mono text-[14px]">data/config.json</code>)
                   </h3>
                 </div>
                 <Badge tone="neutral">{picked?.symbol ?? 'No setup'} · live values</Badge>
@@ -683,7 +683,7 @@ export function Strategy() {
                 </Table>
               </div>
               <p className="mt-3 text-[11.5px] text-muted-foreground">
-                Source of truth: <code className="font-mono">bot/config.json</code>, mirrored in{' '}
+                Source of truth: <code className="font-mono">data/config.json</code>, mirrored in{' '}
                 <code className="font-mono">bot/constants.py</code> and enforced by{' '}
                 <code className="font-mono">bot/executor.py</code>. Change a value on the Config page and this table
                 follows on the next refresh — except the clip curve and the dollar cap, which belong to the setup
@@ -992,7 +992,7 @@ export function Strategy() {
           </p>
           <p className="mt-1 text-[12.5px] leading-relaxed text-muted-foreground">
             {loading
-              ? 'This page documents whatever bot/config.json selects, so it waits for the bot API to answer.'
+              ? 'This page documents whatever data/config.json selects, so it waits for the bot API to answer.'
               : 'The bot API is unreachable, so no setup can be named here. Nothing below is live configuration.'}
           </p>
         </Card>
@@ -1010,7 +1010,7 @@ export function Strategy() {
             <p className="text-[12.5px] text-muted-foreground">
               {picked ? (
                 <>
-                  This page mirrors <code className="font-mono">bot/config.json</code>; the engine re-reads it every
+                  This page mirrors <code className="font-mono">data/config.json</code>; the engine re-reads it every
                   window. Running on port 5173 → {BOT_ORIGIN}.
                 </>
               ) : (

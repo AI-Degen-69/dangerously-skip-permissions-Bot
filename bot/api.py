@@ -1,4 +1,4 @@
-"""Local desk API for the Up/Down paper bot — stdlib only, no extra deps.
+"""Local desk API for the Up/Down paper bot -- stdlib only, no extra deps.
 
 Serves the exact contract in src/app/lib/bot.ts on loopback
 http://127.0.0.1:8789 so the dashboard (Dashboard/Live/Config/Strategy)
@@ -8,23 +8,24 @@ paper fills, replay KPIs.
   python bot/api.py            # serve on 127.0.0.1:8789
   python bot/api.py --port 8789
 
-Backed by: bot/config.json, run windows (bot/runs/<run_id>/windows/*.json, read
-first) with bot/windows_mirror/*.json as fallback, bot/state.json,
-bot/events.jsonl. Live market reads via PublicClient (public, no keys).
+Backed by: data/config.json, run windows (data/runs/<run_id>/windows/*.json, read
+first) with data/windows_mirror/*.json as fallback, data/runs/<run_id>/state.json,
+data/runs/<run_id>/events.jsonl (fallback data/events.jsonl). Live market reads via PublicClient (public, no keys).
+
+Shell + pure-domain split: this file owns every patchable seam (paths,
+run workspaces, caches, locks, the network client) and orchestrates IO.
+bot/api_core.py, bot/api_loop.py, bot/api_markets.py, bot/api_views.py
+are pure -- they take explicit arguments and never import bot.api.
 """
 
 import argparse
 import json
-import math
 import os
-import shutil
-import statistics
 import subprocess
 import sys
 import threading
 import time
 import urllib.parse
-from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -32,8 +33,15 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from bot.runs import (
+    CONFIG_PATH,
+    EVENTS_PATH,
+    KILL_PATH,
+    LOG_PATH,
+    PID_PATH,
+    STATE_PATH as FALLBACK_STATE_PATH,
     WINDOWS_MIRROR_DIR,
     RunWorkspace,
+    ensure_data_dir,
     find_run_id,
     get_active_run_id,
     list_all_runs,
@@ -42,33 +50,49 @@ from bot.runs import (
     resolve_run_workspace,
     set_active_run_id,
 )
-from bot.fill_audit import role_of
 from bot import constants as C
 
+from bot import api_core as _core
+from bot import api_loop as _loop
+from bot import api_markets as _markets
+from bot import api_views as _views
+
 BOT_DIR = ROOT / "bot"
-CONFIG_PATH = BOT_DIR / "config.json"
-STATE_PATH = BOT_DIR / "state.json"
-EVENTS_PATH = BOT_DIR / "events.jsonl"
-PID_PATH = BOT_DIR / "loop.pid"
-KILL_PATH = BOT_DIR / "kill"
-LOG_PATH = BOT_DIR / "loop.log"
+# Legacy aliases kept patchable for existing tests.
+STATE_PATH = FALLBACK_STATE_PATH
 
 BANKROLL_DEFAULT = 1000.0
 
+SELECTED_RUN_ID: str | None = None
 
-def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+_LAST_STATE: tuple[str, dict] | None = None
+
+_client = None
+
+_WINDOW_SPEC_CACHE: dict[str, object] = {}
+_LAST_MARKETS: list[dict] = []
+_ODDS_HISTORY: dict[str, list[dict]] = {}
+_BACKGROUND_SAMPLER_STOP = threading.Event()
+_BACKGROUND_SAMPLER_THREAD: threading.Thread | None = None
+
+_loop_lock = threading.Lock()
+
+# --- pure re-exports (no seams to patch) ---
+utc_now_iso = _core.utc_now_iso
+session_label = _core.session_label
+is_pending = _core.is_pending
+_num = _views._num
+_minute_shape = _views._minute_shape
+_median = _views._median
+_mean = _views._mean
+slot_ms = _views.slot_ms
+_enrich_fill = _views._enrich_fill
+_win_alive = _loop._win_alive
+NEXT_WINDOW_REVEAL_SEC = _markets.NEXT_WINDOW_REVEAL_SEC
 
 
 def load_config() -> dict:
-    try:
-        return json.loads(CONFIG_PATH.read_text())
-    except Exception:
-        return {"bankrollUsd": BANKROLL_DEFAULT, "mode": "paper", "asset": "BTC",
-                "intervals": ["5m"], "entry": {}, "risk": {}, "news": {"blackoutMinutes": 0, "events": []}}
-
-
-SELECTED_RUN_ID: str | None = None
+    return _core.load_config_from_path(CONFIG_PATH, BANKROLL_DEFAULT)
 
 
 def get_selected_run_id() -> str | None:
@@ -81,23 +105,8 @@ def set_selected_run_id(run_id: str | None) -> None:
     SELECTED_RUN_ID = run_id
 
 
-def session_label(cfg: dict) -> str:
-    """Run-id label for a new session, from the active strategy symbol ('⚡ DSP-v2.6' -> 'dsp_v2_6')."""
-    strat = cfg.get("strategy") or {}
-    raw = str(strat.get("symbol") or strat.get("id") or "")
-    clean = "_".join("".join(c.lower() if c.isalnum() else " " for c in raw).split())
-    return clean or "default"
-
-
 def is_view_only() -> bool:
-    """Returns True if user has selected a historical run or explicit view-only mode."""
-    sel = get_selected_run_id()
-    if not sel:
-        return False
-    active = get_active_run_id()
-    if not active:
-        return False
-    return sel != active
+    return _core.is_view_only_selected(get_selected_run_id(), get_active_run_id())
 
 
 def runs() -> list[dict]:
@@ -110,38 +119,26 @@ def runs() -> list[dict]:
     ws = resolve_run_workspace(None)
     if ws and ws.windows_dir.exists():
         return ws.list_windows()
-    out = []
-    if WINDOWS_MIRROR_DIR.exists():
-        for p in sorted(WINDOWS_MIRROR_DIR.glob("*.json")):
-            try:
-                out.append(json.loads(p.read_text()))
-            except Exception:
-                continue
-    return out
-
-
-def is_pending(r: dict) -> bool:
-    return bool(r.get("pending")) or not r.get("winner")
-
-
-_LAST_STATE: tuple[str, dict] | None = None
+    return _core.read_mirror_windows(WINDOWS_MIRROR_DIR)
 
 
 def state() -> dict | None:
     global _LAST_STATE
     if is_view_only():
         return None
-    if not STATE_PATH.exists():
+    sel = get_selected_run_id()
+    if sel:
+        return None
+    ws = resolve_run_workspace(None)
+    target = ws.state_path if ws is not None else STATE_PATH
+    if not target.exists():
         _LAST_STATE = None
         return None
-    for _ in range(3):
-        try:
-            st = json.loads(STATE_PATH.read_text())
-            _LAST_STATE = (str(STATE_PATH), st)
-            return st
-        except Exception:
-            time.sleep(0.005)
-    if _LAST_STATE and _LAST_STATE[0] == str(STATE_PATH):
+    ok, st = _core.try_read_state(target)
+    if ok:
+        _LAST_STATE = (str(target), st)
+        return st
+    if _LAST_STATE and _LAST_STATE[0] == str(target):
         cached = _LAST_STATE[1]
         end_ms = cached.get("endMs")
         if end_ms is None or int(end_ms) > int(time.time() * 1000):
@@ -157,99 +154,40 @@ def events(limit: int = 150) -> list[dict]:
         target_path = ws.events_file if (ws and ws.events_file.exists()) else None
     else:
         ws = resolve_run_workspace(None)
-        target_path = ws.events_file if (ws and ws.events_file.exists()) else EVENTS_PATH
+        if ws is None:
+            target_path = EVENTS_PATH
+        else:
+            target_path = ws.events_file if ws.events_file.exists() else None
     if not target_path or not target_path.exists():
         return []
     lines = target_path.read_text().splitlines()[-max(limit, 1):]
-    out = []
-    open_prices: dict[str, float] = {}
-    for line in lines:
-        try:
-            ev = json.loads(line)
-            slug = ev.get("slug")
-            detail = ev.setdefault("detail", {})
-            # Track leg 1 price for pairCost calculation
-            if ev.get("reason") == "straddle-open" and slug and "price" in detail:
-                try:
-                    open_prices[slug] = float(detail["price"])
-                except (ValueError, TypeError):
-                    pass
-            # Normalize legacy reasons if reading past versions
-            elif ev.get("reason") == "thesis-intact":
-                ev["reason"] = "clip-fill"
-                if "bid" in detail:
-                    detail["price"] = detail.pop("bid")
-            elif ev.get("reason") == "kill-switch-file-present":
-                ev["reason"] = "kill-switch-engaged"
-
-            # Normalize kind mappings
-            if ev.get("reason") in ("dust-quote", "extreme-price-skip", "no-liquidity", "spread-too-wide"):
-                ev["kind"] = "refuse"
-            elif ev.get("reason") == "m4-snipe":
-                # Genuine engine snipes only: minute-4 maker fills keep their
-                # own reason (a minute-based relabel here used to rebrand them).
-                ev["kind"] = "snipe"
-                ev["reason"] = "m4-snipe"
-            elif ev.get("reason") in ("holding-to-resolution", "too-late-in-window"):
-                ev["kind"] = "done"
-
-            # Compute pairCost for hedge-leg if missing
-            if ev.get("reason") == "hedge-leg" and "pairCost" not in detail and slug in open_prices and "price" in detail:
-                try:
-                    detail["pairCost"] = round(open_prices[slug] + float(detail["price"]), 2)
-                    detail["leg1Price"] = open_prices[slug]
-                except (ValueError, TypeError):
-                    pass
-
-            out.append(ev)
-        except Exception:
-            continue
-    return out
+    return _core.normalize_event_lines(lines)
 
 
 def log_event(kind: str, reason: str, **kw) -> None:
-    rec = {"ts": utc_now_iso(), "kind": kind, "mode": "paper", "reason": reason, **kw}
-    with EVENTS_PATH.open("a") as f:
-        f.write(json.dumps(rec) + "\n")
+    rec = _core.build_log_record(kind, reason, utc_now_iso(), **kw)
     ws = resolve_run_workspace(None)
-    if ws:
+    if ws is not None:
         try:
             ws.root.mkdir(parents=True, exist_ok=True)
             with ws.events_file.open("a") as f:
                 f.write(json.dumps(rec) + "\n")
         except Exception:
             pass
-
-
-def _win_alive(pid: int) -> bool:
-    import ctypes
-    try:
-        h = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
-    except Exception:
-        return False
-    if not h:
-        return False
-    try:
-        code = ctypes.c_ulong()
-        ctypes.windll.kernel32.GetExitCodeProcess(h, ctypes.byref(code))
-        return code.value == 259  # STILL_ACTIVE
-    finally:
-        ctypes.windll.kernel32.CloseHandle(h)
+    else:
+        try:
+            ensure_data_dir()
+            with EVENTS_PATH.open("a") as f:
+                f.write(json.dumps(rec) + "\n")
+        except Exception:
+            pass
 
 
 def loop_running() -> int | None:
-    try:
-        pid = int(PID_PATH.read_text().strip())
-    except Exception:
+    pid = _loop.parse_pid_file(PID_PATH)
+    if pid is None:
         return None
-    try:
-        alive = _win_alive(pid) if os.name == "nt" else (os.kill(pid, 0) is None)
-    except Exception:
-        return None
-    return pid if alive else None
-
-
-_loop_lock = threading.Lock()
+    return pid if _loop.pid_is_alive(pid, _win_alive) else None
 
 
 def stop_loop_process(timeout: float = 3.0) -> int | None:
@@ -283,19 +221,15 @@ def start_loop_process(run_id: str | None = None) -> int:
         existing_pid = loop_running()
         if existing_pid:
             return existing_pid
+        ensure_data_dir()
         LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         logf = LOG_PATH.open("ab")
-        cmd = [sys.executable, "bot/live_paper.py", "--loop"]
-        if run_id:
-            cmd.extend(["--run-id", run_id])
-        env = os.environ.copy()
-        env["PYTHONIOENCODING"] = "utf-8"
-        env["PYTHONUTF8"] = "1"
         proc = subprocess.Popen(
-            cmd,
+            _loop.build_loop_command(run_id),
             cwd=str(ROOT), stdout=logf, stderr=subprocess.STDOUT,
-            env=env,
+            env=_loop.loop_env(),
             start_new_session=True)
+        ensure_data_dir()
         PID_PATH.write_text(str(proc.pid))
         if run_id:
             try:
@@ -309,9 +243,6 @@ def start_loop_process(run_id: str | None = None) -> int:
 
 
 def tape_status() -> dict:
-    # Recording is not optional: the loop refuses to run without a tape dir, and
-    # every fill's verification and fidelity are read back from it.
-    enabled = True
     run_id = get_active_run_id()
     stats: dict = {"prints": 0, "books": 0, "printsBytes": 0, "bookBytes": 0, "mb": 0.0, "tapeDir": None}
     if run_id:
@@ -321,34 +252,9 @@ def tape_status() -> dict:
                 stats = ws.tape_stats()
         except Exception:
             pass
-
-    # Aggregate verification stats from current window fills
-    verification: dict = {}
-    try:
-        from bot.tape_verifier import verification_summary
-        state_path = BOT_DIR / "state.json"
-        if state_path.exists():
-            st = json.loads(state_path.read_text())
-            fills = st.get("fills") or []
-            if fills:
-                verification = verification_summary(fills)
-    except Exception:
-        pass
-
-    return {
-        "enabled": enabled,
-        "runId": run_id,
-        "tapeDir": stats.get("tapeDir"),
-        "prints": stats.get("prints", 0),
-        "books": stats.get("books", 0),
-        "mb": stats.get("mb", 0.0),
-        "verification": verification,
-    }
-
-
-# ---------------------------------------------------------------- live reads
-
-_client = None
+    cur = state()
+    fills = (cur.get("fills") or []) if cur else []
+    return _loop.summarize_tape(run_id, stats, fills)
 
 
 def client():
@@ -359,42 +265,18 @@ def client():
     return _client
 
 
-NEXT_WINDOW_REVEAL_SEC = 15  # 4:45 into a 5:00 window
-
-
 def visible_slots(now_ts: int | None = None) -> list[int]:
-    """Current window only, until its last 15s — then current + next.
-
-    The Live page used to carry both panels for the whole window, which
-    split attention across a market that had not opened yet.
-    """
-    from bot.discovery import WINDOW_S, current_slot
-
-    now = int(time.time()) if now_ts is None else now_ts
-    slot = current_slot(now)
-    if now - slot >= WINDOW_S - NEXT_WINDOW_REVEAL_SEC:
-        return [slot, slot + WINDOW_S]
-    return [slot]
-
-
-_WINDOW_SPEC_CACHE: dict[str, object] = {}
-_LAST_MARKETS: list[dict] = []
-_ODDS_HISTORY: dict[str, list[dict]] = {}
-_BACKGROUND_SAMPLER_STOP = threading.Event()
-_BACKGROUND_SAMPLER_THREAD: threading.Thread | None = None
+    return _markets.visible_slots(now_ts)
 
 
 def _background_odds_sampler() -> None:
-    """Continuously record odds history in the background so data is never lost
-    even if the user is tabbed out, the browser is closed, or polling pauses."""
     while not _BACKGROUND_SAMPLER_STOP.is_set():
         try:
             st = state()
             if st and st.get("slug") and st.get("oddsHistory"):
                 _ODDS_HISTORY[st["slug"]] = list(st["oddsHistory"])
             elif not is_view_only():
-                cfg = load_config()
-                live_markets(cfg)
+                live_markets(load_config())
         except Exception:
             pass
         _BACKGROUND_SAMPLER_STOP.wait(1.5)
@@ -412,15 +294,37 @@ def start_background_sampler() -> None:
         _BACKGROUND_SAMPLER_THREAD.start()
 
 
+def _resolve_mark(side: str, slug: str):
+    from bot.discovery import get_window
+    spec = _WINDOW_SPEC_CACHE.get(slug)
+    if spec is None:
+        spec = get_window(client(), slug)
+        _WINDOW_SPEC_CACHE[slug] = spec
+    tid = spec.up_token_id if side == "Up" else spec.down_token_id
+    c = client()
+    try:
+        p = float(c.get_price(token_id=tid, side="SELL"))
+        if 0.0 < p <= 1.0:
+            return p
+    except Exception:
+        pass
+    try:
+        p = float(c.get_price(token_id=tid, side="BUY"))
+        if 0.0 < p <= 1.0:
+            return p
+    except Exception:
+        pass
+    try:
+        mid = float(c.get_midpoint(token_id=tid))
+        if 0.0 < mid <= 1.0:
+            return mid
+    except Exception:
+        pass
+    return None
+
+
 def live_markets(cfg: dict) -> list[dict]:
-    """Current 5m window with live CLOB quotes (public reads only).
-
-    The next window joins at 4:45 (its last 15s), so the page shows one
-    panel for most of the window and two only at the handover.
-    """
-    global _LAST_MARKETS, _ODDS_HISTORY
     from bot.discovery import WINDOW_S, get_window
-
     c = client()
     out = []
     for s in visible_slots():
@@ -446,7 +350,6 @@ def live_markets(cfg: dict) -> list[dict]:
         now_ms = int(time.time() * 1000)
         start_ms, end_ms = s * 1000, (s + WINDOW_S) * 1000
         remaining = max(0, round((end_ms - now_ms) / 1000))
-        elapsed = max(0, round((now_ms - start_ms) / 1000))
         elapsed_sec = max(0.0, (now_ms - start_ms) / 1000.0)
         asks = [q["ask"] for q in quotes.values() if q["ask"] is not None]
         bids = [q["bid"] for q in quotes.values() if q["bid"] is not None]
@@ -454,79 +357,23 @@ def live_markets(cfg: dict) -> list[dict]:
         entry = cfg.get("entry", {})
         stop_before = entry.get("stopBeforeCloseSec", C.HARD_CUTOFF_SBC)
         start_buffer = entry.get("startAfterOpenSec", entry.get("openDelaySec", C.WINDOW_OPEN_BUFFER_S))
-
         curr_state = state()
         has_fills = bool(curr_state and curr_state.get("slug") == slug and curr_state.get("fills"))
         fills_count = len(curr_state["fills"]) if has_fills else 0
-
-        minute_num = min(4, max(0, int(elapsed_sec // 60)))
-
-        if remaining <= stop_before:
-            verdict = {"action": "done", "reason": "holding-to-resolution",
-                       "detail": {"remainingSec": remaining, "needsSec": stop_before, "fills": fills_count}}
-        elif not has_fills and elapsed_sec < start_buffer:
-            verdict = {"action": "skip", "reason": "opening-buffer",
-                       "detail": {"elapsedSec": elapsed, "needsSec": start_buffer}}
-        elif spread is not None and spread > 0.30:
-            verdict = {"action": "refuse", "reason": "spread-too-wide",
-                       "detail": {"spreadCents": round(spread * 100, 1), "maxCents": 30}}
-        elif not asks:
-            verdict = {"action": "refuse", "reason": "no-liquidity", "detail": {"side": "both"}}
-        elif fills_count == 0:
-            verdict = {"action": "enter", "reason": "straddle-open",
-                       "detail": {"minute": f"M{minute_num}", "remainingSec": remaining}}
-        elif fills_count == 1:
-            verdict = {"action": "enter", "reason": "hedge-pending",
-                       "detail": {"fills": fills_count, "minute": f"M{minute_num}", "remainingSec": remaining}}
-        elif elapsed_sec >= 240 or remaining <= 60:
-            # hydrogen-v2.0 routes around every engine snipe path, so its
-            # endgame verdict stays on working fills (fail-open: every other
-            # strategy keeps the legacy snipe hint, e.g. hapcs-v1).
-            snipes = "hydrogen-v2.0" not in str((cfg.get("strategy") or {}).get("id", ""))
-            action, reason = ("snipe", "m4-snipe") if snipes else ("enter", "working-fills")
-            verdict = {"action": action, "reason": reason,
-                       "detail": {"fills": fills_count, "minute": "M4", "remainingSec": remaining}}
-        elif fills_count >= 2:
-            verdict = {"action": "enter", "reason": "working-fills",
-                       "detail": {"fills": fills_count, "minute": f"M{minute_num}", "remainingSec": remaining}}
-        else:
-            verdict = {"action": "enter", "reason": "working-fills",
-                       "detail": {"fills": fills_count, "minute": f"M{minute_num}", "remainingSec": remaining}}
-
+        verdict = _markets.decide_verdict(
+            remaining=remaining, elapsed_sec=elapsed_sec, start_buffer=start_buffer,
+            stop_before=stop_before, spread=spread, has_quotes=bool(asks),
+            fills_count=fills_count, strategy_id=(cfg.get("strategy") or {}).get("id", ""))
         up_q = quotes.get("Up", {})
         down_q = quotes.get("Down", {})
         up_val = up_q.get("ask") if up_q.get("ask") is not None else up_q.get("bid")
         down_val = down_q.get("ask") if down_q.get("ask") is not None else down_q.get("bid")
-        if up_val is not None and down_val is not None and (up_val + down_val) > 0:
-            imp_up: float | None = round(up_val / (up_val + down_val), 4)
-        elif up_val is not None:
-            imp_up = round(up_val, 4)
-        elif down_val is not None:
-            imp_up = round(1.0 - down_val, 4)
-        else:
-            imp_up = None
-
-        hist = _ODDS_HISTORY.setdefault(slug, [])
-        state_hist = curr_state.get("oddsHistory") if (curr_state and curr_state.get("slug") == slug) else None
-        # Trust state history only when its latest sample is fresh (within 2× the
-        # sampler interval). When it is stale — e.g. the sync loop fell behind —
-        # keep the history and append a fresh REST-derived sample so the chart
-        # continues recording even if WebSocket quotes are unavailable.
-        _STATE_HIST_MAX_AGE_MS = 3_000  # 2× the 1.5 s sampler interval
-        if state_hist and (now_ms - state_hist[-1]["t"]) < _STATE_HIST_MAX_AGE_MS:
-            hist = list(state_hist)
-            _ODDS_HISTORY[slug] = hist
-        else:
-            if state_hist:
-                # Stale: seed in-memory history from state so we don't lose points,
-                # then fall through to append the fresh REST-derived sample below.
-                hist = list(state_hist)
-                _ODDS_HISTORY[slug] = hist
-            if imp_up is not None and (not hist or now_ms - hist[-1]["t"] >= 1500):
-                hist.append({"t": now_ms, "v": imp_up})
-                if len(hist) > 500:
-                    hist.pop(0)
-
+        imp_up = _markets.compute_imp_up(up_val, down_val)
+        hist = _markets.next_odds_history(
+            _ODDS_HISTORY.setdefault(slug, []),
+            curr_state.get("oddsHistory") if (curr_state and curr_state.get("slug") == slug) else None,
+            now_ms, imp_up)
+        _ODDS_HISTORY[slug] = hist
         out.append({
             "slug": slug, "interval": "5m", "startMs": start_ms, "endMs": end_ms,
             "price": None, "anchor": None, "movePct": None, "requiredMovePct": 0,
@@ -545,989 +392,62 @@ def live_markets(cfg: dict) -> list[dict]:
                     cache.pop(old, None)
     now_cutoff_ms = int(time.time() * 1000)
     if out:
+        global _LAST_MARKETS
         _LAST_MARKETS = out
         return out
     _LAST_MARKETS = [m for m in _LAST_MARKETS if int(m.get("endMs") or 0) > now_cutoff_ms]
     return _LAST_MARKETS
 
 
+def _window_row(r: dict) -> dict:
+    return _views.build_window_row(r)
+
+
 def snapshot() -> dict:
     start_background_sampler()
     cfg = load_config()
-    bankroll = float(cfg.get("bankrollUsd", BANKROLL_DEFAULT))
-    all_runs = runs()
-    settled = [r for r in all_runs if not is_pending(r)]
-    realized = round(sum((r.get("net_usd") or 0.0) for r in settled), 2)
-    st = state()
     try:
         markets = live_markets(cfg)
     except Exception:
         markets = []
-    positions: list[dict] = []
-    exposure = 0.0
-    now_ms = int(time.time() * 1000)
-    if st and st.get("fills"):
-        by_side: dict[str, list[dict]] = {}
-        for f in st["fills"]:
-            by_side.setdefault(f["outcome"], []).append(f)
-        end_ms = int(st.get("endMs") or now_ms)
-        is_resolving = now_ms >= end_ms
-        slug = st.get("slug", "")
-
-        curr_market = next((m for m in markets if m.get("slug") == slug), None)
-        market_quotes = (curr_market.get("quotes") or {}) if curr_market else {}
-        ws_data = st.get("ws") or {}
-
-        for side, fills in by_side.items():
-            shares = sum(f["shares"] for f in fills)
-            cost = sum(f["usd"] for f in fills)
-            avg = cost / shares if shares else 0
-            mark = None
-            if not is_resolving:
-                px = None
-
-                # 1. Check WebSocket live orderbook in state (0ms latency)
-                ws_book = ws_data.get(f"{side.lower()}_book") or {}
-                if isinstance(ws_book, dict):
-                    ws_bid = ws_book.get("best_bid")
-                    if ws_bid is not None and 0.0 < float(ws_bid) <= 1.0:
-                        px = float(ws_bid)
-                    elif ws_book.get("midpoint") is not None and 0.0 < float(ws_book["midpoint"]) <= 1.0:
-                        px = float(ws_book["midpoint"])
-                    elif ws_book.get("best_ask") is not None and 0.0 < float(ws_book["best_ask"]) <= 1.0:
-                        px = float(ws_book["best_ask"])
-
-                # 2. Check quotes from live_markets
-                if px is None:
-                    side_q = market_quotes.get(side) or {}
-                    q_bid = side_q.get("bid")
-                    q_ask = side_q.get("ask")
-                    if q_bid is not None and 0.0 < float(q_bid) <= 1.0:
-                        px = float(q_bid)
-                    elif q_ask is not None and 0.0 < float(q_ask) <= 1.0:
-                        px = float(q_ask)
-
-                # 3. Fallback: query client CLOB if not found yet
-                if px is None:
-                    try:
-                        spec = _WINDOW_SPEC_CACHE.get(slug)
-                        if spec is None:
-                            from bot.discovery import get_window
-                            spec = get_window(client(), slug)
-                            _WINDOW_SPEC_CACHE[slug] = spec
-                        tid = spec.up_token_id if side == "Up" else spec.down_token_id
-                        c = client()
-                        try:
-                            p = float(c.get_price(token_id=tid, side="SELL"))
-                            if 0.0 < p <= 1.0:
-                                px = p
-                        except Exception:
-                            pass
-                        if px is None:
-                            try:
-                                p = float(c.get_price(token_id=tid, side="BUY"))
-                                if 0.0 < p <= 1.0:
-                                    px = p
-                            except Exception:
-                                pass
-                        if px is None:
-                            try:
-                                mid = float(c.get_midpoint(token_id=tid))
-                                if 0.0 < mid <= 1.0:
-                                    px = mid
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-
-                # While the window is running (not resolving), mark is NEVER None.
-                # If a positive price exists, use it; otherwise price is 0.0.
-                mark = px if px is not None else 0.0
-
-            mv = round(mark * shares, 2) if mark is not None else None
-            exposure += cost
-            positions.append({
-                "id": f"{st['slug']}-{side}", "slug": st["slug"], "interval": "5m",
-                "side": side, "shares": round(shares, 2), "entryPrice": round(avg, 4),
-                "costUsd": round(cost, 2), "modelProb": 0.5, "edge": 0,
-                "entryAtMs": st.get("startedAtMs", now_ms),
-                "endMs": end_ms,
-                "bid": mark, "mark": mark, "markValueUsd": mv,
-                "unrealizedPnlUsd": round(mv - cost, 2) if mv is not None else None,
-                "secondsLeft": max(0, round((end_ms - now_ms) / 1000)),
-                "stalledSec": None,
-                "resolving": is_resolving,
-            })
-    equity = round(bankroll + realized + sum(p["unrealizedPnlUsd"] or 0 for p in positions), 2)
-    risk_cfg = cfg.get("risk", {})
-    day_key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    day_start_ts = int(datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
-
-    def _run_ts(r: dict) -> int:
-        slug = str(r.get("event_slug", ""))
-        tail = slug.rsplit("-", 1)[-1]
-        return int(tail) if tail.isdigit() else 0
-
-    def _is_today(r: dict) -> bool:
-        ts = _run_ts(r)
-        if ts > 0:
-            return ts >= day_start_ts
-        return str(r.get("event_slug", "")).endswith(day_key)
-
-    today = [r for r in all_runs if _is_today(r)]
-    prior_settled = [r for r in settled if not _is_today(r)]
-    day_start_equity = round(bankroll + sum((r.get("net_usd") or 0.0) for r in prior_settled), 2)
-
-    cum_eq = bankroll
-    high_water = bankroll
-    for r in sorted(settled, key=_run_ts):
-        cum_eq = round(cum_eq + (r.get("net_usd") or 0.0), 2)
-        if cum_eq > high_water:
-            high_water = cum_eq
-    high_water = max(high_water, equity)
-
-    consecutive_losses = 0
-    for r in reversed(sorted(settled, key=_run_ts)):
-        net_val = r.get("net_usd")
-        if net_val is not None and net_val < 0:
-            consecutive_losses += 1
-        elif net_val is not None and net_val >= 0:
-            break
-
-    kills = KILL_PATH.exists()
-    try:
-        raw_cap = risk_cfg.get("dailyLossCapUsd")
-        daily_loss_cap = float(raw_cap) if raw_cap is not None and float(raw_cap) > 0 else 500.0
-    except (ValueError, TypeError):
-        daily_loss_cap = 500.0
-    daily_loss_pct = round((daily_loss_cap / day_start_equity) * 100, 2) if day_start_equity > 0 else 50.0
-
-    def _to_int(val, default: int) -> int:
-        try:
-            return int(val) if val is not None else default
-        except (ValueError, TypeError):
-            return default
-
-    def _to_float(val, default: float) -> float:
-        try:
-            return float(val) if val is not None else default
-        except (ValueError, TypeError):
-            return default
-
-    settled_equity = round(bankroll + sum((r.get("net_usd") or 0.0) for r in settled), 2)
-    daily_loss_usd = round(max(0.0, day_start_equity - settled_equity), 2)
-
-    try:
-        markets = live_markets(cfg)
-    except Exception:
-        markets = []
-    from bot import constants as C
-    strat = cfg.get("strategy", {})
-    strat_id = strat.get("id", C.STRATEGY_ID)
-    strat_sym = strat.get("symbol", C.STRATEGY_SYMBOL)
-    strat_name = strat.get("name", C.STRATEGY_NAME)
-    setup_info = C.STRATEGY_SETUPS.get(strat_id, {})
-    strat_sig = setup_info.get("signature", C.STRATEGY_SIGNATURE)
-    return {
-        "version": 1, "mode": "paper", "asset": cfg.get("asset", "BTC"),
-        "strategy": {
-            "id": strat_id,
-            "symbol": strat_sym,
-            "name": strat_name,
-            "signature": strat_sig,
-        },
-        "updatedAt": utc_now_iso(), "equityUsd": equity, "bankrollUsd": bankroll,
-        "exposureUsd": round(exposure, 2), "cashUsd": round(equity - exposure, 2),
-        "realizedPnlUsd": realized,
-        "risk": {"dayKey": day_key, "tradesToday": len(today),
-                 "tradesTodayByInterval": {"5m": len(today), "15m": 0},
-                 "consecutiveLosses": consecutive_losses, "realizedPnlUsd": realized,
-                 "dailyLossUsd": daily_loss_usd,
-                 "dayStartEquityUsd": day_start_equity, "highWaterEquityUsd": high_water,
-                 "halted": kills, "haltReason": "kill-switch-file-present" if kills else None,
-                 "cooldownUntilMs": 0},
-        "limits": {"maxTradesPerDay": _to_int(risk_cfg.get("maxTradesPerDay"), 288),
-                   "maxConsecutiveLosses": _to_int(risk_cfg.get("maxConsecutiveLosses"), 99),
-                   "dailyLossLimitPct": daily_loss_pct,
-                   "dailyLossCapUsd": daily_loss_cap,
-                   "maxDrawdownPct": _to_float(risk_cfg.get("maxDrawdownPct"), 90.0),
-                   "maxConcurrentPositions": _to_int(risk_cfg.get("maxConcurrentPositions"), 1),
-                   "minEdge": 0, "feeRate": 0, "profitTargetCents": 100},
-        "killSwitch": kills, "newsBlocked": False,
-        "feed": {"price": None, "updatedAtMs": None, "history": []},
-        "lean": (st or {}).get("lean"),
-        "leanSource": (st or {}).get("leanSource"),
-        "markets": markets, "positions": positions,
-        # Resting bids from the live window: shown as orders, not as fills.
-        "openOrders": (st or {}).get("openOrders") or [],
-        "ws": (st or {}).get("ws") or {
-            "state": "disconnected" if not loop_running() else "connecting",
-            "is_connected": False,
-            "is_stale": False,
-            "age_ms": None,
-            "reconnect_count": 0,
-            "tick_count": 0,
-        },
-        "recentTicks": (st or {}).get("recentTicks") or [],
-    }
+    return _views.build_snapshot(
+        cfg, runs(), state(), markets,
+        loop_running=loop_running() is not None,
+        kill_switch=KILL_PATH.exists(),
+        utc_now=utc_now_iso(),
+        bankroll_default=BANKROLL_DEFAULT,
+        resolve_mark=_resolve_mark,
+    )
 
 
 def kpis() -> dict:
     cfg = load_config()
-    bankroll = float(cfg.get("bankrollUsd", BANKROLL_DEFAULT))
-    all_runs = sorted(runs(), key=lambda r: r.get("event_slug", ""))
-    settled = [r for r in all_runs if not is_pending(r)]
-    nets = [r.get("net_usd", 0) for r in settled if r.get("net_usd") is not None]
-    wins = [n for n in nets if n > 0]
-    losses = [-n for n in nets if n <= 0]
-    cum, series = 0.0, []
-    recent = []
-    for r in all_runs:
-        try:
-            ts = int(r["event_slug"].split("-")[-1]) * 1000
-        except Exception:
-            ts = 0
-        if is_pending(r):
-            pnl = None
-            reason = "awaiting-resolution"
-        else:
-            cum = round(cum + (r.get("net_usd") or 0.0), 2)
-            pnl = r.get("net_usd")
-            reason = "paper-resolve"
-        series.append({"ts": ts, "equity": round(bankroll + cum, 2)})
-        recent.append({"ts": ts,
-                       "kind": "settle", "slug": r.get("event_slug"),
-                       "interval": "5m", "price": None,
-                       "shares": r.get("trades"), "pnlUsd": pnl,
-                       "reason": reason, "mode": "paper"})
-    st = state()
-    open_n = len({f["outcome"] for f in (st.get("fills", []) if st else [])})
-    gross_w = sum(wins)
-    gross_l = sum(losses)
-    return {"kpis": {
-        "bankrollUsd": bankroll, "equityUsd": round(bankroll + cum, 2), "netPnlUsd": round(cum, 2),
-        "closedTrades": len(settled), "wins": len(wins), "losses": len(losses),
-        "winRate": round(len(wins) / len(settled), 4) if settled else 0,
-        "profitFactor": round(gross_w / gross_l, 2) if gross_l else (float("inf") if gross_w else 0),
-        "avgWinUsd": round(gross_w / len(wins), 2) if wins else 0,
-        "avgLossUsd": round(gross_l / len(losses), 2) if losses else 0,
-        "largestWinUsd": round(max(wins), 2) if wins else 0,
-        "largestLossUsd": round(max(losses), 2) if losses else 0,
-        "openPositions": open_n,
-        "byInterval": [{"interval": "5m", "trades": len(settled),
-                        "wins": len(wins), "pnlUsd": round(cum, 2)}],
-        "equitySeries": series, "recentClosed": recent[-12:]}}
-
-
-# ------------------------------------------------------- fidelity + performance
-
-
-def _num(value, default: float = 0.0) -> float:
-    """Paper-run JSON is hand-editable, so never let one bad field 500 the desk."""
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _minute_shape(fills: list[dict]) -> list[int]:
-    shape = [0, 0, 0, 0, 0]
-    for f in fills:
-        try:
-            m = int(f.get("minute", 0))
-        except (TypeError, ValueError):
-            m = 0
-        if 0 <= m <= 4:
-            shape[m] += 1
-    return shape
-
-
-def _window_row(r: dict) -> dict:
-    """One settled/pending window flattened for the dashboard tables."""
-    from bot import constants as C
-
-    fills = r.get("fills") or []
-    cost = _num(r.get("cost_usd"))
-    payout = _num(r.get("payout_usd"))
-    pending = is_pending(r)
-    try:
-        start_ms = int(str(r.get("event_slug", "")).split("-")[-1]) * 1000
-    except (TypeError, ValueError):
-        start_ms = 0
-    sides = {f.get("outcome") for f in fills if f.get("outcome")}
-
-    # Fees are already charged inside cost_usd, so a rebate is only ever added on
-    # top. The taker side scales with the account tier and the maker side is a
-    # fixed share of the fees its fills were matched against, so both ship as raw
-    # bases and the dashboard applies whichever tier is selected.
-    maker_fee_base = 0.0
-    computed_taker = 0.0
-    for f in fills:
-        price = _num(f.get("price"))
-        shares = _num(f.get("shares"))
-        if price <= 0 or shares <= 0:
-            continue
-        detail = f.get("detail") or {}
-        role = str(detail.get("role") or "").upper()
-        raw_fee = detail.get("feeUsd")
-        has_fee = isinstance(raw_fee, (int, float)) and not isinstance(raw_fee, bool)
-        fee = _num(raw_fee)
-        base = shares * C.TAKER_FEE_COEFF * price * (1 - price)
-        # Same precedence as classifyFill() in src/app/lib/rebates.ts: a recorded
-        # role, then a recorded fee, then the legacy reason text, then maker. The
-        # orders table classifies with the same rule, so the totals it shows and
-        # the per-fill rows can never disagree.
-        reason = str(f.get("reason") or "").lower()
-        if role in ("MAKER", "TAKER"):
-            is_taker = role == "TAKER"
-        elif has_fee:
-            is_taker = fee > 0
-        elif "equalizer" in reason or "snipe" in reason:
-            is_taker = True
-        else:
-            is_taker = False
-        if is_taker:
-            computed_taker += fee if fee > 0 else base
-        else:
-            maker_fee_base += base
-    recorded_fees = r.get("fees_usd")
-    taker_fees = _num(recorded_fees) if recorded_fees is not None else round(computed_taker, 4)
-
-    # Verified-only view: the same window recomputed from the fills the tape
-    # verifier confirmed. A maker fill is verified when real prints at its limit
-    # price covered the whole clip; taker fills never are, and fills from before
-    # the verifier existed carry no status at all, so both drop out here.
-    verified_fills = [
-        f for f in fills
-        if str((f.get("detail") or {}).get("tapeStatus") or "") == "verified"
-    ]
-    v_cost = 0.0
-    v_up = 0
-    v_down = 0
-    v_zero = 0
-    v_maker_base = 0.0
-    v_fees = 0.0
-    for f in verified_fills:
-        price = _num(f.get("price"))
-        shares = _num(f.get("shares"))
-        v_cost += _num(f.get("usd"))
-        outcome = f.get("outcome")
-        if outcome == "Up":
-            v_up += 1
-        elif outcome == "Down":
-            v_down += 1
-        if price <= 0:
-            v_zero += 1
-        # A verified fill is always a maker fill, so its fee base is the taker
-        # fee the counterparty paid on the same price and size.
-        if price > 0 and shares > 0:
-            v_maker_base += shares * C.TAKER_FEE_COEFF * price * (1 - price)
-        v_fees += _num((f.get("detail") or {}).get("feeUsd"))
-    winner = r.get("winner")
-    # Same settlement rule as settle_pending_windows: the winning side's shares
-    # pay $1 each, everything else is what the window cost.
-    v_win_shares = sum(
-        _num(f.get("shares")) for f in verified_fills if winner and f.get("outcome") == winner
-    )
-    v_payout = round(v_win_shares * 1.0, 2) if winner else 0.0
-
-    # Lock-in cost of a window that took both legs: avg Up price + avg Down price.
-    up_shares = sum(_num(f.get("shares")) for f in fills if f.get("outcome") == "Up" and _num(f.get("price")) > 0)
-    down_shares = sum(_num(f.get("shares")) for f in fills if f.get("outcome") == "Down" and _num(f.get("price")) > 0)
-    up_usd = sum(_num(f.get("usd")) for f in fills if f.get("outcome") == "Up" and _num(f.get("price")) > 0)
-    down_usd = sum(_num(f.get("usd")) for f in fills if f.get("outcome") == "Down" and _num(f.get("price")) > 0)
-    pair_cost = round(up_usd / up_shares + down_usd / down_shares, 4) if up_shares > 0 and down_shares > 0 else None
-    # Shares actually held on each side (a $0.00 fill holds nothing) and the
-    # part of the window that never got a partner.
-    up_held = sum(_num(f.get("shares")) for f in fills if f.get("outcome") == "Up" and _num(f.get("price")) > 0)
-    down_held = sum(_num(f.get("shares")) for f in fills if f.get("outcome") == "Down" and _num(f.get("price")) > 0)
-    single_side = (up_held > 0) != (down_held > 0)
-
-    # Per-minute queue verdicts for the cadence matrix. Only audited maker fills
-    # carry a verdict (a taker fill takes the ask, so the queue cannot block it).
-    m_attainable = [0, 0, 0, 0, 0]
-    m_phantom = [0, 0, 0, 0, 0]
-    for f in fills:
-        ok = (f.get("detail") or {}).get("attainable")
-        if ok is None or role_of(f) == "TAKER":
-            continue
-        try:
-            m = int(f.get("minute", 0))
-        except (TypeError, ValueError):
-            m = 0
-        if 0 <= m <= 4:
-            (m_attainable if ok else m_phantom)[m] += 1
-
-    return {
-        "slug": r.get("event_slug"),
-        "market": r.get("market"),
-        "startMs": start_ms,
-        "trades": len(fills) if fills else int(r.get("trades") or 0),
-        "costUsd": round(cost, 2),
-        "payoutUsd": round(payout, 2),
-        "netUsd": None if pending else round(payout - cost, 2),
-        "winner": r.get("winner"),
-        "pending": pending,
-        "redeemed": bool(r.get("redeemedAt")),
-        "bothSides": len(sides) > 1,
-        "pairCost": pair_cost,
-        "upFills": sum(1 for f in fills if f.get("outcome") == "Up"),
-        "downFills": sum(1 for f in fills if f.get("outcome") == "Down"),
-        "upShares": round(up_held, 2),
-        "downShares": round(down_held, 2),
-        # Shares that ended up on both sides, and the lone leg when they did not.
-        "pairedShares": round(min(up_held, down_held), 2),
-        "singleSide": single_side,
-        "singleShares": round(max(up_held, down_held), 2) if single_side else 0.0,
-        # Resting orders the loop posted and pulled, when the loop counted them.
-        "ordersPosted": r.get("orders_posted"),
-        "ordersCancelled": r.get("orders_cancelled"),
-        # Maker fills are the ones the tape can corroborate; taker fills cannot
-        # be checked at all in paper mode, so the desk reports the split.
-        "makerFills": int(r.get("maker_fills") or 0),
-        "takerFills": int(r.get("taker_fills") or 0),
-        "zeroPriceFills": sum(1 for f in fills if _num(f.get("price")) <= 0),
-        "mShape": _minute_shape(fills),
-        "mAttainable": m_attainable,
-        "mPhantom": m_phantom,
-        "feesUsd": round(taker_fees, 4),
-        "makerFeeBaseUsd": round(maker_fee_base, 4),
-        "verified": {
-            "trades": len(verified_fills),
-            "costUsd": round(v_cost, 2),
-            "payoutUsd": v_payout,
-            "netUsd": None if pending else round(v_payout - v_cost, 2),
-            "feesUsd": round(v_fees, 4),
-            "makerFeeBaseUsd": round(v_maker_base, 4),
-            "upFills": v_up,
-            "downFills": v_down,
-            "zeroPriceFills": v_zero,
-        },
-        # What the auditor found once the window resolved: None when the tape
-        # held no print for it, so the desk can tell "not judged" from "zero".
-        "fidelity": r.get("fidelity"),
-    }
-
-
-def _median(values: list[float]) -> float:
-    return round(statistics.median(values), 2) if values else 0.0
-
-
-def _mean(values: list[float]) -> float:
-    return round(statistics.mean(values), 2) if values else 0.0
+    return _views.build_kpis(cfg, sorted(runs(), key=lambda r: r.get("event_slug", "")), state(), BANKROLL_DEFAULT)
 
 
 def perf() -> dict:
-    """Performance and execution health for the straddle paper loop.
-
-    Everything here is computed from run windows (bot/runs/<run_id>/windows/*.json)
-    with bot/windows_mirror/*.json as fallback (no network), so the desk can
-    answer two questions in one read: how much did the paper loop make, and is it
-    executing the way the strategy intends — both legs covered, pair cost under
-    its own cap, fills a real bid could have got.
-    """
-    from bot import constants as C
-
-    raw_runs = sorted(runs(), key=lambda r: str(r.get("event_slug", "")))
-    rows = [_window_row(r) for r in raw_runs]
-    settled = [w for w in rows if not w["pending"]]
-    pending = [w for w in rows if w["pending"]]
-
-    cost = round(sum(w["costUsd"] for w in settled), 2)
-    payout = round(sum(w["payoutUsd"] for w in settled), 2)
-    net = round(payout - cost, 2)
-    fills = sum(w["trades"] for w in settled)
-    profitable = sum(1 for w in settled if (w["netUsd"] or 0) > 0)
-    both = sum(1 for w in settled if w["bothSides"])
-    zero_fills = sum(w["zeroPriceFills"] for w in settled)
-    up_fills = sum(w["upFills"] for w in settled)
-    down_fills = sum(w["downFills"] for w in settled)
-    nets = [w["netUsd"] or 0.0 for w in settled]
-
-    median_fills = _median([float(w["trades"]) for w in settled])
-    mean_fills = _mean([float(w["trades"]) for w in settled])
-    median_cost = _median([w["costUsd"] for w in settled])
-    mean_cost = _mean([w["costUsd"] for w in settled])
-
-    live_shape = [0, 0, 0, 0, 0]
-    m_attainable = [0, 0, 0, 0, 0]
-    m_phantom = [0, 0, 0, 0, 0]
-    for w in settled:
-        for i, n in enumerate(w["mShape"]):
-            live_shape[i] += n
-        for i in range(5):
-            m_attainable[i] += w["mAttainable"][i]
-            m_phantom[i] += w["mPhantom"][i]
-    live_total = sum(live_shape) or 1
-    live_share = [round(n / live_total, 4) for n in live_shape]
-
-    # The queue audit judges only maker fills the tape could read at all.
-    audited = [w["fidelity"] for w in settled if w.get("fidelity")]
-    a_maker = sum(int(f.get("makerFills") or 0) for f in audited)
-    a_attainable = sum(int(f.get("attainableFills") or 0) for f in audited)
-    a_phantom = sum(int(f.get("phantomFills") or 0) for f in audited)
-    fill_rate = round(a_attainable / a_maker, 4) if a_maker else None
-
-    # Config decides the pair-cost bar: the strategy's own cap, not a tape mean.
-    cfg = None
-    cfg_bankroll = None
     sel = get_selected_run_id()
+    config_snapshot = None
     if sel:
-        ws = resolve_run_workspace(sel)
-        if ws:
-            meta = ws.read_meta()
-            if meta and meta.config_snapshot:
-                cfg = meta.config_snapshot
-                cfg_bankroll = cfg.get("bankrollUsd")
-    if cfg is None:
-        cfg = load_config()
-    if not isinstance(cfg, dict):
-        cfg = {}
-    if cfg_bankroll is None:
-        cfg_bankroll = cfg.get("bankrollUsd")
-    bankroll = _num(cfg_bankroll, default=float(BANKROLL_DEFAULT))
-    entry_cfg = cfg.get("entry") if isinstance(cfg.get("entry"), dict) else {}
-    pair_cap = _num(entry_cfg.get("maxPairCost"), default=0.985)
-
-    both_rate = round(both / len(settled), 4) if settled else 0.0
-    pair_costs = [w["pairCost"] for w in settled if w["pairCost"] is not None]
-    median_pair_cost = _median(pair_costs)
-
-    both_status = "stat" if not settled else ("pass" if both == len(settled) else ("warn" if both_rate >= 0.8 else "fail"))
-    if not pair_costs:
-        pair_status = "stat"
-    elif median_pair_cost <= pair_cap:
-        pair_status = "pass"
-    else:
-        pair_status = "warn" if median_pair_cost <= 1.0 else "fail"
-
-    # The funnel the run actually walked: windows -> orders -> fills by side ->
-    # paired positions -> the lone legs that never got a partner.
-    counted_orders = [w for w in settled if w["ordersPosted"] is not None]
-    orders_made = sum(int(w["ordersPosted"] or 0) for w in counted_orders)
-    orders_cancelled = sum(int(w["ordersCancelled"] or 0) for w in counted_orders)
-
-    def side_stats(outcome: str) -> dict:
-        settled_slugs = {w["slug"] for w in settled}
-        side_fills = [
-            f
-            for r in raw_runs
-            if r.get("event_slug") in settled_slugs
-            for f in (r.get("fills") or [])
-            if f.get("outcome") == outcome
-        ]
-        shares = [_num(f.get("shares")) for f in side_fills]
-        prices = [_num(f.get("price")) for f in side_fills if _num(f.get("price")) > 0]
-        return {
-            "count": len(side_fills),
-            "shares": round(sum(shares), 2),
-            "medianShares": _median(shares),
-            "avgShares": _mean(shares),
-            "medianPrice": _median(prices),
-            "avgPrice": _mean(prices),
-        }
-
-    up_stats = side_stats("Up")
-    down_stats = side_stats("Down")
-
-    paired_windows = [w for w in settled if w["upShares"] > 0 and w["downShares"] > 0]
-    paired_shares = [w["pairedShares"] for w in paired_windows]
-    single_windows = [w for w in settled if w["singleSide"]]
-    single_shares = [w["singleShares"] for w in single_windows]
-
-    # Shares, not fills: a pair is made of the smaller side, so every share
-    # above that minimum is a share nobody paired.
-    up_shares_total = sum(w["upShares"] for w in settled)
-    down_shares_total = sum(w["downShares"] for w in settled)
-    total_shares = up_shares_total + down_shares_total
-    net_side_diff = up_shares_total - down_shares_total
-    unpaired_total = sum(abs(w["upShares"] - w["downShares"]) for w in settled)
-    unpaired_in_two_sided = unpaired_total - sum(single_shares)
-
-    # The card is a matrix, not a list of sentences: every number lives in a
-    # cell next to the number it belongs with.
-    def cell(key: str, label: str, value: str, sub: list[tuple[str, str]],
-             status: str = "stat", tone: str | None = None, big: bool = False,
-             span: int = 1) -> dict:
-        return {
-            "key": key,
-            "label": label,
-            "value": value,
-            "status": status,
-            "big": big,
-            "span": span,
-            "sub": [{"label": name, "value": text, "tone": tone} for name, text in sub],
-        }
-
-    def share_fmt(value: float) -> str:
-        return f"{round(value, 1):g} sh"
-
-    cells = [
-        cell("windows", "Windows traded", f"{len(settled)}",
-             [("Pending", f"{len(pending)}")]),
-        cell("orders", "Orders made",
-             f"{orders_made}" if counted_orders else "—",
-             ([("Cancelled", f"{orders_cancelled}"),
-               ("Windows counted", f"{len(counted_orders)} of {len(settled)}")] if counted_orders
-              else [("Cancelled", "—"), ("Windows counted", f"0 of {len(settled)}")])),
-        cell("totalShares", "Total shares filled", f"{total_shares:,.0f} sh",
-             [("Up", f"{up_shares_total:,.0f}"), ("Down", f"{down_shares_total:,.0f}"),
-              ("Fills", f"{up_stats['count'] + down_stats['count']:,}"),
-              ("Side difference", f"{abs(net_side_diff):,.0f} sh")],
-             big=True, span=2),
-        cell("fillsUp", "Filled orders · Up", f"{up_stats['count']:,}",
-             [("Median size", share_fmt(up_stats['medianShares'])),
-              ("Median price", f"{up_stats['medianPrice'] * 100:.1f}¢"),
-              ("Shares", f"{up_shares_total:,.0f}")]),
-        cell("fillsDown", "Filled orders · Down", f"{down_stats['count']:,}",
-             [("Median size", share_fmt(down_stats['medianShares'])),
-              ("Median price", f"{down_stats['medianPrice'] * 100:.1f}¢"),
-              ("Shares", f"{down_shares_total:,.0f}")]),
-        cell("paired", "Paired orders", f"{len(paired_windows):,}",
-             [("Paired shares", f"{sum(paired_shares):,.0f}"),
-              ("Median / window", share_fmt(_median(paired_shares))),
-              ("Lock-in", f"{median_pair_cost * 100:.1f}¢"),
-              ("Your cap", f"{pair_cap * 100:.1f}¢")],
-             status=pair_status, span=2),
-        cell("unpaired", "Unpaired shares", f"{unpaired_total:,.0f} sh",
-             [("Lone-leg positions", f"{sum(single_shares):,.0f}"),
-              ("Inside two-sided windows", f"{unpaired_in_two_sided:,.0f}"),
-              ("Net side difference", f"{abs(net_side_diff):,.0f} sh")]),
-        cell("single", "Single-side positions", f"{len(single_windows):,}",
-             [("Shares held", f"{sum(single_shares):,.0f}"),
-              ("Median size", share_fmt(_median(single_shares))),
-              ("Share of windows", f"{(len(single_windows) / len(settled) * 100) if settled else 0:.0f}%")],
-             status="stat" if not single_windows else ("warn" if len(single_windows) <= len(settled) * 0.2 else "fail")),
-        cell("bothSides", "Both sides covered", f"{both}/{len(settled)}" if settled else "0/0",
-             [("Coverage", f"{(both_rate * 100):.0f}%")], status=both_status),
-        cell("attainable", "Queue fill rate",
-             f"{fill_rate * 100:.0f}%" if fill_rate is not None else "—",
-             [("Audited maker fills", f"{a_maker:,}"),
-              ("Could fill", f"{a_attainable:,}"),
-              ("Never could", f"{a_phantom:,}")]),
-        cell("zeroPrice", "Zero-price fills", f"{zero_fills}",
-             [("Cost moved", "$0.00")], status="pass" if zero_fills == 0 else "fail"),
-        cell("perWindow", "Per window", f"{median_fills:g} fills",
-             [("Mean fills", f"{mean_fills:.1f}"),
-              ("Median cost", f"${median_cost:,.2f}"),
-              ("Mean cost", f"${mean_cost:,.2f}")]),
-    ]
-
-    redeem_due = [w for w in settled if w["winner"] and not w["redeemed"] and (w.get("payoutUsd") or 0) > 0]
-    redeem_payout = round(sum(w["payoutUsd"] for w in redeem_due), 2)
-
-    pid = loop_running()
-    st = state()
-    age_ms = None
-    if st and st.get("updatedAtMs"):
-        age_ms = max(0, int(time.time() * 1000) - int(st["updatedAtMs"]))
-    health = {
-        "loopRunning": pid is not None,
-        "pid": pid,
-        "killSwitch": KILL_PATH.exists(),
-        "stateSlug": (st or {}).get("slug"),
-        "stateFills": len((st or {}).get("fills") or []),
-        "snapshotAgeSec": round(age_ms / 1000, 1) if age_ms is not None else None,
-        "windowEndsInSec": max(0, round((int((st or {}).get("endMs") or 0) - time.time() * 1000) / 1000)) if st else None,
-    }
-
-    notes: list[dict] = []
-
-    def note(tone: str, title: str, body: str) -> None:
-        notes.append({"tone": tone, "title": title, "body": body})
-
-    if not health["loopRunning"]:
-        note("warning", "Loop is stopped",
-             "No new windows are being taken. Start it from the header; the paper loop runs one window at a time.")
-    if health["killSwitch"]:
-        note("danger", "Kill switch engaged",
-             "Entries stay paused between windows while bot/kill exists. Resume from Live, or `rm bot/kill`.")
-    age_s = health["snapshotAgeSec"]
-    if health["loopRunning"] and age_s is not None and age_s > 120:
-        note("warning", f"Heartbeat is {age_s:.0f}s old",
-             "The window may have died mid-fill. Restart the loop — do not delete state.json while it owns the window (assert_single_window).")
-    if pending:
-        note("info", f"{len(pending)} window{'s' if len(pending) != 1 else ''} still settling",
-             "Payout is not final until the market resolves; these are excluded from net, cost and the health rows.")
-    if redeem_due:
-        note("warning", f"{len(redeem_due)} winning window{'s' if len(redeem_due) != 1 else ''} unredeemed (${redeem_payout:,.2f})",
-             "Hold-to-redeem is the strategy: paper only books the win when claimed. Redeem via the Dashboard or run python bot/redeem.py.")
-    if zero_fills:
-        note("danger", f"{zero_fills} fills at $0.00",
-             "No capital moved, but they still count toward every fill average. Fix the late dust path before trusting the queue audit.")
-    if a_maker and a_phantom:
-        phantom_rate = a_phantom / a_maker
-        if phantom_rate > 0.25:
-            note("warning", f"{phantom_rate * 100:.0f}% of audited maker fills were phantom",
-                 f"The tape shows no selling behind the queue at {a_phantom} of {a_maker} audited limits, so the paper tape overstates what a real bid would have filled.")
-    if settled and both < len(settled):
-        note("warning", f"{len(settled) - both} single-sided window{'s' if len(settled) - both != 1 else ''}",
-             "A missed hedge leg breaks the straddle: the first leg filled but the other outcome was never bought.")
-    if fills and max(up_fills, down_fills) / fills > 0.75:
-        lead = "Up" if up_fills >= down_fills else "Down"
-        share = max(up_fills, down_fills) / fills
-        note("warning", f"Fill mix is {share * 100:.0f}% {lead}",
-             f"{up_fills} Up vs {down_fills} Down fills — the lean/alternation is not flipping sides the way the strategy expects.")
-    if settled:
-        roi = net / cost if cost else 0.0
-        note("success" if net > 0 else "danger",
-             f"Paper net {'+' if net >= 0 else '−'}${abs(net):,.2f} on ${cost:,.2f} staked",
-             f"{profitable}/{len(settled)} windows profitable ({roi * 100:+.1f}% on cost). Winners pay $1/share at resolution; there are no sells.")
-
-    severity = {"danger": 0, "warning": 1, "info": 2, "success": 3}
-    notes.sort(key=lambda n: severity.get(n["tone"], 9))
-
-    wins = [n for n in nets if n > 0]
-    losses = [-n for n in nets if n < 0]
-    wins_count = len(wins)
-    losses_count = len(losses)
-    gross_profit = round(sum(wins), 2)
-    gross_loss = round(sum(losses), 2)
-    profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else (99.0 if gross_profit > 0 else 0.0)
-    avg_win = round(gross_profit / wins_count, 2) if wins_count > 0 else 0.0
-    avg_loss = round(gross_loss / losses_count, 2) if losses_count > 0 else 0.0
-    payoff_ratio = round(avg_win / avg_loss, 2) if avg_loss > 0 else (99.0 if avg_win > 0 else 0.0)
-    win_rate = round(profitable / len(settled), 4) if settled else 0.0
-    loss_rate = round(losses_count / len(settled), 4) if settled else 0.0
-    expectancy_usd = round(net / len(settled), 2) if settled else 0.0
-    expectancy_ratio = round((win_rate * payoff_ratio) - loss_rate, 2) if settled else 0.0
-    be_win_rate = round(((wins_count + losses_count) / len(settled)) / (1.0 + payoff_ratio), 4) if (settled and wins_count > 0 and payoff_ratio > 0) else None
-    edge_pct = round((win_rate - be_win_rate) * 100, 2) if (settled and be_win_rate is not None) else None
-
-    annual_factor = math.sqrt(288 * 365)
-    if len(nets) >= 2:
-        mean_net = statistics.mean(nets)
-        stdev_net = statistics.stdev(nets)
-        sharpe_ratio = round((mean_net / stdev_net) * annual_factor, 2) if stdev_net > 0.0001 else 0.0
-        downside = [min(0.0, n) for n in nets]
-        downside_variance = sum(d**2 for d in downside) / len(nets)
-        downside_std = math.sqrt(downside_variance)
-        sortino_ratio = round((mean_net / downside_std) * annual_factor, 2) if downside_std > 0.0001 else (99.0 if mean_net > 0 else 0.0)
-    else:
-        sharpe_ratio = 0.0
-        sortino_ratio = 0.0
-
-    sorted_settled = sorted(settled, key=lambda w: w.get("startMs", 0))
-    equity = bankroll
-    peak = equity
-    max_dd_usd = 0.0
-    max_dd_pct = 0.0
-    for w in sorted_settled:
-        n = w.get("netUsd") or 0.0
-        equity += n
-        if equity > peak:
-            peak = equity
-        dd = peak - equity
-        dd_pct = dd / peak if peak > 0 else 0.0
-        if dd > max_dd_usd:
-            max_dd_usd = dd
-        if dd_pct > max_dd_pct:
-            max_dd_pct = dd_pct
-    current_dd_usd = round(max(0.0, peak - equity), 2)
-    current_dd_pct = round(current_dd_usd / peak, 4) if peak > 0 else 0.0
-    max_dd_usd = round(max_dd_usd, 2)
-    max_dd_pct = round(max_dd_pct, 4)
-
-    current_streak = 0
-    max_win_streak = 0
-    max_loss_streak = 0
-    streak = 0
-    for w in sorted_settled:
-        n = w.get("netUsd") or 0.0
-        if n > 0:
-            streak = streak + 1 if streak > 0 else 1
-            if streak > max_win_streak:
-                max_win_streak = streak
-        elif n < 0:
-            streak = streak - 1 if streak < 0 else -1
-            if abs(streak) > max_loss_streak:
-                max_loss_streak = abs(streak)
-        else:
-            streak = 0
-    current_streak = streak
-
-    up_windows = [w for w in settled if w.get("winner") == "Up"]
-    down_windows = [w for w in settled if w.get("winner") == "Down"]
-    up_wins = sum(1 for w in up_windows if (w.get("netUsd") or 0) > 0)
-    down_wins = sum(1 for w in down_windows if (w.get("netUsd") or 0) > 0)
-    up_net = round(sum(w.get("netUsd") or 0.0 for w in up_windows), 2)
-    down_net = round(sum(w.get("netUsd") or 0.0 for w in down_windows), 2)
-    up_win_rate = round(up_wins / len(up_windows), 4) if up_windows else 0.0
-    down_win_rate = round(down_wins / len(down_windows), 4) if down_windows else 0.0
-
-    # Attainable view: the same windows judged by what a real resting bid could
-    # have got behind the queue that was actually there. Windows the auditor
-    # could not read (no prints) carry no fidelity and drop out, so this net
-    # covers the audited windows while the headline covers every settled one.
-    a_cost = round(sum(_num(f.get("attainableCostUsd")) for f in audited), 2)
-    a_payout = round(sum(_num(f.get("attainablePayoutUsd")) for f in audited), 2)
-    a_assumed = round(sum(_num(f.get("assumedShares")) for f in audited), 2)
-    a_kept = round(sum(_num(f.get("attainableShares")) for f in audited), 2)
-    attainable = {
-        "windows": len(audited),
-        "makerFills": a_maker,
-        "attainableFills": a_attainable,
-        "phantomFills": a_phantom,
-        "queueKnownFills": sum(int(f.get("queueKnown") or 0) for f in audited),
-        "costUsd": a_cost,
-        "payoutUsd": a_payout,
-        "netUsd": round(a_payout - a_cost, 2),
-        "fillRate": round(a_attainable / a_maker, 4) if a_maker else 0.0,
-        "shareRate": round(a_kept / a_assumed, 4) if a_assumed else 0.0,
-    }
-
-    strat = cfg.get("strategy", {})
-    strat_id = strat.get("id", C.STRATEGY_ID)
-    strat_sym = strat.get("symbol", C.STRATEGY_SYMBOL)
-    strat_name = strat.get("name", C.STRATEGY_NAME)
-    setup_info = C.STRATEGY_SETUPS.get(strat_id, {})
-    strat_sig = setup_info.get("signature", C.STRATEGY_SIGNATURE)
-
-    return {
-        "strategy": {
-            "id": strat_id,
-            "symbol": strat_sym,
-            "name": strat_name,
-            "signature": strat_sig,
-            "makerShareTarget": C.MAKER_SHARE_TARGET,
-            "pairCostTarget": entry_cfg.get("targetPairCost", C.PAIR_COST_TARGET),
-            "priceFloor": entry_cfg.get("minFillPrice", C.PRICE_FLOOR),
-            "priceCeiling": entry_cfg.get("maxFillPrice", C.PRICE_CEILING),
-            "cutoffSec": entry_cfg.get("stopBeforeCloseSec", C.HARD_CUTOFF_SBC),
-        },
-        "summary": {
-            "bankrollUsd": bankroll,
-            "settled": len(settled), "pending": len(pending), "fills": fills,
-            "costUsd": cost, "payoutUsd": payout, "netUsd": net,
-            "feesUsd": round(sum(w["feesUsd"] for w in settled), 4),
-            "makerFeeBaseUsd": round(sum(w["makerFeeBaseUsd"] for w in settled), 4),
-            "roi": round(net / cost, 4) if cost else 0.0,
-            "profitable": profitable,
-            "hitRate": round(profitable / len(settled), 4) if settled else 0.0,
-            "bothSides": both, "bothSidesRate": both_rate,
-            "medianFills": median_fills, "meanFills": mean_fills,
-            "medianCostUsd": median_cost, "meanCostUsd": mean_cost,
-            "bestUsd": round(max(nets), 2) if nets else 0.0,
-            "worstUsd": round(min(nets), 2) if nets else 0.0,
-            "zeroPriceFills": zero_fills,
-            "upFills": up_fills, "downFills": down_fills,
-            "upWins": up_wins,
-            "downWins": down_wins,
-            "winRate": win_rate,
-            "lossRate": loss_rate,
-            "winsCount": wins_count,
-            "lossesCount": losses_count,
-            "grossProfitUsd": gross_profit,
-            "grossLossUsd": gross_loss,
-            "profitFactor": profit_factor,
-            "avgWinUsd": avg_win,
-            "avgLossUsd": avg_loss,
-            "payoffRatio": payoff_ratio,
-            "expectancyUsd": expectancy_usd,
-            "expectancyRatio": expectancy_ratio,
-            "breakEvenWinRate": be_win_rate,
-            "edgePct": edge_pct,
-            "sharpeRatio": sharpe_ratio,
-            "sortinoRatio": sortino_ratio,
-            "maxDrawdownUsd": max_dd_usd,
-            "maxDrawdownPct": max_dd_pct,
-            "currentDrawdownUsd": current_dd_usd,
-            "currentDrawdownPct": current_dd_pct,
-            "currentStreak": current_streak,
-            "maxWinStreak": max_win_streak,
-            "maxLossStreak": max_loss_streak,
-            "upWindows": len(up_windows),
-            "downWindows": len(down_windows),
-            "upNetUsd": up_net,
-            "downNetUsd": down_net,
-            "upWinRate": up_win_rate,
-            "downWinRate": down_win_rate,
-            "attainable": attainable,
-        },
-        "cells": cells,
-        "mShape": {"live": live_shape, "liveShare": live_share,
-                   "attainable": m_attainable, "phantom": m_phantom},
-        "redeem": {"count": len(redeem_due), "payoutUsd": redeem_payout},
-        "health": health,
-        "notes": notes,
-        "windows": rows,
-        "generatedAt": utc_now_iso(),
-    }
-
-
-def slot_ms(slug: str) -> int:
-    """Window epoch from a `btc-updown-5m-<epoch>` slug, in ms."""
-    try:
-        return int(str(slug).split("-")[-1]) * 1000
-    except (ValueError, IndexError):
-        return 0
-
-
-def _enrich_fill(f: dict, idx: int, default_ts: int, slug: str | None) -> dict:
-    reason = f.get("reason")
-    detail = dict(f.get("detail") or {})
-    minute = f.get("minute")
-    if not reason or reason == "paper-fill":
-        if idx == 0 or (minute == 0 and idx == 0):
-            reason = "straddle-open"
-        elif idx == 1:
-            reason = "hedge-leg"
-        elif minute is not None:
-            # No minute-4 snipe default: reason-less late fills are ordinary
-            # balance clips (mislabeling them as snipes also mistreats fees).
-
-            reason = "straddle-balance"
-        else:
-            reason = "paper-fill"
-    if minute is not None and "minute" not in detail:
-        detail["minute"] = minute
-    return {
-        "ts": int(f.get("ts") or default_ts),
-        "kind": "snipe" if reason == "m4-snipe" else "entry",
-        "slug": slug,
-        "interval": "5m",
-        "side": f.get("outcome"),
-        "shares": f.get("shares"),
-        "price": f.get("price"),
-        "usd": f.get("usd"),
-        "reason": reason,
-        "detail": detail,
-        "mode": "paper",
-    }
+        try:
+            ws = resolve_run_workspace(sel)
+            if ws:
+                meta = ws.read_meta()
+                if meta and meta.config_snapshot:
+                    config_snapshot = meta.config_snapshot
+        except Exception:
+            pass
+    cfg = config_snapshot if isinstance(config_snapshot, dict) else load_config()
+    return _views.build_perf(
+        sorted(runs(), key=lambda r: str(r.get("event_slug", ""))),
+        cfg, sel, config_snapshot, loop_running(), state(),
+        KILL_PATH.exists(), BANKROLL_DEFAULT, utc_now_iso(),
+    )
 
 
 def trades_view(limit: int) -> list[dict]:
-    out: list[dict] = []
-    run_slugs: set[str | None] = set()
-    for r in sorted(runs(), key=lambda x: x.get("event_slug", ""))[-12:]:
-        rts = slot_ms(r.get("event_slug", ""))
-        run_slugs.add(r.get("event_slug"))
-        for idx, f in enumerate(r.get("fills", [])[:200]):
-            out.append(_enrich_fill(f, idx, rts, r.get("event_slug")))
-        winner = r.get("winner")
-        pnl = None if is_pending(r) else r.get("net_usd")
-        settle_reason = "awaiting-resolution" if is_pending(r) else ("won" if (pnl or 0) > 0 else "lost" if (pnl or 0) < 0 else "paper-resolve")
-        out.append({"ts": rts, "kind": "settle",
-                    "slug": r.get("event_slug"), "interval": "5m",
-                    "side": winner,
-                    "pnlUsd": pnl,
-                    "reason": settle_reason,
-                    "mode": "paper",
-                    "detail": {"winner": winner, "fills": r.get("trades"), "net": pnl}})
-
-    # Open window: its fills live in state.json until the window closes and a
-    # run file appears. Without this the table froze on the previous window's
-    # "awaiting-resolution" row for the whole next window.
-    st = state() or {}
-    live_slug = st.get("slug")
-    if live_slug and live_slug not in run_slugs:
-        base = slot_ms(live_slug)
-        for idx, f in enumerate((st.get("fills") or [])[:200]):
-            default_ts = base + int(f.get("minute") or 0) * 60_000
-            out.append(_enrich_fill(f, idx, default_ts, live_slug))
-
-    out.sort(key=lambda t: int(t.get("ts") or 0))
-    return out[-limit:]
+    return _views.build_trades_view(
+        sorted(runs(), key=lambda x: x.get("event_slug", "")), state(), limit)
 
 
 EDITABLE = {
@@ -1752,14 +672,6 @@ class Handler(BaseHTTPRequestHandler):
                         prev_selected = get_selected_run_id()
                         stop_loop_process()
 
-                        if prev_active and STATE_PATH.exists():
-                            try:
-                                prev_ws = RunWorkspace(prev_active)
-                                if prev_ws.exists():
-                                    shutil.copyfile(STATE_PATH, prev_ws.root / "state.json")
-                            except Exception:
-                                pass
-
                         try:
                             set_active_run_id(resolved_id)
                             set_selected_run_id(None)
@@ -1770,18 +682,6 @@ class Handler(BaseHTTPRequestHandler):
                                 ws.settle_pending_windows(WINDOWS_MIRROR_DIR, max_windows=15)
                             except Exception:
                                 pass
-                            if ws.events_file.exists() and ws.events_file.stat().st_size > 0:
-                                try:
-                                    shutil.copyfile(ws.events_file, EVENTS_PATH)
-                                except Exception:
-                                    pass
-                            else:
-                                if EVENTS_PATH.exists():
-                                    try:
-                                        EVENTS_PATH.unlink()
-                                    except Exception:
-                                        pass
-                            STATE_PATH.unlink(missing_ok=True)
                             KILL_PATH.unlink(missing_ok=True)
                             pid = start_loop_process(run_id=resolved_id)
                         except Exception as err:
@@ -1825,14 +725,6 @@ class Handler(BaseHTTPRequestHandler):
                 prev_selected = get_selected_run_id()
                 stop_loop_process()
 
-                if prev_active and STATE_PATH.exists():
-                    try:
-                        prev_ws = RunWorkspace(prev_active)
-                        if prev_ws.exists():
-                            shutil.copyfile(STATE_PATH, prev_ws.root / "state.json")
-                    except Exception:
-                        pass
-
                 try:
                     set_active_run_id(resolved_id)
                     set_selected_run_id(None)
@@ -1842,18 +734,6 @@ class Handler(BaseHTTPRequestHandler):
                         ws.settle_pending_windows(WINDOWS_MIRROR_DIR, max_windows=15)
                     except Exception:
                         pass
-                    if ws.events_file.exists() and ws.events_file.stat().st_size > 0:
-                        try:
-                            shutil.copyfile(ws.events_file, EVENTS_PATH)
-                        except Exception:
-                            pass
-                    else:
-                        if EVENTS_PATH.exists():
-                            try:
-                                EVENTS_PATH.unlink()
-                            except Exception:
-                                pass
-                    STATE_PATH.unlink(missing_ok=True)
                     KILL_PATH.unlink(missing_ok=True)
 
                     pid = start_loop_process(run_id=resolved_id)
@@ -1914,11 +794,12 @@ class Handler(BaseHTTPRequestHandler):
                 for p in WINDOWS_MIRROR_DIR.glob("*.json"):
                     p.unlink()
                 active_ws = resolve_run_workspace(None)
-                if active_ws and active_ws.windows_dir.exists():
-                    for p in active_ws.windows_dir.glob("*.json"):
-                        p.unlink(missing_ok=True)
-                for p in (STATE_PATH, EVENTS_PATH):
-                    p.unlink(missing_ok=True)
+                if active_ws is not None:
+                    try:
+                        if active_ws.state_path.exists():
+                            active_ws.state_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
                 global _LAST_STATE, _LAST_MARKETS
                 _LAST_STATE = None
                 _LAST_MARKETS = []
@@ -1930,6 +811,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(400, {"error": "Cannot toggle kill-switch while in view-only mode", "isViewOnly": True})
                     return
                 if body.get("active"):
+                    ensure_data_dir()
                     KILL_PATH.write_text(utc_now_iso())
                     log_event("risk", "kill-switch-engaged")
                 else:
@@ -1995,15 +877,17 @@ class Handler(BaseHTTPRequestHandler):
                 tmp_cfg.write_text(json.dumps(cfg, indent=2))
                 tmp_cfg.replace(CONFIG_PATH)
 
-                # Update state.json if present
-                if STATE_PATH.exists():
+                # Update the active run snapshot if present
+                _ws = resolve_run_workspace(None)
+                _sp = _ws.state_path if _ws is not None else None
+                if _sp is not None and _sp.exists():
                     try:
-                        with open(STATE_PATH, "r", encoding="utf-8") as sf:
+                        with open(_sp, "r", encoding="utf-8") as sf:
                             st_data = json.load(sf)
                         st_data["strategy"] = cfg["strategy"]
-                        tmp_st = STATE_PATH.with_suffix(".tmp")
+                        tmp_st = _sp.with_suffix(".tmp")
                         tmp_st.write_text(json.dumps(st_data, indent=2))
-                        tmp_st.replace(STATE_PATH)
+                        tmp_st.replace(_sp)
                     except Exception:
                         pass
 

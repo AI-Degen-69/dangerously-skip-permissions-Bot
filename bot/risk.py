@@ -22,11 +22,15 @@ class RiskState:
     kill_reason: str = ""
 
 
-CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
+from bot.runs import CONFIG_PATH as RUNS_CONFIG_PATH
+from bot.runs import STATE_PATH as _DEFAULT_STATE_PATH
+
+CONFIG_PATH = RUNS_CONFIG_PATH
+_LEGACY_CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
 
 
 def load_risk_config() -> dict:
-    p = CONFIG_PATH if CONFIG_PATH.exists() else Path("bot/config.json")
+    p = CONFIG_PATH if CONFIG_PATH.exists() else _LEGACY_CONFIG_PATH
     if not p.exists():
         return {}
     try:
@@ -99,7 +103,7 @@ def kill(state: RiskState, reason: str) -> None:
 # --- single-window invariant -------------------------------------------
 # The loop trades one window at a time; a stale state.json from a crashed
 # window must never merge into the next window's fills.
-def assert_single_window(active_slug: str, state_path: Path | str = "bot/state.json") -> None:
+def assert_single_window(active_slug: str, state_path: Path | str | None = None) -> None:
     """Raise if another live window still owns the state file.
     
     If the file belongs to an expired window from the past (endMs <= now)
@@ -107,7 +111,7 @@ def assert_single_window(active_slug: str, state_path: Path | str = "bot/state.j
     died/crashed ungracefully. In that case, retire the stale state file
     so the current window can trade rather than deadlock permanently.
     """
-    p = Path(state_path)
+    p = Path(state_path) if state_path is not None else _DEFAULT_STATE_PATH
     if not p.exists():
         return
     try:
@@ -146,9 +150,9 @@ def assert_single_window(active_slug: str, state_path: Path | str = "bot/state.j
 HEARTBEAT_STALE_S = 120
 
 
-def heartbeat(state_path: Path | str = "bot/state.json") -> None:
+def heartbeat(state_path: Path | str | None = None) -> None:
     """Touch updatedAtMs so the desk knows the loop is alive."""
-    p = Path(state_path)
+    p = Path(state_path) if state_path is not None else _DEFAULT_STATE_PATH
     if not p.exists():
         return
     try:
@@ -164,8 +168,8 @@ def heartbeat(state_path: Path | str = "bot/state.json") -> None:
         pass
 
 
-def heartbeat_age_s(state_path: Path | str = "bot/state.json") -> float | None:
-    p = Path(state_path)
+def heartbeat_age_s(state_path: Path | str | None = None) -> float | None:
+    p = Path(state_path) if state_path is not None else _DEFAULT_STATE_PATH
     try:
         updated = json.loads(p.read_text()).get("updatedAtMs")
     except Exception:
@@ -175,6 +179,6 @@ def heartbeat_age_s(state_path: Path | str = "bot/state.json") -> float | None:
     return max(0.0, time.time() - updated / 1000.0)
 
 
-def is_stale(state_path: Path | str = "bot/state.json") -> bool:
+def is_stale(state_path: Path | str | None = None) -> bool:
     age = heartbeat_age_s(state_path)
     return age is not None and age > HEARTBEAT_STALE_S

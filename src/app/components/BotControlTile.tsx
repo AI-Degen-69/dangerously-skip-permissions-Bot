@@ -140,7 +140,7 @@ export function BotControlTile({ health }: { health?: BotHealthView }) {
   const busy = starting || stop.isPending
   const tape = tapeQuery.data ?? control.data?.tape ?? null
   const tapePath =
-    tape?.tapeDir ?? (activeRunId ? `bot/runs/${activeRunId}/tape` : 'bot/runs/<run-id>/tape')
+    tape?.tapeDir ?? (activeRunId ? `data/runs/${activeRunId}/tape` : 'data/runs/<run-id>/tape')
 
   const hbTone: StatusDotTone =
     hbAgeSec == null ? 'stopped' : hbAgeSec > 120 ? 'warning' : running ? 'live' : 'stopped'

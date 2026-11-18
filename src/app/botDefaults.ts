@@ -1,4 +1,4 @@
-// Factory defaults for the MSR-v2 paper bot knobs (mirrors bot/config.json).
+// Factory defaults for the MSR-v2 paper bot knobs (mirrors data/config.json).
 // Bounds clamp what the Config page will save; the engine re-reads the file
 // every window, so a save applies on the next tick.
 

@@ -34,7 +34,7 @@ python bot/live_paper.py --loop
 
 The UI talks to `http://127.0.0.1:8789` by default; override with
 `VITE_BOT_ORIGIN=http://127.0.0.1:8789 bun run dev` (the API's own port is set by
-`python bot/api.py --port <n>`). On Windows, `bot/restart_api.ps1` stops whatever
+`python bot/api.py --port <n>`). On Windows, `scripts/restart_api.ps1` stops whatever
 holds the port and starts a fresh API instance.
 
 Single window instead of a loop:
@@ -51,27 +51,28 @@ anchor, maker dip grid + lagging-leg equalizer, late-window resolution snipe,
 settlement lock); `bot/executor.py` holds the ladder, pair-cost gates and maker
 rebalance; `bot/constants.py` is the versioned strategy registry
 (`dsp-v2.x` / `hydrogen-v1.x` → `hydrogen-v2.0`, the current default in
-`bot/config.json`).
+`data/config.json`).
 
 Risk rails: `maxFillsPerWindow` (500), `dailyLossCapUsd` ($500),
-`maxConcurrentPositions`, and the kill switch — the presence of `bot/kill` pauses
+`maxConcurrentPositions`, and the kill switch — the presence of `data/kill` pauses
 entries between windows (also toggled from Config → risk).
 
 ## Runs and data
 
-Each loop session owns `bot/runs/<run_id>/`:
+Each loop session owns `data/runs/<run_id>/`:
 
 ```
 run_meta.json     config snapshot, status, summary
 windows/*.json    settled window results (fills, cost, payout, net)
 tape/             recorded book + print segments (required for replay)
 events.jsonl      decision journal  (open / hedge / hold / settle / skip)
+state.json        live fills + heartbeat of the active window
 loop.pid          loop process id
 ```
 
-Everything under `bot/runs/` is runtime output and gitignored, as are
-`bot/state.json`, `bot/events.jsonl`, `bot/kill` and `scratch/`.
-`bot/windows_mirror/` is gitignored too: a flat copy of the windows of the run
+Everything under `data/runs/` is runtime output and gitignored, as are
+`data/runs/<run_id>/state.json`, `data/runs/<run_id>/events.jsonl`, `data/kill` and `scratch/`.
+`data/windows_mirror/` is gitignored too: a flat copy of the windows of the run
 that synced last, not a run store. The one recorded run kept in the repo carries
 its `run_meta.json` and `windows/`; its journal has been pruned.
 
@@ -96,7 +97,7 @@ surfaced in the desk as the "attainable" figure beside net. Replay a recorded ru
 offline through `bot/executor.py` and `bot/fill_model.py`:
 
 ```sh
-python -m bot.replay --run bot/runs/<run_id> --rule v2.6
+python -m bot.replay --run data/runs/<run_id> --rule v2.6
 ```
 
 Replay needs both `windows/` and `tape/` in the run. Runs recorded without tape
@@ -128,7 +129,7 @@ Other operator tools: `python bot/redeem.py --dry-run` (paper redeem batch),
 
 | Path | Contents |
 |---|---|
-| `bot/RUNBOOK.md` | Operating the loop: config, tape verification, kill-switch drill, redeem, live-gate checklist |
+| `docs/runbook.md` | Operating the loop: config, tape verification, kill-switch drill, redeem, live-gate checklist |
 | `docs/architecture.md` | Engine/UI architecture and data flow |
 | `docs/usage-guide.md` | Step-by-step desk guide (API, UI, loop, A/B, config) |
 | `docs/explanations/` | Strategy and mechanic write-ups (sizing, rebates, verified-only, DSP v2.3/v2.4) |
@@ -155,5 +156,5 @@ harmless, but do not rename one without the others.
 
 Nothing here touches funds or keys. Settlement is modeled from the resolved window,
 `bot/redeem.py` only marks `redeemedAt` in run windows and the
-`bot/windows_mirror/` copy, and the live micro-size gate (funding, keys,
+`data/windows_mirror/` copy, and the live micro-size gate (funding, keys,
 per-window dollar caps) stays closed until the runbook's checklist passes.

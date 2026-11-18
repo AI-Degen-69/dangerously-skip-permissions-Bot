@@ -22,10 +22,10 @@ python bot/api.py
 
 *Verify:* Navigate to `http://127.0.0.1:8789/api/bot/control` in your browser. You should receive a JSON status response (`"running": false`, `"mode": "paper"`).
 
-On Windows, `bot/restart_api.ps1` does a clean restart: it finds any process holding the API port or running `bot/api.py`, stops it, waits until the port is released, spawns a fresh background instance, and verifies the control endpoint responds:
+On Windows, `scripts/restart_api.ps1` does a clean restart: it finds any process holding the API port or running `bot/api.py`, stops it, waits until the port is released, spawns a fresh background instance, and verifies the control endpoint responds:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File bot/restart_api.ps1
+powershell -ExecutionPolicy Bypass -File scripts/restart_api.ps1
 ```
 
 ---
@@ -62,11 +62,11 @@ You can start the trading loop in one of two ways:
   ```
 
 ### Step 4: Analyze a Run Offline (no live feed needed)
-Every run records a tape of book snapshots and trade prints under `bot/runs/<run_id>/tape/`. You can replay it deterministically or re-audit fills without touching the live engine:
+Every run records a tape of book snapshots and trade prints under `data/runs/<run_id>/tape/`. You can replay it deterministically or re-audit fills without touching the live engine:
 
 ```bash
 # Counterfactual replay of one recorded run with a placement rule:
-python -m bot.replay --run bot/runs/run_20261113_080232_paper_dsp_v2_6 --rule v2.6
+python -m bot.replay --run data/runs/run_20261113_080232_paper_dsp_v2_6 --rule v2.6
 
 # Replay every recorded run (canned v2.7 / hydrogen rules also available):
 python -m bot.replay --runs all --rule hydrogen
@@ -99,7 +99,7 @@ The command center for analyzing execution performance across settled windows.
 - **Verified Only Switch (chart card):**
   - Counts only the fills the recorded trade prints corroborate — a maker fill at limit L is confirmed when the tape printed at least the clip's size at or below L inside that window. Every window is recomputed from its confirmed fills, and a window without one drops out of the view entirely. Taker fills cannot be checked in paper mode (there is no real book) and the fills the market never traded drop out too, so read the number as a **lower bound**, not an estimate.
   - The line under the chart says how much of the tape is corroborated: confirmed maker fills vs all maker fills, the fills that never traded, the taker fills that cannot be checked, and how much payout rests on them.
-  - The verifier only stamps the window the loop is trading. After a run that started before the verifier existed, re-stamp the whole run against the recorded prints with `python bot/verify_run.py` (see `bot/RUNBOOK.md`), otherwise the view covers a slice of the tape instead of the tape.
+  - The verifier only stamps the window the loop is trading. After a run that started before the verifier existed, re-stamp the whole run against the recorded prints with `python bot/verify_run.py` (see `docs/runbook.md`), otherwise the view covers a slice of the tape instead of the tape.
 - **Attainable P&L (chart card header):**
   - The second number beside the net is what the same windows would have made if a maker fill really had to be filled: taker **SELL** prints at or below the limit, after the fill, carrying more size than the queue already resting at that price. Prints record the taker side, so a BUY print never fills a resting bid.
   - Taker fills always count (they take the ask); the gap between the two numbers is entirely maker fills that could never have filled. Hover it for the count of surviving fills and how many windows the auditor covered.
@@ -144,7 +144,7 @@ Run a statistical hypothesis test between a **baseline** run and a **candidate**
 ### 4. Config (`/config`) — Setup & Risk Guardrails
 Select the active strategy setup and adjust its parameters. `STRATEGY_SETUPS` in `bot/constants.py` is the source of truth: its `signature`, `description`, and `configHighlights` are generated from the entry numbers, so the setup cards stay in sync with the engine. All values are validated and clamped.
 
-- **Strategy setup selector:** choose among the versioned registry entries—`hapcs-v1`, `dangerously-skip-permissions` and `v2.6`–`v2.7`, and `hydrogen-v1.0`, `hydrogen-v1.9`, and `hydrogen-v2.0` (currently `hydrogen-v2.0`). The active id is written to `bot/config.json` and served by `/api/bot/strategy-setups`.
+- **Strategy setup selector:** choose among the versioned registry entries—`hapcs-v1`, `dangerously-skip-permissions` and `v2.6`–`v2.7`, and `hydrogen-v1.0`, `hydrogen-v1.9`, and `hydrogen-v2.0` (currently `hydrogen-v2.0`). The active id is written to `data/config.json` and served by `/api/bot/strategy-setups`.
 - **Microstructure ladder & dip curve:** `levelsPerSide` and `levelSpacing` (off-touch levels, e.g. 1 level at −1¢), `clipSchedule` (e.g. 5 shares flat), `wholeLadderClips`, `dipCurve` (`hump` or `{lo, hi, sharesLo, sharesHi}` anchors), plus `minFillPrice` / `maxFillPrice`, `minSpacingMoveSec`, `minSpacingStaticSec`, and `staticRequoteSec`.
 - **Pair-cost caps:** `targetPairCost` (~$0.960), `maxPairCost` (~$0.990) and `rescuePairCostMax` (~$1.02, the late-rescue ceiling). A pair leg opens only when the opposite ask completes it under the applicable cap.
 - **Unhedged inventory caps:** `maxUnhedgedShares` and `maxUnhedgedUsd` bound the light-side lead between hedges.
@@ -171,41 +171,94 @@ The general workspace page (not bot-specific): shows the signed-in account and s
 
 ## 3. Directory Layout & Workspace Data
 
-All bot state, runs, and artifacts live under the `bot/` directory:
+Engine code lives under `bot/`; all runtime state lives under `data/`:
 
 ```
 bot/
-├── api.py                  # Loopback HTTP desk API (default port 8789)
-├── restart_api.ps1         # Windows: clean stop/verify/restart of the desk API
-├── live_paper.py           # Window lifecycle, resting-order + queue-ahead management
-├── executor.py             # Microstructure ladder evaluation, pair-cost gates, rebalance logic
+├── api.py                  # Desk API shell: Handler/main/seams (default port 8789)
+├── api_core.py             # Pure desk-API core helpers (no bot.api import)
+├── api_loop.py             # Pure loop-process helpers
+├── api_markets.py          # Pure market-math helpers
+├── api_views.py            # Pure view shell (re-exports views_* builders)
+├── views_common.py         # Shared view helpers (numbers, fill enrichment, window rows)
+├── views_snapshot.py       # Dashboard snapshot + KPI builders
+├── views_perf.py           # Performance / execution-health builder
+├── views_trades.py         # Recent-trades view builder
+├── live_paper.py           # Window-lifecycle shell (trade_window/settle_slug/main)
+├── live_quotes.py          # Pure lean/microprice probes
+├── live_orders.py          # Pure resting-ladder updates
+├── live_records.py         # Pure record/settlement writes
+├── live_phases.py          # Pure setup → fill-engine → sweep/exit → close phases
+├── executor.py             # Decision-engine shell (public names + patch surface)
+├── exec_pricing.py         # Pure fees / fill-USD / pair-cost math
+├── exec_sizing.py          # Pure hump/dip/ladder clip sizing
+├── exec_hydrogen.py        # Pure hydrogen v1.9/v2.0 engines
+├── exec_ladder.py          # Pure ladder router
+├── exec_sim.py             # Deterministic paper-sim fixture
 ├── constants.py            # Versioned STRATEGY_SETUPS registry (single source of truth)
 ├── signal.py               # Microprice & lean signal calculation
 ├── risk.py                 # Loss caps, single-window guards, kill-switch, clip sizing
-├── ws.py                   # CLOB WebSocket (book / price_change / last_trade_price) + tape writer
+├── ws.py                   # CLOB stream shell (LiveBookStreamer + watch_cli/main)
+├── ws_models.py            # Streamer state / book models / constants
+├── ws_feed.py              # Connection lifecycle + WS ingest + REST fallback
+├── ws_tape.py              # Trade-print observation + tape rotation
+├── ws_quotes.py            # Quote readers (depth/status/price/lean)
 ├── discovery.py            # Polymarket Gamma 5m window discovery; REST fallback reads
 ├── fill_model.py           # Queue-ahead maker fill matching (SELL print / binary complement)
-├── fill_audit.py           # Attainability auditing of maker fills against recorded prints
+├── fill_audit.py           # Attainability-audit shell (public names)
+├── fill_util.py            # Leaf numeric / timestamp helpers
+├── fill_roles.py           # Fill role classification + print loading
+├── fill_realism.py         # Attainability / realism engine
+├── fill_verify.py          # audit_window + attainable-index entry points
 ├── tape_recorder.py        # Sidecar tape recorder (book + prints, size-rotated segments)
 ├── tape_verifier.py        # Verified-only tape check of maker fills
-├── replay.py               # Deterministic offline counterfactual replay of a recorded tape
-├── ab_test.py              # Welch t-test run/setup comparison + promotion gates
-├── runs.py                 # Run workspace manager & tape segment reader
+├── replay.py               # Replay shell (public names + CLI entry)
+├── replay_consts.py        # Shared replay constants
+├── replay_sizing.py        # Pure hump sizing curve
+├── replay_slices.py        # Tape slicing helpers
+├── replay_sim.py           # Deterministic single-window replay engine
+├── replay_analysis.py      # Replay runners / summary / live gate
+├── replay_cli.py           # Replay argparse entry point
+├── ab_test.py              # A/B shell (public names + api-coupled candidate controls)
+├── ab_consts.py            # A/B identities / targets / state paths
+├── ab_stats.py             # Welch t-test primitives + pair-cost math
+├── ab_load.py              # Run-window loading + observed-window counting
+├── ab_dist.py              # Distribution stats + histograms
+├── ab_meta.py              # Strategy ids / entries / hypothesis text
+├── ab_report.py            # Dashboard report builder
+├── runs.py                 # Run-workspace shell (public names)
+├── runs_paths.py           # Run-store paths / runtime dirs / run-id helpers
+├── runs_tape.py            # Incremental tape counters + segment discovery
+├── runs_workspace.py       # RunWorkspace (dirs, meta, mirror, settlement)
+├── runs_query.py           # Run lookup (find/activate/list/resolve)
 ├── verify_run.py           # Re-stamp a whole run's tape verdicts offline
 ├── reconcile.py            # Fidelity comparison vs the target wallet
 ├── redeem.py               # Hold-to-redeem settlement helpers
 ├── run_paper.py            # Batch / offline paper run helper
-├── config.json             # Active strategy + entry + risk parameters
-├── RUNBOOK.md              # Engine runbook
-├── state.json              # Live fills & heartbeat of the active window
-├── events.jsonl            # Global event audit trail
+```
+
+Shell + pure convention: each `*.py` shell owns IO seams and re-exports public names; its sibling pure modules take explicit arguments and never `import bot.<shell>`, so existing `patch.object` targets on the shell keep working.
+
+```
+scripts/
+├── restart_api.ps1         # Windows: clean stop/verify/restart of the desk API
+├── migrate_runtime_data.py # One-shot bot/ -> data/ runtime migration (repeatable)
+├── tests/                  # pytest suite
+```
+
+```
+data/
+├── config.json             # Active strategy + entry + risk parameters (tracked)
+├── windows_mirror/         # Flat copy of the active run's settled windows
+├── events.jsonl            # Fallback journal when no run resolves
 ├── loop.pid / loop.log     # Active loop process id / output
 ├── kill                    # Soft kill-switch flag (touch to pause entries)
-├── tests/                  # pytest suite
+├── ab_test_state.json      # A/B Lab pointer
 └── runs/
     ├── active_run.json     # Pointer to the active run ID
     └── run_YYYYMMDD_HHMMSS_paper_<setup>/
         ├── run_meta.json   # Status, started/ended timestamps, config snapshot, summary
+        ├── state.json        # Live fills & heartbeat of the active window
         ├── events.jsonl    # Decision journal for this run
         ├── decisions.jsonl # Uncensored per-evaluation engine log (quotes + guards)
         ├── summary.json    # Session KPIs
@@ -230,17 +283,17 @@ If you ever want to immediately stop all new entries without killing the process
 2. **From Terminal:**
    ```bash
    # Pause entries:
-   touch bot/kill
+   touch data/kill
 
    # Resume entries:
-   rm bot/kill
+   rm data/kill
    ```
-The bot loop checks `bot/kill` before every entry and window transition, safely preventing further fills while allowing existing contracts to resolve.
+The bot loop checks `data/kill` before every entry and window transition, safely preventing further fills while allowing existing contracts to resolve.
 
 ### Stopping & Resetting
 - **Stop:** Click **`Stop bot`** in the UI header, or press `Ctrl + C` in the terminal.
 - **Reset:** Click the reset icon (`RotateCcw`) in the UI header. This resets active state, clears current paper runs, and restores the initial paper bankroll.
-- **Clean API restart (Windows):** `powershell -ExecutionPolicy Bypass -File bot/restart_api.ps1`.
+- **Clean API restart (Windows):** `powershell -ExecutionPolicy Bypass -File scripts/restart_api.ps1`.
 
 ### Running Automated Health Tests
 To verify all engine components, run the Python suite and the frontend typecheck:

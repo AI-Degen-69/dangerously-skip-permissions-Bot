@@ -32,7 +32,7 @@ if __package__ in (None, ""):  # allow `python bot/verify_run.py`
 
 from bot import constants as C
 from bot.fill_audit import audit_window, load_prints
-from bot.runs import migrate_windows_mirror, resolve_run_workspace, tape_segments
+from bot.runs import migrate_windows_mirror, resolve_run_workspace
 from bot.tape_verifier import load_book_for_window, verify_fills
 
 
