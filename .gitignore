@@ -15,7 +15,6 @@ __pycache__/
 # Runtime bot state & session runs (per-run under data/runs/, shared under data/)
 scratch/
 # Legacy pre-migration locations (kept ignored for old checkouts)
-bot/runs/
 bot/windows_mirror/
 bot/state.json
 bot/events.jsonl

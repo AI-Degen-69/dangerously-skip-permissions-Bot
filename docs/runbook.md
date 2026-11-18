@@ -6,16 +6,16 @@ straddle-plus-lean, ~30-share clips, every 5-min BTC window, hold-to-redeem.
 ## Quick start (desk UI)
 
 ```sh
-python bot/api.py            # desk API on 127.0.0.1:8789 (loopback only, no keys)
+python -m bot.api            # desk API on 127.0.0.1:8789 (loopback only, no keys)
 # open the dashboard (Dashboard / Live / Config / Strategy), Start button runs:
-python bot/live_paper.py --loop
+python -m bot.live_paper --loop
 ```
 
 Single window / explicit slot:
 
 ```sh
-python bot/live_paper.py --once
-python bot/live_paper.py --slot <epoch>
+python -m bot.live_paper --once
+python -m bot.live_paper --slot <epoch>
 ```
 
 ## Config (`data/config.json`)
@@ -146,39 +146,35 @@ Scale only after a profitable held-to-redeem window reconciles end-to-end.
 Desk Stop button (`POST /api/bot/stop`) or kill the loop PID.
 `POST /api/bot/reset` clears `data/windows_mirror/` and the active run state.
 
-## Upgrade: bot/ -> data/ runtime layout
+## Runtime layout: bot/ code, data/ state (migration complete)
 
-Runtime state moved from `bot/` to `data/` (`data/runs/<run_id>/state.json`,
+Runtime state lives under `data/` (`data/runs/<run_id>/state.json`,
 `data/runs/<run_id>/events.jsonl`, `data/windows_mirror/`, `data/config.json`,
 `data/loop.pid`, `data/loop.log`, `data/kill`, `data/ab_test_state.json`).
 `data/config.json` is the only tracked file under `data/` (`data/*` ignored).
+The one-shot `scripts/migrate_runtime_data.py` that moved existing installs
+off `bot/` has been deleted; fresh clones start on the new layout directly.
 
 Warning: runtime data under `data/` is local and gitignored. Pulling history
 brings code and `data/config.json` only; it never brings another machine's
-runs, mirror, state, events, PID, kill or log files. Migrate each install
-in place; do not copy `data/` between machines.
+runs, mirror, state, events, PID, kill or log files. Do not copy `data/`
+between machines.
 
-Exact upgrade sequence (existing installs):
+Health check (API and loop stopped):
 
 ```sh
-# 0. API and loop stopped; capture the old archive and replay baseline
+# 0. Capture the replay baseline
 python -m bot.replay --runs all --rule v2.6 > /tmp/replay-before.txt
-du -sb bot/runs data 2>/dev/null; find bot/runs -name "*.json" | wc -l
-# 1. Migrate twice (second run must be a no-op)
-python scripts/migrate_runtime_data.py --dry-run
-python scripts/migrate_runtime_data.py
-python scripts/migrate_runtime_data.py
-# 2. Compare archive counts and bytes (runs + mirror)
-find data/runs -name "*.json" | wc -l; du -sb data/runs data/windows_mirror
-# 3. Check API and loop writes land in the new layout
-python bot/api.py &  # then: check data/loop.log, data/loop.pid
-python bot/live_paper.py --once  # then: check data/runs/<run_id>/state.json + events.jsonl
-# 4. Verify a settled run, clear the cache and compare replay results
+du -sb data 2>/dev/null; find data/runs -name "*.json" | wc -l
+# 1. Check API and loop writes land in the layout
+python -m bot.api &  # then: check data/loop.log, data/loop.pid
+python -m bot.live_paper --once  # then: check data/runs/<run_id>/state.json + events.jsonl
+# 2. Verify a settled run, clear the cache and compare replay results
 python bot/verify_run.py --dry-run
 rm -rf scratch/replay_cache /tmp/replay_cache
 python -m bot.replay --runs all --rule v2.6 > /tmp/replay-after.txt
 diff /tmp/replay-before.txt /tmp/replay-after.txt
-# 5. With the API and loop stopped, run both test commands
+# 3. With the API and loop stopped, run both test commands
 python -m unittest discover -s bot/tests
 bun run typecheck
 ```

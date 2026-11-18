@@ -21,7 +21,7 @@ Requirements: Python 3.12 (stdlib only — no pip installs) and Bun (or npm) for
 
 ```sh
 # 1. Desk API on loopback (default 127.0.0.1:8789)
-python bot/api.py
+python -m bot.api
 # check: http://127.0.0.1:8789/api/bot/control
 
 # 2. Desk UI
@@ -29,26 +29,26 @@ bun install
 bun run dev            # http://localhost:5173
 
 # 3. Start the paper loop — "Start bot" in the UI, or headless:
-python bot/live_paper.py --loop
+python -m bot.live_paper --loop
 ```
 
 The UI talks to `http://127.0.0.1:8789` by default; override with
 `VITE_BOT_ORIGIN=http://127.0.0.1:8789 bun run dev` (the API's own port is set by
-`python bot/api.py --port <n>`). On Windows, `scripts/restart_api.ps1` stops whatever
+`python -m bot.api --port <n>`). On Windows, `scripts/restart_api.ps1` stops whatever
 holds the port and starts a fresh API instance.
 
 Single window instead of a loop:
 
 ```sh
-python bot/live_paper.py --once
-python bot/live_paper.py --slot <epoch>
+python -m bot.live_paper --once
+python -m bot.live_paper --slot <epoch>
 ```
 
 ## What the engine does
 
-`bot/live_paper.py` runs the window lifecycle (pre-open book discovery, oracle
+`bot/live_paper` runs the window lifecycle (pre-open book discovery, oracle
 anchor, maker dip grid + lagging-leg equalizer, late-window resolution snipe,
-settlement lock); `bot/executor.py` holds the ladder, pair-cost gates and maker
+settlement lock); `bot/executor` holds the ladder, pair-cost gates and maker
 rebalance; `bot/constants.py` is the versioned strategy registry
 (`dsp-v2.x` / `hydrogen-v1.x` → `hydrogen-v2.0`, the current default in
 `data/config.json`).
@@ -82,7 +82,7 @@ The recorder writes every book snapshot and trade print the bot sees, and the lo
 refuses to start a window without its tape dir — the fill engine, the verifier and
 the attainable-fill audit all read back from it.
 
-A maker order is not a fill. `bot/fill_model.py` books a resting bid only when a
+A maker order is not a fill. `bot/fill_audit/fill_model.py` books a resting bid only when a
 taker **SELL** prints at or below its limit, after whatever was already resting
 there; taker orders fill at once. Fills are stamped:
 
@@ -94,7 +94,7 @@ python bot/verify_run.py --audit     # also record what could actually fill
 
 `bot/fill_audit.py` is the independent check of the same rule (queue-ahead aware),
 surfaced in the desk as the "attainable" figure beside net. Replay a recorded run
-offline through `bot/executor.py` and `bot/fill_model.py`:
+offline through `bot/executor` and `bot/fill_audit/fill_model.py`:
 
 ```sh
 python -m bot.replay --run data/runs/<run_id> --rule v2.6

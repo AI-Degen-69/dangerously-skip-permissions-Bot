@@ -1,5 +1,10 @@
 """Architecture guards for the shell + pure module split.
 
+Each category is a package (``bot/<shell>/``): the shell lives in
+``__init__.py`` (thin orchestration + patch seams) and the pure modules
+beside it take explicit arguments. Top-level ``bot/*.py`` helpers
+(redeem, risk, verify_run, ...) follow the same rules.
+
 - Pure/domain modules must never import ``bot.live_paper`` (direct,
   deferred/function-level, or circular). AST scan catches imports at any
   nesting level; a dynamic-import scan catches ``__import__`` /
@@ -17,7 +22,8 @@ from pathlib import Path
 
 BOT_DIR = Path(__file__).resolve().parent.parent
 
-# Shell files (thin orchestration + patch seams). Everything else in bot/*.py
+# Shell packages (thin orchestration + patch seams): bot/<name>/__init__.py.
+# Everything else under bot/ (top-level helpers and pure package modules)
 # is treated as a guarded module that must not couple to bot.live_paper.
 SHELLS = {
     "api",
@@ -31,7 +37,7 @@ SHELLS = {
     "api_views",
 }
 
-# Current sizes at guard time: api 1029, live_paper 1476, executor 160,
+# Sizes at guard time (shell __init__.py line counts): api 1029, live_paper 1476, executor 160,
 # replay 83, ws 186, ab_test 162, fill_audit 93, runs 94, api_views 40.
 # Caps give ~10% headroom on the thick shells and generous room on the thin
 # ones; growing past a cap means move logic to the pure module instead.
@@ -110,8 +116,13 @@ def _live_paper_import_violations(tree):
     return violations
 
 
+def _shell_path(shell):
+    """The shell file for a category: its package __init__."""
+    return BOT_DIR / shell / "__init__.py"
+
+
 def _guarded_modules():
-    """Every bot/*.py that is not a shell (pure + shared helpers)."""
+    """Every bot module that is not a shell (pure + shared helpers)."""
     mods = []
     for path in sorted(BOT_DIR.glob("*.py")):
         if path.name == "__init__.py":
@@ -119,6 +130,15 @@ def _guarded_modules():
         if path.stem in SHELLS:
             continue
         mods.append(path)
+    for pkg in sorted(BOT_DIR.iterdir()):
+        if not pkg.is_dir() or pkg.name == "tests":
+            continue
+        if not (pkg / "__init__.py").exists():
+            continue
+        for path in sorted(pkg.glob("*.py")):
+            if path.name in ("__init__.py", "__main__.py"):
+                continue
+            mods.append(path)
     return mods
 
 
@@ -144,7 +164,7 @@ class TestNoLivePaperCoupling(unittest.TestCase):
         # cross-shell coupling goes through pure modules.
         failures = []
         for shell in sorted(SHELLS - {"live_paper"}):
-            path = BOT_DIR / f"{shell}.py"
+            path = _shell_path(shell)
             if not path.exists():
                 failures.append(f"{shell}.py missing")
                 continue
@@ -158,7 +178,7 @@ class TestShellsStayThin(unittest.TestCase):
     def test_shell_line_caps(self):
         over = []
         for shell, cap in sorted(SHELL_CAPS.items()):
-            path = BOT_DIR / f"{shell}.py"
+            path = _shell_path(shell)
             if not path.exists():
                 over.append(f"{shell}.py missing")
                 continue
@@ -174,7 +194,7 @@ class TestShellsStayThin(unittest.TestCase):
     def test_shells_delegate_to_pure_modules(self):
         missing = []
         for shell, expected in sorted(SHELL_DELEGATION.items()):
-            path = BOT_DIR / f"{shell}.py"
+            path = _shell_path(shell)
             if not path.exists():
                 missing.append(f"{shell}.py missing")
                 continue

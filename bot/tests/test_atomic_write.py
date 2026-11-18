@@ -88,7 +88,7 @@ class TestAtomicWriteHelper(unittest.TestCase):
 
 class TestAtomicWriteCallers(unittest.TestCase):
     def test_live_records_wrapper_persists(self):
-        from bot.live_records import atomic_write_json_pure
+        from bot.live_paper.live_records import atomic_write_json_pure
 
         with tempfile.TemporaryDirectory() as td:
             target = Path(td) / "win.json"

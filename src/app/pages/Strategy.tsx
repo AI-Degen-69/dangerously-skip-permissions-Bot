@@ -780,7 +780,7 @@ export function Strategy() {
                   </div>
                   <p className="mt-2 text-[12.5px] leading-relaxed text-muted">
                     The UI runs on port <code className="font-mono">5173</code> and{' '}
-                    <code className="font-mono">bot/api.py</code> on <code className="font-mono">127.0.0.1:8789</code>.
+                    <code className="font-mono">bot/api</code> on <code className="font-mono">127.0.0.1:8789</code>.
                     Each fill streams its <code className="font-mono">role</code> (
                     <code className="font-mono">MAKER</code>/<code className="font-mono">TAKER</code>),{' '}
                     <code className="font-mono">subReason</code>, <code className="font-mono">feeUsd</code> and live{' '}

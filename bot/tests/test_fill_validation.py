@@ -1,7 +1,7 @@
 import unittest
 from bot import constants as C
 from bot.executor import evaluate_microstructure_ladder
-from bot.fill_model import (
+from bot.fill_audit.fill_model import (
     bucket_for_price,
     confirm_maker_buy,
     label_taker_fill,

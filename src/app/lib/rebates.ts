@@ -92,7 +92,7 @@ export function useIncludeRebates(): [boolean, (value: boolean) => void] {
 }
 
 /**
- * Maker or taker for one fill, mirroring `_window_row` in bot/api.py so the
+ * Maker or taker for one fill, mirroring `_window_row` in bot/api so the
  * totals and the orders table can never disagree.
  *
  * A recorded role wins. Without one, a recorded fee decides — a charged fee means

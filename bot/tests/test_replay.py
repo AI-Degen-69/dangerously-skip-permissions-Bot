@@ -4,7 +4,7 @@ import unittest
 
 from bot import executor as E
 from bot.executor import compute_fill_usd
-from bot.fill_model import match_maker_print
+from bot.fill_audit.fill_model import match_maker_print
 from bot.replay import hump_shares, simulate_window, spearman
 
 
