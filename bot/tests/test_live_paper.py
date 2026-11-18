@@ -217,7 +217,8 @@ class LivePaperLoopTests(unittest.TestCase):
         st_file = self.tmp_path / "state.json"
         future_end = int((time.time() + 300) * 1000)
         st_file.write_text(f'{{"slug": "btc-updown-5m-100", "updatedAtMs": 123, "endMs": {future_end}}}')
-        with patch.object(api, "STATE_PATH", st_file), patch.object(api, "is_view_only", return_value=False):
+        with patch.object(api, "STATE_PATH", st_file), patch.object(api, "is_view_only", return_value=False), \
+                patch.object(api, "resolve_run_workspace", return_value=None):
             api._LAST_STATE = None
             first = api.state()
             self.assertEqual(first["slug"], "btc-updown-5m-100")
