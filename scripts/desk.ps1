@@ -44,7 +44,7 @@ $ErrorActionPreference = "Stop"
 
 # ── Bootstrap Profile Color System (PCS) ──
 $colorSystemPath = "C:\Program Files\PowerShell\7\scripts\Theme\Theme-ColorSystem.ps1"
-if (Test-Path $colorSystemPath) {
+if (Test-Path -LiteralPath $colorSystemPath) {
     . $colorSystemPath
 }
 
@@ -68,14 +68,22 @@ $colNeutral = Get-ProfileColor -Name Neutral
 $colCommand = Get-ProfileColor -Name Command
 $colPath    = Get-ProfileColor -Name Path
 
+function Write-ColorHost([string]$Message, $Color, [switch]$NoNewline) {
+    $params = @{ Object = $Message }
+    if ($NoNewline) { $params['NoNewline'] = $true }
+    if ($Color) { $params['ForegroundColor'] = $Color }
+    Write-Host @params
+}
+
 # 1. Paths & Configuration
 $ProjectRoot = "C:\Users\Tiger\Agents\Projects\AI Trading\dangerously-skip-permissions-bot"
-if (Test-Path (Join-Path $PSScriptRoot "..\package.json")) {
-    $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$pkgPath = Join-Path $PSScriptRoot "..\package.json"
+if (Test-Path -LiteralPath $pkgPath) {
+    $ProjectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 }
 
 $RunDir = Join-Path $ProjectRoot ".run"
-if (-not (Test-Path $RunDir)) {
+if (-not (Test-Path -LiteralPath $RunDir)) {
     New-Item -ItemType Directory -Path $RunDir -Force | Out-Null
 }
 
@@ -119,7 +127,7 @@ function Get-ChromePath {
         "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"
     )
     foreach ($p in $candidates) {
-        if (Test-Path $p) { return $p }
+        if (Test-Path -LiteralPath $p) { return $p }
     }
     return $null
 }
@@ -160,11 +168,21 @@ function Get-PortProcessId([int]$port) {
 function Test-ApiHealth {
     try {
         $resp = Invoke-RestMethod -Uri "$API_URL/api/bot/control" -TimeoutSec 2 -ErrorAction Stop
+        if (-not $resp -or ($null -eq $resp.strategy -and $null -eq $resp.mode -and $null -eq $resp.running)) {
+            return [PSCustomObject]@{
+                Healthy  = $false
+                Data     = $null
+                Strategy = "Invalid response"
+                Running  = $false
+                RunId    = $null
+                LoopPid  = $null
+            }
+        }
         return [PSCustomObject]@{
             Healthy  = $true
             Data     = $resp
-            Strategy = "$($resp.strategy.symbol) ($($resp.strategy.id))"
-            Running  = $resp.running
+            Strategy = if ($resp.strategy) { "$($resp.strategy.symbol) ($($resp.strategy.id))" } else { "Active" }
+            Running  = [bool]$resp.running
             RunId    = $resp.activeRunId
             LoopPid  = $resp.pid
         }
@@ -183,11 +201,17 @@ function Test-ApiHealth {
 function Test-UiHealth {
     try {
         $resp = Invoke-WebRequest -Uri "http://127.0.0.1:$UI_PORT" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
-        return ($resp.StatusCode -eq 200)
+        if ($resp.StatusCode -eq 200 -and ($resp.Content -match '@vite/client|<title>.*Desk|src/main\.tsx|id="root"')) {
+            return $true
+        }
+        return $false
     } catch {
         try {
             $resp = Invoke-WebRequest -Uri "http://localhost:$UI_PORT" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
-            return ($resp.StatusCode -eq 200)
+            if ($resp.StatusCode -eq 200 -and ($resp.Content -match '@vite/client|<title>.*Desk|src/main\.tsx|id="root"')) {
+                return $true
+            }
+            return $false
         } catch {
             return $false
         }
@@ -200,19 +224,30 @@ function Spawn-DetachedProcess([string]$commandLine, [string]$workingDir) {
             CommandLine      = $commandLine
             CurrentDirectory = $workingDir
         }
-        if ($res.ReturnValue -eq 0) {
-            return $res.ProcessId
+        if ($res.ReturnValue -eq 0 -and $res.ProcessId -gt 0) {
+            return [int]$res.ProcessId
         }
     } catch {}
 
-    $p = Start-Process -FilePath "cmd.exe" -ArgumentList "/c $commandLine" -WorkingDirectory $workingDir -WindowStyle Hidden -PassThru
-    return $p.Id
+    # Fallback launch: avoid duplicate nested cmd.exe /c
+    if ($commandLine -match '^cmd\.exe\s+/c\s+(.*)$') {
+        $p = Start-Process -FilePath "cmd.exe" -ArgumentList "/c $($matches[1])" -WorkingDirectory $workingDir -WindowStyle Hidden -PassThru
+    } else {
+        $p = Start-Process -FilePath "cmd.exe" -ArgumentList "/c $commandLine" -WorkingDirectory $workingDir -WindowStyle Hidden -PassThru
+    }
+    return [int]$p.Id
 }
 
 # 4. Stop Logic
 function Stop-ProcessTree([int]$parentPid) {
+    $parentProc = Get-CimInstance Win32_Process -Filter "ProcessId = $parentPid" -ErrorAction SilentlyContinue
+    $parentCreation = if ($parentProc) { $parentProc.CreationDate } else { $null }
+
     Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-        Where-Object { $_.ParentProcessId -eq $parentPid } |
+        Where-Object {
+            $_.ParentProcessId -eq $parentPid -and
+            (-not $parentCreation -or $_.CreationDate -ge $parentCreation)
+        } |
         ForEach-Object { Stop-ProcessTree $_.ProcessId }
 
     Stop-Process -Id $parentPid -Force -ErrorAction SilentlyContinue
@@ -224,28 +259,61 @@ function Stop-Services {
 
     $targetPids = [System.Collections.Generic.HashSet[int]]::new()
 
+    # Port 5173 ownership check
     $p5173 = Get-PortProcessId $UI_PORT
-    if ($p5173) { [void]$targetPids.Add($p5173) }
+    if ($p5173) {
+        $proc5173 = Get-CimInstance Win32_Process -Filter "ProcessId = $p5173" -ErrorAction SilentlyContinue
+        if ($proc5173) {
+            $cmd = $proc5173.CommandLine
+            if ($cmd -like "*$ProjectRoot*" -or $cmd -like "*vite*" -or $cmd -like "*up-down-desk*") {
+                [void]$targetPids.Add($p5173)
+            } else {
+                Write-ProfileWarning -Message "Port $UI_PORT occupied by external process" -Detail "PID $p5173 ($($proc5173.Name))"
+            }
+        }
+    }
 
+    # Port 8789 ownership check
     $p8789 = Get-PortProcessId $API_PORT
-    if ($p8789) { [void]$targetPids.Add($p8789) }
-
-    if (Test-Path $UiPidFile) {
-        $savedPid = Get-Content $UiPidFile -ErrorAction SilentlyContinue
-        if ($savedPid -match '^\d+$') { [void]$targetPids.Add([int]$savedPid) }
+    if ($p8789) {
+        $proc8789 = Get-CimInstance Win32_Process -Filter "ProcessId = $p8789" -ErrorAction SilentlyContinue
+        if ($proc8789) {
+            $cmd = $proc8789.CommandLine
+            if ($cmd -like "*$ProjectRoot*" -or $cmd -like "*bot.api*" -or $cmd -like "*bot\api*") {
+                [void]$targetPids.Add($p8789)
+            } else {
+                Write-ProfileWarning -Message "Port $API_PORT occupied by external process" -Detail "PID $p8789 ($($proc8789.Name))"
+            }
+        }
     }
-    if (Test-Path $ApiPidFile) {
-        $savedPid = Get-Content $ApiPidFile -ErrorAction SilentlyContinue
-        if ($savedPid -match '^\d+$') { [void]$targetPids.Add([int]$savedPid) }
+
+    # Saved PID checks with validation that process belongs to desk components
+    if (Test-Path -LiteralPath $UiPidFile) {
+        $savedPid = Get-Content -LiteralPath $UiPidFile -ErrorAction SilentlyContinue
+        if ($savedPid -match '^\d+$') {
+            $sp = Get-CimInstance Win32_Process -Filter "ProcessId = $savedPid" -ErrorAction SilentlyContinue
+            if ($sp -and ($sp.CommandLine -like "*$ProjectRoot*" -or $sp.CommandLine -like "*vite*" -or $sp.Name -in @("node.exe", "bun.exe", "cmd.exe"))) {
+                [void]$targetPids.Add([int]$savedPid)
+            }
+        }
+    }
+    if (Test-Path -LiteralPath $ApiPidFile) {
+        $savedPid = Get-Content -LiteralPath $ApiPidFile -ErrorAction SilentlyContinue
+        if ($savedPid -match '^\d+$') {
+            $sp = Get-CimInstance Win32_Process -Filter "ProcessId = $savedPid" -ErrorAction SilentlyContinue
+            if ($sp -and ($sp.CommandLine -like "*$ProjectRoot*" -or $sp.CommandLine -like "*bot.api*" -or $sp.Name -in @("python.exe", "cmd.exe"))) {
+                [void]$targetPids.Add([int]$savedPid)
+            }
+        }
     }
 
-    # Catch any node/vite, bun, or python instances attached to this project
+    # Catch lingering background processes strictly scoped to this project
     Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | ForEach-Object {
         $cmd = $_.CommandLine
-        if ($cmd) {
-            $isDeskApi = ($cmd -like '*bot.api*' -or $cmd -like '*bot\api*') -and ($cmd -like "*$ProjectRoot*" -or $cmd -like "*AI Trading*")
-            $isVite = ($cmd -like '*vite*' -or $cmd -like '*up-down-desk*') -and ($cmd -like "*$ProjectRoot*" -or $cmd -like "*5173*")
-            if (($isDeskApi -or $isVite) -and $_.ProcessId -ne $PID) {
+        if ($cmd -and $_.ProcessId -ne $PID) {
+            $isDeskApi = ($cmd -like '*bot.api*' -or $cmd -like '*bot\api*') -and ($cmd -like "*$ProjectRoot*")
+            $isVite = ($cmd -like '*vite*' -or $cmd -like '*up-down-desk*') -and ($cmd -like "*$ProjectRoot*")
+            if ($isDeskApi -or $isVite) {
                 [void]$targetPids.Add($_.ProcessId)
             }
         }
@@ -262,6 +330,7 @@ function Stop-Services {
     # Wait for ports to release
     $timeout = 10
     $start = Get-Date
+    $portsFreed = $true
     while ($true) {
         $uiBusy = Test-PortOccupied $UI_PORT
         $apiBusy = Test-PortOccupied $API_PORT
@@ -269,19 +338,24 @@ function Stop-Services {
             break
         }
         if (((Get-Date) - $start).TotalSeconds -ge $timeout) {
-            Write-ProfileWarning -Message "Timeout waiting for ports to be fully released"
+            Write-ProfileError -Message "Timeout waiting for ports to be fully released" -Detail "UI busy: $uiBusy, API busy: $apiBusy" -Suggestion "Check task manager for hung processes"
+            $portsFreed = $false
             break
         }
         Start-Sleep -Milliseconds 200
     }
 
-    Remove-Item $UiPidFile -ErrorAction SilentlyContinue
-    Remove-Item $ApiPidFile -ErrorAction SilentlyContinue
-
-    if ($killedAny) {
-        Write-ProfileSuccess -Message "Services stopped and ports freed"
+    if ($portsFreed) {
+        Remove-Item -LiteralPath $UiPidFile -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $ApiPidFile -ErrorAction SilentlyContinue
+        if ($killedAny) {
+            Write-ProfileSuccess -Message "Services stopped and ports freed"
+        } else {
+            Write-ProfileNeutral -Message "No active services found to stop"
+        }
+        return $true
     } else {
-        Write-ProfileNeutral -Message "No active services found to stop"
+        return $false
     }
 }
 
@@ -295,27 +369,34 @@ function Start-Services {
         Write-ProfileSuccess -Message "Up/Down Desk is already running and healthy"
         Show-StatusTable
         Open-DashboardBrowser
-        return
+        return $true
     }
 
     # If force or port is hung/unhealthy, clean up first
-    if ($Force -or (Test-PortOccupied $UI_PORT -and -not $uiHealth) -or (Test-PortOccupied $API_PORT -and -not $apiHealth.Healthy)) {
+    if ($Force -or ((Test-PortOccupied $UI_PORT) -and -not $uiHealth) -or ((Test-PortOccupied $API_PORT) -and -not $apiHealth.Healthy)) {
         Write-ProfileWarning -Message "Cleaning up existing or unresponsive processes before start..."
-        Stop-Services
+        $stopOk = Stop-Services
+        if (-not $stopOk) {
+            Write-ProfileError -Message "Failed to stop previous services before starting new instances"
+            return $false
+        }
     }
 
     # Start API if not healthy
     if (-not (Test-ApiHealth).Healthy) {
         Write-ProfileInfo -Message "Starting Desk API (python -m bot.api)" -Detail "port $API_PORT"
-        if ((Test-Path $ApiOutLog) -and (Get-Item $ApiOutLog).Length -gt 5MB) {
-            Move-Item $ApiOutLog "$ApiOutLog.old" -Force
+        if ((Test-Path -LiteralPath $ApiOutLog) -and (Get-Item -LiteralPath $ApiOutLog).Length -gt 5MB) {
+            Move-Item -LiteralPath $ApiOutLog "$ApiOutLog.old" -Force
         }
 
         $apiSpawnCmd = "cmd.exe /c `"`"$PythonExe`" -m bot.api >> `"$ApiOutLog`" 2>> `"$ApiErrLog`"`""
-        [void](Spawn-DetachedProcess $apiSpawnCmd $ProjectRoot)
+        $apiProcId = Spawn-DetachedProcess $apiSpawnCmd $ProjectRoot
+        if ($apiProcId -gt 0) {
+            Set-Content -LiteralPath $ApiPidFile -Value $apiProcId
+        }
 
         # Wait for API to respond
-        Write-Host "  -> Waiting for API on $API_URL..." -NoNewline -ForegroundColor $colNeutral
+        Write-ColorHost "  -> Waiting for API on $API_URL..." $colNeutral -NoNewline
         $apiReady = $false
         $apiTimeout = 15
         $apiStart = Get-Date
@@ -324,19 +405,19 @@ function Start-Services {
                 $apiReady = $true
                 break
             }
-            Write-Host "." -NoNewline -ForegroundColor $colNeutral
+            Write-ColorHost "." $colNeutral -NoNewline
             Start-Sleep -Milliseconds 300
         }
         Write-Host ""
 
         if (-not $apiReady) {
             Write-ProfileError -Message "Desk API failed to start or respond" -Detail "URL: $API_URL" -Suggestion "Check log: $ApiErrLog"
-            return
+            return $false
         }
 
         $newApiPid = Get-PortProcessId $API_PORT
-        if ($newApiPid) { Set-Content -Path $ApiPidFile -Value $newApiPid }
-        Write-ProfileSuccess -Message "API verified healthy on $API_URL" -Detail "PID: $newApiPid"
+        if ($newApiPid) { Set-Content -LiteralPath $ApiPidFile -Value $newApiPid }
+        Write-ProfileSuccess -Message "API verified healthy on $API_URL" -Detail "PID: $(if ($newApiPid) { $newApiPid } else { $apiProcId })"
     } else {
         Write-ProfileNeutral -Message "Desk API already healthy on $API_URL"
     }
@@ -344,15 +425,18 @@ function Start-Services {
     # Start Dashboard on port 5173
     if (-not (Test-UiHealth)) {
         Write-ProfileInfo -Message "Starting Dashboard ($DevName run dev)" -Detail "port $UI_PORT"
-        if ((Test-Path $UiOutLog) -and (Get-Item $UiOutLog).Length -gt 5MB) {
-            Move-Item $UiOutLog "$UiOutLog.old" -Force
+        if ((Test-Path -LiteralPath $UiOutLog) -and (Get-Item -LiteralPath $UiOutLog).Length -gt 5MB) {
+            Move-Item -LiteralPath $UiOutLog "$UiOutLog.old" -Force
         }
 
         $uiSpawnCmd = "cmd.exe /c `"set `"VITE_BOT_ORIGIN=$API_URL`" && `"$DevExe`" run dev >> `"$UiOutLog`" 2>> `"$UiErrLog`"`""
-        [void](Spawn-DetachedProcess $uiSpawnCmd $ProjectRoot)
+        $uiProcId = Spawn-DetachedProcess $uiSpawnCmd $ProjectRoot
+        if ($uiProcId -gt 0) {
+            Set-Content -LiteralPath $UiPidFile -Value $uiProcId
+        }
 
         # Wait for UI to respond on port 5173
-        Write-Host "  -> Waiting for Dashboard on $UI_URL..." -NoNewline -ForegroundColor $colNeutral
+        Write-ColorHost "  -> Waiting for Dashboard on $UI_URL..." $colNeutral -NoNewline
         $uiReady = $false
         $uiTimeout = 60
         $uiStart = Get-Date
@@ -361,51 +445,50 @@ function Start-Services {
                 $uiReady = $true
                 break
             }
-            Write-Host "." -NoNewline -ForegroundColor $colNeutral
+            Write-ColorHost "." $colNeutral -NoNewline
             Start-Sleep -Milliseconds 500
         }
         Write-Host ""
 
         if (-not $uiReady) {
             Write-ProfileError -Message "Dashboard failed to respond" -Detail "URL: $UI_URL" -Suggestion "Check log: $UiErrLog"
-            return
+            return $false
         }
 
         $newUiPid = Get-PortProcessId $UI_PORT
-        if ($newUiPid) { Set-Content -Path $UiPidFile -Value $newUiPid }
-        Write-ProfileSuccess -Message "Dashboard verified healthy on $UI_URL" -Detail "PID: $newUiPid"
+        if ($newUiPid) { Set-Content -LiteralPath $UiPidFile -Value $newUiPid }
+        Write-ProfileSuccess -Message "Dashboard verified healthy on $UI_URL" -Detail "PID: $(if ($newUiPid) { $newUiPid } else { $uiProcId })"
     } else {
         Write-ProfileNeutral -Message "Dashboard already healthy on $UI_URL"
     }
 
-    Write-Host ""
-    Write-ProfileSuccess -Message "Up/Down Desk successfully started in background"
     Show-StatusTable
     Open-DashboardBrowser
+    return $true
 }
 
 # 6. Status Logic
 function Show-StatusTable {
-    $uiHealth = Test-UiHealth
     $apiHealth = Test-ApiHealth
+    $uiHealth = Test-UiHealth
     $uiPid = Get-PortProcessId $UI_PORT
     $apiPid = Get-PortProcessId $API_PORT
 
-    $uiStatusText = if ($uiHealth) { "RUNNING (HTTP 200)" } elseif ($uiPid) { "UNRESPONSIVE" } else { "STOPPED" }
-    $apiStatusText = if ($apiHealth.Healthy) { "RUNNING (HTTP 200)" } elseif ($apiPid) { "UNRESPONSIVE" } else { "STOPPED" }
-    $botStatusText = if ($apiHealth.Running) { "RUNNING (Paper Loop)" } else { "IDLE (Run not started)" }
+    $uiStatusText = if ($uiHealth) { "RUNNING (HTTP 200)" } elseif (Test-PortOccupied $UI_PORT) { "PORT BUSY (Not responding)" } else { "STOPPED" }
+    $apiStatusText = if ($apiHealth.Healthy) { "RUNNING (HTTP 200)" } elseif (Test-PortOccupied $API_PORT) { "PORT BUSY (Not responding)" } else { "STOPPED" }
+    $botStatusText = if ($apiHealth.Running) { "RUNNING" } else { "IDLE (Run not started)" }
 
     $rows = @(
         [PSCustomObject]@{
             Component  = "Dashboard UI"
-            Port       = $UI_PORT
+            Port       = "$UI_PORT"
             PID        = if ($uiPid) { $uiPid } else { "-" }
             Status     = $uiStatusText
             Details    = $UI_URL
         },
         [PSCustomObject]@{
             Component  = "Desk API"
-            Port       = $API_PORT
+            Port       = "$API_PORT"
             PID        = if ($apiPid) { $apiPid } else { "-" }
             Status     = $apiStatusText
             Details    = if ($apiHealth.Healthy) { "Strategy: $($apiHealth.Strategy)" } else { $API_URL }
@@ -428,12 +511,12 @@ function Show-StatusTable {
 function Show-Logs {
     $filesToView = @()
     if ($Target -eq "ui" -or $Target -eq "all") {
-        if (Test-Path $UiOutLog) { $filesToView += $UiOutLog }
-        if (Test-Path $UiErrLog) { $filesToView += $UiErrLog }
+        if (Test-Path -LiteralPath $UiOutLog) { $filesToView += $UiOutLog }
+        if (Test-Path -LiteralPath $UiErrLog) { $filesToView += $UiErrLog }
     }
     if ($Target -eq "api" -or $Target -eq "all") {
-        if (Test-Path $ApiOutLog) { $filesToView += $ApiOutLog }
-        if (Test-Path $ApiErrLog) { $filesToView += $ApiErrLog }
+        if (Test-Path -LiteralPath $ApiOutLog) { $filesToView += $ApiOutLog }
+        if (Test-Path -LiteralPath $ApiErrLog) { $filesToView += $ApiErrLog }
     }
 
     if ($filesToView.Count -eq 0) {
@@ -443,12 +526,23 @@ function Show-Logs {
 
     if ($Tail) {
         Write-ProfileInfo -Message "Streaming logs ($Target) from $RunDir" -Detail "(Ctrl+C to exit)"
-        Get-Content -Path $filesToView -Tail $Lines -Wait
+        if ($filesToView.Count -eq 1) {
+            Get-Content -LiteralPath $filesToView[0] -Tail $Lines -Wait
+        } else {
+            foreach ($file in $filesToView) {
+                Write-Host ""
+                Write-ProfileSection -Title "Log: $(Split-Path $file -Leaf) (Last $Lines lines)" -Style Info
+                Get-Content -LiteralPath $file -Tail $Lines
+            }
+            Write-Host ""
+            Write-ProfileInfo -Message "Following primary log: $(Split-Path $filesToView[0] -Leaf)" -Detail "(Target single stream via -Target ui or -Target api)"
+            Get-Content -LiteralPath $filesToView[0] -Tail 10 -Wait
+        }
     } else {
         foreach ($file in $filesToView) {
             Write-Host ""
             Write-ProfileSection -Title "Log: $(Split-Path $file -Leaf) (Last $Lines lines)" -Style Info
-            Get-Content -Path $file -Tail $Lines
+            Get-Content -LiteralPath $file -Tail $Lines
         }
     }
 }
@@ -456,15 +550,19 @@ function Show-Logs {
 # 8. Command Dispatch
 switch ($Command.ToLower()) {
     "start" {
-        Start-Services
+        $ok = Start-Services
+        if (-not $ok) { exit 1 }
     }
     "stop" {
-        Stop-Services
+        $ok = Stop-Services
+        if (-not $ok) { exit 1 }
     }
     "restart" {
         Write-ProfileWarning -Message "Restarting Up/Down Desk..."
-        Stop-Services
-        Start-Services
+        $stopOk = Stop-Services
+        if (-not $stopOk) { exit 1 }
+        $startOk = Start-Services
+        if (-not $startOk) { exit 1 }
     }
     "status" {
         Show-StatusTable
@@ -489,5 +587,6 @@ switch ($Command.ToLower()) {
     }
     default {
         Write-ProfileError -Message "Unknown command: $Command" -Suggestion "Usage: desk [start|stop|restart|status|logs|open|doctor]"
+        exit 1
     }
 }
