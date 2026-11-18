@@ -52,6 +52,7 @@ from bot.runs import (
 )
 from bot import constants as C
 
+from bot.atomic_write import atomic_write_json
 from bot import api_core as _core
 from bot import api_loop as _loop
 from bot import api_markets as _markets
@@ -909,9 +910,7 @@ class Handler(BaseHTTPRequestHandler):
                 ):
                     entry_cfg.pop(_stale_key, None)
                 entry_cfg.update(setup["entry"])
-                tmp_cfg = CONFIG_PATH.with_suffix(".tmp")
-                tmp_cfg.write_text(json.dumps(cfg, indent=2))
-                tmp_cfg.replace(CONFIG_PATH)
+                atomic_write_json(CONFIG_PATH, cfg)
 
                 # Update the active run snapshot if present
                 _ws = resolve_run_workspace(None)
@@ -921,9 +920,7 @@ class Handler(BaseHTTPRequestHandler):
                         with open(_sp, "r", encoding="utf-8") as sf:
                             st_data = json.load(sf)
                         st_data["strategy"] = cfg["strategy"]
-                        tmp_st = _sp.with_suffix(".tmp")
-                        tmp_st.write_text(json.dumps(st_data, indent=2))
-                        tmp_st.replace(_sp)
+                        atomic_write_json(_sp, st_data)
                     except Exception:
                         pass
 
@@ -972,9 +969,7 @@ class Handler(BaseHTTPRequestHandler):
             write_path(cfg, path, value)
         if isinstance(patch.get("news.events"), list):
             cfg.setdefault("news", {})["events"] = patch["news.events"]
-        tmp_cfg = CONFIG_PATH.with_suffix(".tmp")
-        tmp_cfg.write_text(json.dumps(cfg, indent=2))
-        tmp_cfg.replace(CONFIG_PATH)
+        atomic_write_json(CONFIG_PATH, cfg)
         log_event("info", "config-updated", detail={"warnings": warnings})
         self._send(200, {"config": self._config_view(), "warnings": warnings})
 

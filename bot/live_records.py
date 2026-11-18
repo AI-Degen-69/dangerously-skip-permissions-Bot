@@ -65,12 +65,12 @@ def stamp_attainable_pure(fills: list[dict], prints: list[dict], condition_id: s
 
 
 def atomic_write_json_pure(path: Path, data: object) -> None:
+    from bot.atomic_write import atomic_write_text
+
     raw = json.dumps(data)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(raw)
     for _ in range(5):
         try:
-            tmp.replace(path)
+            atomic_write_text(path, raw)
             return
         except OSError:
             time.sleep(0.005)

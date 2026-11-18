@@ -161,9 +161,9 @@ def heartbeat(state_path: Path | str | None = None) -> None:
         return
     st["updatedAtMs"] = int(time.time() * 1000)
     try:
-        tmp = p.with_suffix(".tmp")
-        tmp.write_text(json.dumps(st))
-        tmp.replace(p)
+        from bot.atomic_write import atomic_write_json
+
+        atomic_write_json(p, st)
     except OSError:
         pass
 
