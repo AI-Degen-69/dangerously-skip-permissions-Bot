@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 
 from . import constants as C
-from .replay_consts import STRATEGY_V26, _DEFAULT_RUNS_DIR
+from .replay_consts import STRATEGY_V26, WINDOW_S, _DEFAULT_RUNS_DIR
 from .runs import tape_segments
 
 

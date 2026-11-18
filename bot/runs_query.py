@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -12,8 +13,18 @@ from .runs_paths import ACTIVE_RUN_POINTER, RUNS_DIR, utc_now_iso
 from .runs_workspace import RunWorkspace
 
 
-def find_run_id(query: str, runs_root: Path = RUNS_DIR) -> str | None:
+def _effective_runs_dir(explicit=None):
+    if explicit is not None:
+        return explicit
+    shell = sys.modules.get("bot.runs")
+    if shell is not None and getattr(shell, "RUNS_DIR", None) is not None:
+        return getattr(shell, "RUNS_DIR")
+    return RUNS_DIR
+
+
+def find_run_id(query: str, runs_root: Path | None = None) -> str | None:
     """Find a run_id by exact match or substring match (e.g. '083527')."""
+    runs_root = _effective_runs_dir(runs_root)
     if not runs_root.exists():
         return None
     clean = str(query).strip()
@@ -58,8 +69,9 @@ def set_active_run_id(run_id: str | None) -> None:
     data = {"activeRunId": run_id, "updatedAt": utc_now_iso()}
     ACTIVE_RUN_POINTER.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
-def list_all_runs(runs_root: Path = RUNS_DIR) -> list[dict[str, Any]]:
+def list_all_runs(runs_root: Path | None = None) -> list[dict[str, Any]]:
     """List all available run sessions ordered newest first."""
+    runs_root = _effective_runs_dir(runs_root)
     if not runs_root.exists():
         return []
     active_id = get_active_run_id()
@@ -88,9 +100,10 @@ def resolve_run_workspace(run_id: str | None = None) -> RunWorkspace | None:
         all_runs = list_all_runs()
         if all_runs:
             target_id = all_runs[0]["runId"]
+    runs_root = _effective_runs_dir(None)
     if target_id:
         try:
-            ws = RunWorkspace(target_id)
+            ws = RunWorkspace(target_id, runs_root=runs_root)
             if ws.exists() or run_id is not None:
                 return ws
         except ValueError:

@@ -78,7 +78,12 @@ def simulate_window(slot: int, winner: str | None, book_rows: list, prints: list
     except (TypeError, ValueError):
         hedge_clip = None
     try:
-        unhedged_step_cents = float(entry.get("unhedgedStepCents", 0.0) or 0.0)
+        if "unhedgedStepCents" in entry and entry.get("unhedgedStepCents") is not None:
+            entry_step = float(entry.get("unhedgedStepCents") or 0.0)
+            # Explicit CLI override wins; otherwise keep the frozen entry setting.
+            unhedged_step_cents = float(unhedged_step_cents) if unhedged_step_cents else entry_step
+        else:
+            unhedged_step_cents = float(unhedged_step_cents or 0.0)
     except (TypeError, ValueError):
         unhedged_step_cents = 0.0
     try:
