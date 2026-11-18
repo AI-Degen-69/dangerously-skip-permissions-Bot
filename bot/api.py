@@ -183,6 +183,54 @@ def log_event(kind: str, reason: str, **kw) -> None:
             pass
 
 
+def reset_paper_state() -> dict:
+    """Clear paper state so post-reset reads cannot restore pre-reset results.
+
+    Always clears the mirrored windows. With an active workspace, also clears
+    that workspace's windows dir and state file (runs() reads the workspace
+    first). Without a workspace, deletes the fallback STATE_PATH that state()
+    would otherwise read back. Per-file guarded; view-only guard stays with
+    the HTTP handler.
+    """
+    cleared = {"mirror": 0, "workspace_windows": 0, "state": False}
+    for p in WINDOWS_MIRROR_DIR.glob("*.json"):
+        try:
+            p.unlink(missing_ok=True)
+            cleared["mirror"] += 1
+        except Exception:
+            pass
+    active_ws = resolve_run_workspace(None)
+    if active_ws is not None:
+        try:
+            if active_ws.state_path.exists():
+                active_ws.state_path.unlink(missing_ok=True)
+                cleared["state"] = True
+        except Exception:
+            pass
+        try:
+            wdir = active_ws.windows_dir
+            if wdir.exists():
+                for p in wdir.glob("*.json"):
+                    try:
+                        p.unlink(missing_ok=True)
+                        cleared["workspace_windows"] += 1
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    else:
+        try:
+            if STATE_PATH.exists():
+                STATE_PATH.unlink(missing_ok=True)
+                cleared["state"] = True
+        except Exception:
+            pass
+    global _LAST_STATE, _LAST_MARKETS
+    _LAST_STATE = None
+    _LAST_MARKETS = []
+    _ODDS_HISTORY.clear()
+    return cleared
+
 def loop_running() -> int | None:
     pid = _loop.parse_pid_file(PID_PATH)
     if pid is None:
@@ -791,19 +839,7 @@ class Handler(BaseHTTPRequestHandler):
                 if is_view_only():
                     self._send(400, {"error": "Cannot reset while in view-only mode", "isViewOnly": True})
                     return
-                for p in WINDOWS_MIRROR_DIR.glob("*.json"):
-                    p.unlink()
-                active_ws = resolve_run_workspace(None)
-                if active_ws is not None:
-                    try:
-                        if active_ws.state_path.exists():
-                            active_ws.state_path.unlink(missing_ok=True)
-                    except Exception:
-                        pass
-                global _LAST_STATE, _LAST_MARKETS
-                _LAST_STATE = None
-                _LAST_MARKETS = []
-                _ODDS_HISTORY.clear()
+                reset_paper_state()
                 log_event("risk", "paper-reset", detail={"bankrollUsd": load_config().get("bankrollUsd")})
                 self._send(200, {"bankrollUsd": load_config().get("bankrollUsd"), "resetAt": utc_now_iso()})
             elif self.path == "/api/bot/kill-switch":
