@@ -180,7 +180,7 @@ class TestRunScopedSessions(unittest.TestCase):
         self.assertEqual(meta_resumed.config_snapshot["bankrollUsd"], 1000.0)
         self.assertEqual(meta_resumed.config_snapshot["riskPct"], 2.0)
 
-    def test_sync_preserves_redemption(self):
+    def test_sync_does_not_import_mirror_redemption(self):
         ws = RunWorkspace("run_test_redemption", runs_root=self.tmp)
         ws.init_workspace()
         win_file = ws.windows_dir / "settled_window_1.json"
@@ -188,17 +188,21 @@ class TestRunScopedSessions(unittest.TestCase):
 
         dest_dir = self.tmp / "windows_mirror"
         dest_dir.mkdir(parents=True, exist_ok=True)
-        # Destination already redeemed
+        # Destination holds another run's redeemed copy of the same filename.
         (dest_dir / "settled_window_1.json").write_text(
             json.dumps({"slug": "btc-1", "net_usd": 15.0, "redeemed": True, "redeemedAt": "2026-11-08T10:00:00Z"}),
             encoding="utf-8"
         )
 
         ws.sync_windows_mirror(dest_dir)
-        # Check source was updated with redemption info
+        # Redemption is owned by the workspace file: it must not gain the
+        # mirror's redemption, and the mirror is overwritten by this run.
         src_data = json.loads(win_file.read_text(encoding="utf-8"))
-        self.assertTrue(src_data.get("redeemed"))
-        self.assertEqual(src_data.get("redeemedAt"), "2026-11-08T10:00:00Z")
+        self.assertNotIn("redeemed", src_data)
+        self.assertNotIn("redeemedAt", src_data)
+        dest_data = json.loads((dest_dir / "settled_window_1.json").read_text(encoding="utf-8"))
+        self.assertNotIn("redeemed", dest_data)
+        self.assertNotIn("redeemedAt", dest_data)
 
     def test_find_run_id_rejects_path_traversal(self):
         self.assertIsNone(find_run_id("../secret", runs_root=self.tmp))

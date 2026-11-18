@@ -197,26 +197,20 @@ class RunWorkspace:
         return out
 
     def sync_windows_mirror(self, target_dir: Path | None = None) -> int:
-        """Mirror all windows from self.windows_dir into the shared windows mirror, removing stale windows from other runs."""
+        """Mirror this run's windows into the shared windows mirror (one-way).
+
+        Redemption is owned by each run's own workspace file: the mirror is
+        only a read cache of the active run, so it must never write
+        redemption state back into a workspace file. A same-named mirror
+        entry from another run is simply overwritten by this run's file.
+        """
         dest = target_dir or WINDOWS_MIRROR_DIR
         dest.mkdir(parents=True, exist_ok=True)
         self.windows_dir.mkdir(parents=True, exist_ok=True)
-        # 1. Mirror all windows from self.windows_dir into dest, preserving redemption info
+        # 1. Mirror all windows from self.windows_dir into dest.
         for p in self.windows_dir.glob("*.json"):
             dest_file = dest / p.name
             try:
-                if dest_file.exists():
-                    try:
-                        dest_data = json.loads(dest_file.read_text(encoding="utf-8"))
-                        if dest_data.get("redeemed") or dest_data.get("redeemedAt"):
-                            src_data = json.loads(p.read_text(encoding="utf-8"))
-                            if not src_data.get("redeemed") and dest_data.get("redeemed"):
-                                src_data["redeemed"] = dest_data["redeemed"]
-                            if "redeemedAt" in dest_data and "redeemedAt" not in src_data:
-                                src_data["redeemedAt"] = dest_data["redeemedAt"]
-                            p.write_text(json.dumps(src_data, indent=2), encoding="utf-8")
-                    except Exception as err:
-                        logger.warning(f"Error checking redemption info in {dest_file}: {err}")
                 shutil.copyfile(p, dest_file)
             except Exception as exc:
                 logger.error(f"Failed to copy window file {p} to {dest_file}: {exc}")

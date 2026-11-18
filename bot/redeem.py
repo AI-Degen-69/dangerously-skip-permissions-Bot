@@ -133,7 +133,6 @@ def execute_redeem(
 
     active_id = get_active_run_id()
     is_active_run = (ws is not None and ws.run_id == active_id)
-    active_ws = RunWorkspace(active_id, runs_root=WORKSPACES_DIR) if (active_id and (WORKSPACES_DIR / active_id).exists()) else None
 
     due = redeemable(run_id)
     now = utc_now_iso()
@@ -209,15 +208,6 @@ def execute_redeem(
                 except Exception as ex:
                     warnings.append(f"Failed to sync {p.name} to legacy storage: {ex}")
 
-        # If targeting legacy directory, sync to active workspace if file exists there
-        if ws is None and active_ws and active_ws.windows_dir.exists() and p.parent.resolve() != active_ws.windows_dir.resolve():
-            ws_file = active_ws.windows_dir / p.name
-            if ws_file.exists():
-                try:
-                    ws_file.write_text(data_str, encoding="utf-8")
-                except Exception as ex:
-                    warnings.append(f"Failed to sync {p.name} to active workspace: {ex}")
-
         log_event(
             "redeem",
             "paper-redeem",
@@ -265,10 +255,6 @@ def execute_redeem(
                 legacy_file = WINDOWS_MIRROR_DIR / p.name
                 if legacy_file.exists():
                     legacy_file.write_text(data_str, encoding="utf-8")
-            if ws is None and active_ws and active_ws.windows_dir.exists() and p.parent.resolve() != active_ws.windows_dir.resolve():
-                ws_file = active_ws.windows_dir / p.name
-                if ws_file.exists():
-                    ws_file.write_text(data_str, encoding="utf-8")
         except Exception as ex:
             warnings.append(f"Failed to clean zero-payout window {p.name}: {ex}")
 
