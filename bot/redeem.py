@@ -4,7 +4,7 @@ Scans settled windows (winner known, not pending) that have not been
 redeemed yet, marks them redeemedAt in the target run workspace (and the
 shared data/windows_mirror/ mirror when redeeming the active run), and
 can dump REDEEM rows in the
-same CSV schema as docs/dangerously-skip-permissions/scripts/save-trades-to-csv.py
+same CSV schema as scripts/leaderboard_traders/puller
 so the existing reconcile pattern keeps working.
 
 Real on-chain redeem (AutoRedeemer / claim) needs live keys and stays out

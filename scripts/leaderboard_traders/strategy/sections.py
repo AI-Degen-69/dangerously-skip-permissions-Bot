@@ -1,203 +1,13 @@
-"""Reverse-engineer a wallet's 5m BTC Up/Down strategy from a fill ledger.
+from .data import q, split_thirds
+from .report import _kv, _section, md
 
-Any date range works: a week, a month, a quarter.
-
-Reads a ledger CSV (default: ledgers/dangerously-skip-permissions/raw/dangerously_2026-11-01_to_2026-11-08.csv,
-or pass one as argv[1] / TRADES_CSV) and prints the analysis sections (markdown) used in the reports.
-The same text is saved as `<csv-stem>_strategy.md` in `ledgers/<account>/analysis/` when the
-CSV sits under `ledgers/<account>/raw/`, otherwise next to the CSV.
-
-Key recovered facts the script relies on:
-  - USD_Amount = Shares * Price * (1 + fee), fee per share = 0.07 * p * (1-p) when taker.
-  - Zero-fee fills are maker fills; the two never mix inside one transaction hash.
-    Newer ledgers drop the hash, so row order is the sort tiebreaker for them.
-  - REDEEM USD_Amount ~= Shares => winning token, 0 => losing token.
-"""
 
 import csv
 import os
 import pathlib
 import sys
-
 import numpy as np
 import pandas as pd
-
-csv.field_size_limit(10**9)
-
-DEFAULT_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "ledgers",
-    "dangerously-skip-permissions",
-    "raw",
-    "dangerously_2026-11-01_to_2026-11-08.csv",
-)
-# Any ledger can be analysed: pass a .csv argument or set TRADES_CSV.
-PATH = (
-    next((a for a in sys.argv[1:] if a.lower().endswith(".csv")), None)
-    or os.environ.get("TRADES_CSV")
-    or DEFAULT_PATH
-)
-FEE_RATE = 0.07
-REQUIRED_COLUMNS = (
-    "Timestamp_UTC", "Type", "Market_Slug", "Condition_ID",
-    "Outcome", "Token_ID", "Price", "Shares", "USD_Amount",
-)
-
-
-def analysis_target(csv_path: str, suffix: str) -> pathlib.Path:
-    """ledgers/<account>/analysis/ for a raw/ ledger, otherwise next to the CSV."""
-    src = pathlib.Path(csv_path).resolve()
-    if src.parent.name == "raw" and src.parent.parent.parent.name == "ledgers":
-        out_dir = src.parent.parent / "analysis"
-    else:
-        out_dir = src.parent
-    out_dir.mkdir(parents=True, exist_ok=True)
-    return out_dir / f"{src.stem}{suffix}"
-
-
-class Tee:
-    """Duplicates stdout into the analysis file."""
-
-    def __init__(self, *streams):
-        self.streams = streams
-
-    def write(self, data):
-        for stream in self.streams:
-            stream.write(data)
-        return len(data)
-
-    def flush(self):
-        for stream in self.streams:
-            stream.flush()
-
-
-def md(frame, floatfmt=".4f"):
-    """Markdown table without the tabulate dependency."""
-    frame = frame.copy()
-    for c in frame.columns:
-        if pd.api.types.is_float_dtype(frame[c]):
-            frame[c] = frame[c].map(lambda v: f"{v:{floatfmt}}")
-    head = "| " + " | ".join(str(c) for c in frame.columns) + " |"
-    sep = "|" + "|".join("---" for _ in frame.columns) + "|"
-    rows = ["| " + " | ".join(str(v) for v in r) + " |" for r in frame.itertuples(index=False)]
-    return "\n".join([head, sep] + rows)
-
-
-SECTION_WIDTH = 74
-
-
-def _section(title):
-    """Draw a banner above a Markdown section heading.
-
-    The report is both streamed to the terminal and saved as Markdown, so a
-    plain `=` rule gives the terminal the same break as the puller while the
-    `##` heading stays intact in the saved file.
-    """
-    print()
-    print("=" * SECTION_WIDTH)
-    print(f"\n## {title}\n")
-
-
-def _kv(label, value):
-    """A padded `label   value` line, matching the puller's status blocks."""
-    print(f"  {label:<17}{value}")
-
-
-def q(series, ps=(0.1, 0.25, 0.5, 0.75, 0.9)):
-    return series.quantile(list(ps)).to_dict()
-
-
-def split_thirds(days):
-    """Three equal-length phases of a sorted day list."""
-    n = len(days)
-    cuts = [0, n // 3, 2 * n // 3, n]
-    return [days[a:b] for a, b in zip(cuts, cuts[1:])]
-
-
-def load():
-    df = pd.read_csv(PATH)
-    missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
-    if missing:
-        raise ValueError(f"missing column(s): {', '.join(missing)}")
-    if "Transaction_Hash" not in df.columns:
-        # Newer ledgers drop the hash; row order becomes the sort tiebreaker, so
-        # the duplicate-tx line in section A reads 0 for them.
-        df["Transaction_Hash"] = df.index.to_series().map("{:010d}".format)
-    df["ts"] = pd.to_datetime(df["Timestamp_UTC"], utc=True)
-    sec = (df["ts"] - pd.Timestamp("1970-01-01", tz="UTC")).dt.total_seconds().astype("int64")
-    df["epoch"] = sec
-    df["open_ts"] = pd.to_numeric(df["Market_Slug"].str.split("-").str[-1], errors="coerce").fillna(0).astype(int)
-    df["close_ts"] = df["open_ts"] + 300
-    df["secs_before_close"] = df["close_ts"] - df["epoch"]
-    df["offset"] = df["epoch"] - df["open_ts"]
-    tr = df[df["Type"] == "TRADE"].copy()
-    tr["gross"] = tr["Price"] * tr["Shares"]
-    tr["fee"] = tr["USD_Amount"] - tr["gross"]
-    tr["is_taker"] = tr["fee"] > 1e-9
-    rd = df[df["Type"] == "REDEEM"].copy()
-    rb = df[df["Type"].astype(str).str.contains("REBATE")].copy()
-    return df, tr, rd, rb
-
-
-def build_markets(tr, rd):
-    tok = (
-        tr.groupby(["Condition_ID", "Outcome", "Token_ID"])
-        .agg(
-            shares=("Shares", "sum"),
-            cost=("USD_Amount", "sum"),
-            gross=("gross", "sum"),
-            fee=("fee", "sum"),
-            n=("Price", "size"),
-            first=("epoch", "min"),
-            last=("epoch", "max"),
-            minpx=("Price", "min"),
-            maxpx=("Price", "max"),
-            taker_sh=("Shares", lambda s: s[tr.loc[s.index, "is_taker"]].sum()),
-            open_ts=("open_ts", "first"),
-        )
-        .reset_index()
-    )
-    tok["vwap"] = tok["gross"] / tok["shares"]
-    tok["taker_frac"] = tok["taker_sh"] / tok["shares"]
-
-    winners = (
-        rd.assign(win=rd["USD_Amount"] > 0.5)
-        .groupby(["Condition_ID", "Outcome"])
-        .agg(win=("win", "max"), redeem_cash=("USD_Amount", "sum"), redeem_sh=("Shares", "sum"))
-        .reset_index()
-    )
-    winner = winners[winners["win"]].set_index("Condition_ID")["Outcome"]
-
-    up = tok[tok["Outcome"] == "Up"].set_index("Condition_ID")
-    dn = tok[tok["Outcome"] == "Down"].set_index("Condition_ID")
-    m = up.join(dn, lsuffix="_u", rsuffix="_d", how="outer").fillna(0.0)
-    m["winner"] = winner
-    m["settled"] = m.index.isin(winner.index)
-    m["open_ts"] = m["open_ts_u"].where(m["open_ts_u"] > 0, m["open_ts_d"])
-    m["sh_up"], m["sh_dn"] = m["shares_u"], m["shares_d"]
-    m["vwap_up"] = m["vwap_u"].where(m["shares_u"] > 0)
-    m["vwap_dn"] = m["vwap_d"].where(m["shares_d"] > 0)
-    m["sum_vwap"] = m["vwap_up"] + m["vwap_dn"]
-    m["vwap_up_allin"] = m["cost_u"] / m["sh_up"].where(m["sh_up"] > 0)
-    m["vwap_dn_allin"] = m["cost_d"] / m["sh_dn"].where(m["sh_dn"] > 0)
-    m["sum_vwap_allin"] = m["vwap_up_allin"] + m["vwap_dn_allin"]
-    m["min_sh"] = np.minimum(m["sh_up"], m["sh_dn"])
-    m["abs_diff"] = (m["sh_up"] - m["sh_dn"]).abs()
-    m["cost"] = m["cost_u"] + m["cost_d"]
-    m["gross_cost"] = m["gross_u"] + m["gross_d"]
-    m["fees"] = m["fee_u"] + m["fee_d"]
-    payout = np.select([m["winner"] == "Up", m["winner"] == "Down"], [m["sh_up"], m["sh_dn"]], default=0.0)
-    m["payout"] = np.where(m["settled"], payout, np.nan)
-    m["pnl_gross"] = m["payout"] - (m["sh_up"] * m["vwap_up"].fillna(0) + m["sh_dn"] * m["vwap_dn"].fillna(0))
-    m["pnl_net"] = m["pnl_gross"] - m["fees"]
-    m["locked"] = m["min_sh"] * (1 - m["sum_vwap"])
-    m["residual"] = m["pnl_gross"] - m["locked"]
-    m["n_fills"] = m["n_u"] + m["n_d"]
-    m["first_fill"] = np.minimum(m["first_u"].replace(0, 9e18), m["first_d"].replace(0, 9e18))
-    m["last_fill"] = np.maximum(m["last_u"], m["last_d"])
-    return tok, m
-
-
 def section_a(df, tr, rd, rb, m):
     _section("A. Integrity & scale")
     _kv("Rows", f"{len(df):,} | TRADE {len(tr):,} | REDEEM {len(rd):,} | "
@@ -243,8 +53,6 @@ def section_a(df, tr, rd, rb, m):
     print(f"Taker (fee-paying) fills: {tr['is_taker'].mean() * 100:.1f}% of fills, "
           f"{tr.loc[tr['is_taker'], 'USD_Amount'].sum() / tr['USD_Amount'].sum() * 100:.1f}% of cash")
     print(f"Fee paid ${tr['fee'].sum():,.2f}; maker fills pay $0.00")
-
-
 def section_b(tr, m):
     _section("B. Dual-sided inventory")
     both = m[m["sh_up"] > 0]
@@ -308,8 +116,6 @@ def section_b(tr, m):
     print(md(lagd.reset_index().rename(columns={"index": "stat"}), ".1f"))
     for lo, hi in [(0, 1), (2, 5), (6, 15), (16, 30), (31, 60), (61, 120), (121, 300)]:
         print(f"  {lo}-{hi}s: {100 * ((lag >= lo) & (lag <= hi)).mean():.1f}%")
-
-
 def section_c(m, rb):
     _section("C. PnL attribution")
     s = m[m["settled"]]
@@ -359,8 +165,6 @@ def section_c(m, rb):
     print(f"Locked share of gross trading PnL: {100 * s['locked'].sum() / s['pnl_gross'].sum():.1f}%")
     print(f"Markets with locked>0: {100 * (s['locked'] > 0).mean():.1f}%; "
           f"mean locked ${s['locked'].mean():.2f}; mean residual ${s['residual'].mean():.2f}")
-
-
 def section_d(tr, m):
     _section("D. Timing fingerprint")
     sbc = tr["secs_before_close"]
@@ -395,8 +199,6 @@ def section_d(tr, m):
     print(f"Markets with a fill in the first 5s: {100 * (m2['first_off'] <= 5).mean():.1f}%; "
           f"first 15s: {100 * (m2['first_off'] <= 15).mean():.1f}%; "
           f"last 15s: {100 * (m2['last_off'] >= 285).mean():.1f}%")
-
-
 def section_e(tr, m):
     _section("E. Price behavior & calibration")
     print(f"Fill price: {q(tr['Price'])}; mean {tr['Price'].mean():.4f}")
@@ -485,8 +287,6 @@ def section_e(tr, m):
           f"{marg['Shares'].sum() / tr['Shares'].sum() * 100:.1f}% of shares), "
           f"${marg['USD_Amount'].sum():,.0f}, gross PnL ${marg['pnl'].sum():,.2f} "
           f"({marg['pnl'].sum() / marg['USD_Amount'].sum() * 100:.2f}% of cash)")
-
-
 def section_f(tr, m):
     _section("F. Sizing & risk")
     print(f"USD per fill: {q(tr['USD_Amount'])}; mean {tr['USD_Amount'].mean():.2f}")
@@ -537,8 +337,6 @@ def section_f(tr, m):
     n_days = max(tr["ts"].dt.date.nunique(), 1)
     print("Working bankroll lower bound (peak deployed): see above; turnover/day "
           f"${m['cost'].sum() / n_days:,.0f}")
-
-
 def section_g(tr, m, rb):
     _section("G. Regime change")
     s = m[m["settled"]].copy()
@@ -589,8 +387,6 @@ def section_g(tr, m, rb):
                         "net_bps": x["net_bps"].mean(), "rebate_bps": x["rebate_bps"].mean(),
                         "net_per_mkt": x["net"].sum() / x["markets"].sum()})
         print(md(pd.DataFrame(out), ".2f"))
-
-
 def section_h(tr, m, tok):
     _section("H. Within-market replay")
 
@@ -622,8 +418,6 @@ def section_h(tr, m, tok):
     late = s[(s["first_fill"] - s["open_ts"]) > 180]
     if len(late):
         show(late["cost"].idxmax(), "Latest entry:")
-
-
 def section_i(tr, m, rb):
     _section("I. Rebate mechanics")
     r = rb.copy()
@@ -642,55 +436,3 @@ def section_i(tr, m, rb):
     print(f"Taker fees embedded in fills ${tr['fee'].sum():,.2f}; rebates cover "
           f"{r['USD_Amount'].sum() / tr['fee'].sum() * 100:.1f}% of them")
     print(f"Marginal rebate per extra $1M of two-sided notional: ~${r['USD_Amount'].sum() / tr['USD_Amount'].sum() * 1e6:,.0f}")
-
-
-def main():
-    try:
-        run()
-    except Exception as exc:
-        print(f"Cannot analyse {PATH}: {exc}", file=sys.stderr)
-        sys.exit(1)
-
-
-def run():
-    if not os.path.isfile(PATH):
-        sys.exit(
-            f"Ledger not found: {PATH}\n"
-            "Pass a ledger .csv path, set TRADES_CSV, or pull one first with "
-            "save-trades-to-csv.py."
-        )
-    if os.path.getsize(PATH) == 0:
-        sys.exit(f"Ledger is empty: {PATH}")
-    df, tr, rd, rb = load()
-    tok, m = build_markets(tr, rd)
-    if tr.empty:
-        sys.exit(f"No TRADE rows in {PATH}; nothing to analyse.")
-    target = analysis_target(PATH, "_strategy.md")
-    tmp = target.with_name(target.name + ".tmp")
-    original = sys.stdout
-    try:
-        with open(tmp, "w", encoding="utf-8") as handle:
-            sys.stdout = Tee(original, handle)
-            try:
-                print("# Strategy reverse-engineering - computed sections")
-                _kv("Ledger", PATH)
-                section_a(df, tr, rd, rb, m)
-                section_b(tr, m)
-                section_c(m, rb)
-                section_d(tr, m)
-                section_e(tr, m)
-                section_f(tr, m)
-                section_g(tr, m, rb)
-                section_h(tr, m, tok)
-                section_i(tr, m, rb)
-            finally:
-                sys.stdout = original
-        os.replace(tmp, target)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
-    print(f"\nWrote {target}")
-
-
-if __name__ == "__main__":
-    main()
