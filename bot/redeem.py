@@ -1,8 +1,9 @@
 """Paper redeem batch job — hold-to-redeem without keys, no funding.
 
 Scans settled windows (winner known, not pending) that have not been
-redeemed yet, marks them redeemedAt across active run workspaces (and the
-shared data/windows_mirror/ mirror), and can dump REDEEM rows in the
+redeemed yet, marks them redeemedAt in the target run workspace (and the
+shared data/windows_mirror/ mirror when redeeming the active run), and
+can dump REDEEM rows in the
 same CSV schema as docs/dangerously-skip-permissions/scripts/save-trades-to-csv.py
 so the existing reconcile pattern keeps working.
 
