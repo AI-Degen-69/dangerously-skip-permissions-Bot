@@ -280,7 +280,7 @@ export function Dashboard() {
             <div>
               <p className="text-[13.5px] font-medium">Bot API not reachable</p>
               <p className="mt-0.5 text-[12.5px] text-muted-foreground">
-                Nothing answered at {BOT_ORIGIN}. Start it with <code className="font-mono">python bot/api.py</code>; this
+                Nothing answered at {BOT_ORIGIN}. Start it with <code className="font-mono">python -m bot.api</code>; this
                 page refills on its own.
               </p>
             </div>

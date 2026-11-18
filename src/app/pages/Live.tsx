@@ -215,7 +215,7 @@ export function Live() {
             <div>
               <h2 className="font-heading text-[15px] font-semibold">Bot API not reachable</h2>
               <p className="mt-1 text-[13.5px] text-muted-foreground">
-                The request to {BOT_ORIGIN} failed. Start the API with <code>python bot/api.py</code>; this page fills in on its own once it answers.
+                The request to {BOT_ORIGIN} failed. Start the API with <code>python -m bot.api</code>; this page fills in on its own once it answers.
               </p>
             </div>
           </div>
@@ -316,7 +316,7 @@ export function Live() {
                     <EmptyState
                       icon={<Activity />}
                       title="Bot API not reachable"
-                      description={`The request failed. Start the API with \`python bot/api.py\`; this list refills as soon as the API at ${BOT_ORIGIN} answers.`}
+                      description={`The request failed. Start the API with \`python -m bot.api\`; this list refills as soon as the API at ${BOT_ORIGIN} answers.`}
                     />
                   ) : (
                     <EmptyState

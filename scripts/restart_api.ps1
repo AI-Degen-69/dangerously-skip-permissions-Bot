@@ -20,12 +20,12 @@ function Test-PortOccupied([int]$port) {
     }
 }
 
-# 1. Find any running processes serving bot/api.py or holding port 8789
+# 1. Find any running processes serving bot/api (python -m bot.api) or holding port 8789
 $targetPids = [System.Collections.Generic.HashSet[int]]::new()
 
 # Look by CommandLine
 Get-CimInstance Win32_Process | ForEach-Object {
-    if ($_.CommandLine -and ($_.CommandLine -like '*bot/api.py*' -or $_.CommandLine -like '*bot\api.py*' -or $_.CommandLine -like '*api.py*') -and $_.ProcessId -ne $PID) {
+    if ($_.CommandLine -and ($_.CommandLine -like '*bot/api.py*' -or $_.CommandLine -like '*bot\api.py*' -or $_.CommandLine -like '*-m bot.api*' -or $_.CommandLine -like '*api.py*') -and $_.ProcessId -ne $PID) {
         [void]$targetPids.Add($_.ProcessId)
     }
 }
@@ -38,7 +38,7 @@ Get-NetTCPConnection -LocalPort 8789 -State Listen -ErrorAction SilentlyContinue
 }
 
 if ($targetPids.Count -gt 0) {
-    Write-Host "Stopping existing bot/api.py process(es)..."
+    Write-Host "Stopping existing bot/api process(es)..."
     foreach ($pidToKill in $targetPids) {
         Write-Host "  -> Killing PID $pidToKill..."
         Stop-Process -Id $pidToKill -Force -ErrorAction SilentlyContinue
@@ -65,25 +65,25 @@ if ($targetPids.Count -gt 0) {
         }
 
         if (((Get-Date) - $startTime).TotalSeconds -ge $timeoutSeconds) {
-            Write-Error "Timed out waiting for existing bot/api.py process (or port 8789) to terminate."
+            Write-Error "Timed out waiting for existing bot/api process (or port 8789) to terminate."
             exit 1
         }
 
         Start-Sleep -Milliseconds 250
     }
 } else {
-    Write-Host "No existing bot/api.py processes found."
+    Write-Host "No existing bot/api processes found."
 }
 
 # 3. Start a new background instance in the current repository
-Write-Host "Starting bot/api.py in background from $ProjectRoot..."
-$spawnCmd = "`"$PythonExe`" bot/api.py"
+Write-Host "Starting bot/api (python -m bot.api) in background from $ProjectRoot..."
+$spawnCmd = "`"$PythonExe`" -m bot.api"
 $wmiResult = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
     CommandLine = $spawnCmd
     CurrentDirectory = $ProjectRoot
 }
 if ($wmiResult.ReturnValue -ne 0) {
-    Start-Process -FilePath $PythonExe -ArgumentList 'bot/api.py' -WorkingDirectory $ProjectRoot -WindowStyle Hidden
+    Start-Process -FilePath $PythonExe -ArgumentList '-m bot.api' -WorkingDirectory $ProjectRoot -WindowStyle Hidden
 }
 
 # 4. Verification loop: ensure the new instance has bound the port and is responding
@@ -103,7 +103,7 @@ while (((Get-Date) - $verifyStart).TotalSeconds -lt 5) {
 }
 
 if ($apiUp) {
-    Write-Host "Success: bot/api.py is running and responding on http://127.0.0.1:8789"
+    Write-Host "Success: bot/api is running and responding on http://127.0.0.1:8789"
 } else {
     Write-Warning "Started process, but endpoint http://127.0.0.1:8789 did not respond within 5 seconds."
 }

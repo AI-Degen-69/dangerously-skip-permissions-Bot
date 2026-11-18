@@ -23,17 +23,17 @@ flowchart TD
 
     subgraph BotEngine ["Python Trading Engine (bot/) — shell + pure modules"]
         Discovery["bot/discovery.py<br/>(Gamma window discovery)"]
-        LivePaper["bot/live_paper.py (shell)<br/>+ live_quotes / orders / records / phases.py<br/>(window lifecycle, resting orders,<br/>queue-ahead tracking)"]
-        Executor["bot/executor.py (shell)<br/>+ exec_pricing / sizing / hydrogen / ladder / sim.py<br/>(microstructure ladder, pair-cost gates,<br/>heavy-side floor gate, maker rebalance,<br/>breakout taker equalizer)"]
+        LivePaper["bot/live_paper/ package (shell __init__)<br/>+ live_quotes / orders / records / phases.py<br/>(window lifecycle, resting orders,<br/>queue-ahead tracking)"]
+        Executor["bot/executor/ package (shell __init__)<br/>+ exec_pricing / sizing / hydrogen / ladder / sim.py<br/>(microstructure ladder, pair-cost gates,<br/>heavy-side floor gate, maker rebalance,<br/>breakout taker equalizer)"]
         Constants["bot/constants.py<br/>(versioned STRATEGY_SETUPS registry:<br/>dsp + v2.6–v2.7 → hydrogen-v1.0, v1.9, v2.0)"]
         Signal["bot/signal.py + bot/risk.py<br/>(lean signal, caps, kill-switch)"]
-        WS["bot/ws.py (shell)<br/>+ ws_models / feed / tape / quotes.py<br/>(CLOB stream + tape writer)"]
-        FillModel["bot/fill_model.py<br/>(queue-ahead SELL print matching)"]
-        FillAudit["bot/fill_audit.py (shell)<br/>+ fill_util / roles / realism / verify.py<br/>(attainability auditing)"]
+        WS["bot/ws/ package (shell __init__)<br/>+ ws_models / feed / tape / quotes.py<br/>(CLOB stream + tape writer)"]
+        FillModel["bot/fill_audit/fill_model.py<br/>(queue-ahead SELL print matching)"]
+        FillAudit["bot/fill_audit/ package (shell __init__)<br/>+ fill_util / roles / realism / verify.py<br/>(attainability auditing)"]
         Tape["bot/tape_recorder.py + tape_verifier.py<br/>(book/print tape + verified stamps)"]
-        Replay["bot/replay.py (shell)<br/>+ replay_consts / sizing / slices / sim / analysis / cli.py<br/>(deterministic counterfactual replay)"]
-        AB["bot/ab_test.py (shell)<br/>+ ab_consts / stats / load / dist / meta / report.py<br/>(Welch t-test run/setup comparison)"]
-        Runs["bot/runs.py (shell)<br/>+ runs_paths / tape / workspace / query.py<br/>(run workspaces, tape segments)"]
+        Replay["bot/replay/ package (shell __init__)<br/>+ replay_consts / sizing / slices / sim / analysis / cli.py<br/>(deterministic counterfactual replay)"]
+        AB["bot/ab_test/ package (shell __init__)<br/>+ ab_consts / stats / load / dist / meta / report.py<br/>(Welch t-test run/setup comparison)"]
+        Runs["bot/runs/ package (shell __init__)<br/>+ runs_paths / tape / workspace / query.py<br/>(run workspaces, tape segments)"]
     end
 
     subgraph Persistence ["Run-Scoped Persistence (data/runs/run_id/)"]
@@ -42,8 +42,8 @@ flowchart TD
         Meta["run_meta.json + state.json + events.jsonl<br/>(config snapshot, live snapshot, decision journal)"]
     end
 
-    subgraph DeskAPI ["Desk API (bot/api.py shell + pure views)"]
-        PyAPI["Loopback HTTP server<br/>127.0.0.1:8789<br/>(control, runs, audit, A/B, config)<br/>shell: bot/api.py (Handler/main/seams)<br/>pure: api_core / loop / markets / views<br/>+ views_common / snapshot / perf / trades"]
+    subgraph DeskAPI ["Desk API (bot/api/ package + views)"]
+        PyAPI["Loopback HTTP server<br/>127.0.0.1:8789<br/>(control, runs, audit, A/B, config)<br/>shell: bot/api/__init__.py (Handler/main/seams)<br/>pure: api_core / loop / markets / views<br/>+ views_common / snapshot / perf / trades"]
     end
 
     subgraph FrontendDesk ["Frontend Trading Desk (src/app/, src/shared/)"]
@@ -92,10 +92,10 @@ flowchart TD
 Zero live-risk / paper-only (no private keys; loopback HTTP only). Every user-facing strategy string is generated from `bot/constants.py`, so the registry is the single source of truth.
 
 * **`bot/constants.py` — `STRATEGY_SETUPS`:** the versioned setup registry, from `hapcs-v1` through `dangerously-skip-permissions` (plus `v2.6`–`v2.7`) and `hydrogen-v1.0`, `hydrogen-v1.9`, `hydrogen-v2.0`. Each setup carries its `entry` numbers (ladder levels/spacing, clip schedule, dip curve, timing, pair-cost caps, unhedged caps) and behavior flags; the UI's `signature`, `description`, and `configHighlights` are generated from them.
-* **Shell + pure layout (convention):** each former god file is now a thin **shell** that owns every patchable seam (paths, workspaces, caches, locks, network clients, `Handler`/`main`/CLI entry) and re-exports public names, plus **pure modules** that take explicit arguments and never `import bot.<shell>` (direct, deferred, or circular). `patch.object` targets on the shell keep working because the shell rebinds what the pure modules return (e.g. `patch.object(ws, "TAPE_*")`, `patch.object(executor, "select_ladder_clip")`). `bot/microstructure_engine/` and `bot/constants.py` are intentionally untouched.
+* **Shell + pure layout (convention):** each former god file is now a **package** whose thin **shell** (`__init__.py`) owns every patchable seam (paths, workspaces, caches, locks, network clients, `Handler`/`main`/CLI entry) and re-exports public names, plus **pure modules** that take explicit arguments and never `import bot.<shell>` (direct, deferred, or circular). `patch.object` targets on the shell keep working because the shell rebinds what the pure modules return (e.g. `patch.object(ws, "TAPE_*")`, `patch.object(executor, "select_ladder_clip")`). `bot/microstructure_engine/` and `bot/constants.py` are intentionally untouched.
 * **`bot/live_paper.py` (shell) + `live_quotes/orders/records/phases.py` — window lifecycle:** discovers 5-minute windows, opens at `startAfterOpenSec`, rests and re-quotes maker ladders through the window, tracks `queue_ahead` on every clip, and stops at `stopBeforeCloseSec` to hold winning shares to redemption. Runs under `--loop`, `--once`, or a fixed `--slot`, writing into a run workspace. Pure helpers: `live_quotes` (lean/microprice probes), `live_orders` (resting-ladder updates), `live_records` (record/settlement writes), `live_phases` (setup → fill engine → sweep/exit → close).
 * **`bot/executor.py` (shell) + `exec_pricing/sizing/hydrogen/ladder/sim.py` — decision engine:** evaluates the microstructure ladder against the live book, enforces `targetPairCost` / `maxPairCost` / `rescuePairCostMax` gates, keeps the lead under `maxUnhedgedShares` / `maxUnhedgedUsd`, and applies `hydrogen-v1.9`'s 3-layer architecture: Layer 1 single 5-share maker probe in 42–49¢ with T+150s / 40 sh cutoff; Layer 2 immediate sub-par clamped maker hedging (≤$0.990) with strict resting order hygiene on lead > 0.5 sh; Layer 3 patient 20s delayed taker bailout (marginal pair ≥$1.07 & ask ≤72¢) with single-window freeze latch to eliminate terminal breakout tax. Taker fills pay the parabolic fee `0.07 · p · (1 − p)`; maker fills pay zero.
-* **`bot/fill_model.py` — queue-ahead fill model:** a resting bid fills only when a taker **SELL** print on the same outcome at or below the limit (or a complementary BUY at `1 − price`) consumes the shares queued ahead of it first. Also supports book-cross fills and labels taker fills unverifiable in paper mode.
+* **`bot/fill_audit/fill_model.py` — queue-ahead fill model:** a resting bid fills only when a taker **SELL** print on the same outcome at or below the limit (or a complementary BUY at `1 − price`) consumes the shares queued ahead of it first. Also supports book-cross fills and labels taker fills unverifiable in paper mode.
 * **`bot/fill_audit.py` (shell) + `fill_util/roles/realism/verify.py` + `bot/tape_verifier.py` — attainability auditing:** reconstructs the effective queue from `book.jsonl` snapshots with FIFO cancel credit, then judges each maker fill against `prints.jsonl` as verified / attainable / phantom. A window with no prints is unjudgeable rather than declared phantom. The Desk's "Verified Only" and "Attainable P&L" views read these verdicts live.
 * **`bot/tape_recorder.py` + `bot/ws.py` (shell) + `ws_models/feed/tape/quotes.py` — tape pipeline:** the CLOB WebSocket (`book`, `price_change`, `last_trade_price`) plus REST fallback append book snapshots and trade prints to `tape/book.jsonl` and `tape/prints.jsonl`, rotating by size (128 MB book / 32 MB prints) so readers walk oldest-first and verification stays bounded.
 * **`bot/replay.py` (shell) + `replay_consts/sizing/slices/sim/analysis/cli.py` — offline replay:** walks a recorded window's clock, takes quotes from `book.jsonl`, applies placement rules through the **real** `bot.executor` helpers, and books fills from `prints.jsonl` via `bot.fill_model`. It never reads a window's own fills to drive the simulation—only condition id, slug (start epoch), and winner for scoring. Invoked with `python -m bot.replay --run … --rule …`.
@@ -104,9 +104,9 @@ Zero live-risk / paper-only (no private keys; loopback HTTP only). Every user-fa
 
 ---
 
-## 2. Desk API & Management (`bot/api.py` shell + pure view/loop/market modules)
+## 2. Desk API & Management (`bot/api/` package + pure view/loop/market modules)
 
-* Thin shell (`bot/api.py` owns `Handler`/`main`, paths, run workspaces, caches, locks, network client) with pure builders in `bot/api_core.py` (core helpers), `bot/api_loop.py` (loop-process helpers), `bot/api_markets.py` (market math), `bot/api_views.py` (view shell) + `bot/views_common/snapshot/perf/trades.py` (dashboard builders). Pure modules take explicit arguments and never import `bot.api`.
+* Thin shell (`bot/api/__init__.py` owns `Handler`/`main`, paths, run workspaces, caches, locks, network client) with pure builders in `bot/api/api_core.py` (core helpers), `bot/api/api_loop.py` (loop-process helpers), `bot/api/api_markets.py` (market math), `bot/api_views/__init__.py` (view shell) + `bot/api_views/views_common/snapshot/perf/trades.py` (dashboard builders). Pure modules take explicit arguments and never import `bot.api`.
 * Lightweight standard-library HTTP server, default `127.0.0.1:8789` (`--port` overrides it; the frontend mirrors it with `VITE_BOT_ORIGIN`). On Windows, `scripts/restart_api.ps1` stops the old process/port, verifies release, respawns, and health-checks the control endpoint.
 * Manages the child loop process (`loop.pid`, `loop.log`) and exposes:
   * **Control:** `GET /api/bot/control`, `GET /api/bot/snapshot`, `GET /api/bot/ws-ticks`; `POST /api/bot/start`, `/stop`, `/resume`, `/kill-switch`, `/reset`, `/select-run`, `/resume-run`, `/redeem`.

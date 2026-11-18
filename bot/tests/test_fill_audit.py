@@ -1,4 +1,4 @@
-"""Unit tests for the fill auditor (bot/fill_audit.py)."""
+"""Unit tests for the fill auditor (bot/fill_audit/)."""
 
 import unittest
 
@@ -74,7 +74,7 @@ class EngineMatchesAuditTest(unittest.TestCase):
     audit would have credited, or the desk's two numbers drift apart again."""
 
     def test_a_fill_the_engine_booked_is_attainable(self):
-        from bot.fill_model import match_maker_print
+        from bot.fill_audit.fill_model import match_maker_print
 
         order = {"side": "Down", "price": 0.42, "shares_left": 10.0, "queue_ahead": 5.0}
         hit = match_maker_print(order, {"outcome": "Down", "side": "SELL", "price": 0.42, "size": 12.0})
@@ -90,7 +90,7 @@ class EngineMatchesAuditTest(unittest.TestCase):
         self.assertEqual(got["phantomFills"], 0)
 
     def test_complementary_buy_fill_is_attainable(self):
-        from bot.fill_model import match_maker_print
+        from bot.fill_audit.fill_model import match_maker_print
 
         order = {"side": "Up", "price": 0.68, "shares_left": 10.0, "queue_ahead": 2.0}
         hit = match_maker_print(order, {"outcome": "Down", "side": "BUY", "price": 0.35, "size": 12.0})

@@ -13,16 +13,16 @@ The desk API is a lightweight stdlib loopback service. Its default bind is `127.
 
 ```bash
 # Terminal 1: Launch Backend API (default 127.0.0.1:8789)
-python bot/api.py
+python -m bot.api
 
 # Optional: bind a different port (must match on both sides)
-# python bot/api.py --port 8789
+# python -m bot.api --port 8789
 # VITE_BOT_ORIGIN=http://127.0.0.1:8789 bun run dev
 ```
 
 *Verify:* Navigate to `http://127.0.0.1:8789/api/bot/control` in your browser. You should receive a JSON status response (`"running": false`, `"mode": "paper"`).
 
-On Windows, `scripts/restart_api.ps1` does a clean restart: it finds any process holding the API port or running `bot/api.py`, stops it, waits until the port is released, spawns a fresh background instance, and verifies the control endpoint responds:
+On Windows, `scripts/restart_api.ps1` does a clean restart: it finds any process holding the API port or running `python -m bot.api`, stops it, waits until the port is released, spawns a fresh background instance, and verifies the control endpoint responds:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/restart_api.ps1
@@ -49,16 +49,16 @@ You can start the trading loop in one of two ways:
 - **Via the Terminal (Manual / Headless):**
   ```bash
   # Continuous loop across all 5-minute windows:
-  python bot/live_paper.py --loop
+  python -m bot.live_paper --loop
 
   # Trade exactly one window and exit:
-  python bot/live_paper.py --once
+  python -m bot.live_paper --once
 
   # Target an explicit 5-minute epoch:
-  python bot/live_paper.py --slot 1794086700
+  python -m bot.live_paper --slot 1794086700
 
   # Name the run workspace explicitly:
-  python bot/live_paper.py --loop --run-id run_20261117_005536_paper_hydrogen_v2_0
+  python -m bot.live_paper --loop --run-id run_20261117_005536_paper_hydrogen_v2_0
   ```
 
 ### Step 4: Analyze a Run Offline (no live feed needed)
@@ -75,7 +75,7 @@ python -m bot.replay --runs all --rule hydrogen
 python bot/verify_run.py --run-id run_20261117_005536_paper_hydrogen_v2_0 --audit
 ```
 
-Replay never reads a window's own fills to drive the simulation—only its condition id, slug (start epoch), and winner for scoring. Fills are re-derived from the recorded book and prints via `bot.fill_model`.
+Replay never reads a window's own fills to drive the simulation—only its condition id, slug (start epoch), and winner for scoring. Fills are re-derived from the recorded book and prints via `bot.fill_audit/fill_model.py`.
 
 ---
 
@@ -237,12 +237,11 @@ bot/
 ├── run_paper.py            # Batch / offline paper run helper
 ```
 
-Shell + pure convention: each `*.py` shell owns IO seams and re-exports public names; its sibling pure modules take explicit arguments and never `import bot.<shell>`, so existing `patch.object` targets on the shell keep working.
+Shell + pure convention: each `bot/<category>/` package holds a thin `__init__.py` shell (IO seams, re-exported public names) beside its pure modules, which take explicit arguments and never `import bot.<shell>`, so existing `patch.object` targets on the shell keep working.
 
 ```
 scripts/
 ├── restart_api.ps1         # Windows: clean stop/verify/restart of the desk API
-├── migrate_runtime_data.py # One-shot bot/ -> data/ runtime migration (repeatable)
 ├── tests/                  # pytest suite
 ```
 
