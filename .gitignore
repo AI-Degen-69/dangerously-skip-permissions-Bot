@@ -14,6 +14,7 @@ __pycache__/
 .ruff_cache/
 
 # Runtime bot state & session runs (per-run under data/runs/, shared under data/)
+.run/
 scratch/
 # Legacy pre-migration locations (kept ignored for old checkouts)
 bot/windows_mirror/

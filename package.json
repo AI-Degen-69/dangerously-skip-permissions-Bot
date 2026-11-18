@@ -5,6 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "desk": "pwsh -ExecutionPolicy Bypass -File scripts/desk.ps1",
+    "desk:start": "pwsh -ExecutionPolicy Bypass -File scripts/desk.ps1 start",
+    "desk:stop": "pwsh -ExecutionPolicy Bypass -File scripts/desk.ps1 stop",
+    "desk:restart": "pwsh -ExecutionPolicy Bypass -File scripts/desk.ps1 restart",
+    "desk:status": "pwsh -ExecutionPolicy Bypass -File scripts/desk.ps1 status",
+    "desk:logs": "pwsh -ExecutionPolicy Bypass -File scripts/desk.ps1 logs -Tail",
     "build": "vite build && node scripts/postbuild.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",

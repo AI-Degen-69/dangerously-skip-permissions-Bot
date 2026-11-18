@@ -11,5 +11,5 @@ export default defineConfig({
       '@': decodeURIComponent(new URL('./src', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')),
     },
   },
-  server: { port: 5173, strictPort: false },
+  server: { port: 5173, host: '127.0.0.1', strictPort: true },
 })
