@@ -205,11 +205,11 @@ class HydrogenV20Test(unittest.TestCase):
         self.assertEqual(d_sw.reason, "sweep-taker")
         self.assertLessEqual(d_sw.projected_pair_cost, 0.995)
 
-        # In sweep phase with 0.53 ask: fee-inclusive is 0.9975 > 0.995 -> refuses taker, rests sweep maker <= 0.54
-        quotes_no_taker = {"Up": {"bid": 0.52, "ask": 0.53}, "Down": {"bid": 0.44, "ask": 0.46}}
+        # In sweep phase with 0.54 ask: fee-inclusive is 1.002 > 0.995 -> refuses taker, rests sweep maker <= 0.54
+        quotes_no_taker = {"Up": {"bid": 0.53, "ask": 0.54}, "Down": {"bid": 0.44, "ask": 0.46}}
         d_no_tk = _dec(quotes_no_taker, inv, in_sweep_phase=True)
         self.assertEqual(d_no_tk.action, "maker")
-        self.assertEqual(d_no_tk.price, 0.52)
+        self.assertEqual(d_no_tk.price, 0.53)
         self.assertLessEqual(d_no_tk.projected_pair_cost, 0.995)
 
         # In sweep phase with 0.55 ask (> 0.995): NEVER pays >= $1.00, rests sweep maker capped at 0.54

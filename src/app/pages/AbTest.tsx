@@ -26,7 +26,7 @@ import {
   useStopAbCandidate,
   useBotControl,
 } from '../lib/bot'
-import { MAKER_REBATE_SHARE, useAccountTier, useIncludeRebates } from '../lib/rebates'
+import { type AccountTier, MAKER_REBATE_SHARE, useAccountTier, useIncludeRebates } from '../lib/rebates'
 import { PageHeader, useToast } from '../components/ui'
 import { StatusDot, type StatusDotTone } from '../components/StatusDot'
 import { cx } from '../lib/cx'
@@ -97,7 +97,8 @@ const armRebate = (
   s: { feesUsd?: number | null; makerFeeBaseUsd?: number | null } | null | undefined,
   rate: number,
   enabled: boolean,
-) => (enabled ? (s?.feesUsd ?? 0) * rate + MAKER_REBATE_SHARE * (s?.makerFeeBaseUsd ?? 0) : 0)
+  makerRate: number = MAKER_REBATE_SHARE,
+) => (enabled ? (s?.feesUsd ?? 0) * rate + makerRate * (s?.makerFeeBaseUsd ?? 0) : 0)
 
 /** Kill float noise: 36.980000000000004 → 36.98, 135 → 135. */
 const trim2 = (val: number) => Number(val.toFixed(2))
@@ -163,7 +164,7 @@ interface ScorecardProps {
   nTag: string
   badge: React.ReactNode
   highlight: boolean
-  rebates: { name: string; rate: number }
+  rebates: AccountTier
   includeRebates: boolean
   changed: Set<string>
 }
@@ -184,7 +185,7 @@ function Scorecard({
   const [rulebook, setRulebook] = useState(false)
   const specs = specRows(arm?.entry)
   const hasSamples = (arm?.samples ?? 0) > 0
-  const rebate = armRebate(arm, rebates.rate, includeRebates)
+  const rebate = armRebate(arm, rebates.rate, includeRebates, rebates.makerRate)
   const rebated = (arm?.netPnl ?? 0) + rebate
   const pairedPct = arm && arm.activeWindows > 0 ? (arm.pairedWindows / arm.activeWindows) * 100 : 0
   const subDollarPct = arm && arm.pairedWindows > 0 ? (arm.subDollarPairs / arm.pairedWindows) * 100 : 0

@@ -210,8 +210,8 @@ function specRows(picked: StrategySetup) {
     },
     {
       key: 'Fees',
-      value: '0% maker · taker 0.07 · p · (1 − p)',
-      note: 'Passive fills pay nothing. The parabolic taker fee peaks at 1.75¢/share at 50¢.',
+      value: '0% maker · taker 0.05 · p · (1 − p)',
+      note: 'Passive fills pay nothing. The parabolic taker fee peaks at 1.25¢/share at 50¢ on BTC 5m/15m markets.',
     },
     {
       key: 'Window risk caps',

@@ -536,16 +536,18 @@ RESCUE_PAIR_COST_MAX = 1.080   # Cap for deficit rescue pairing (sacrifices mode
 MEAN_PAIR_COST = 0.9462        # Measured mean pair cost on tape
 
 # Exchange Fee Model
-TAKER_FEE_COEFF = 0.07         # Polymarket parabolic taker fee: 0.07 * p * (1 - p)
+TAKER_FEE_COEFF = 0.05         # Polymarket parabolic taker fee: 0.05 * p * (1 - p) (BTC 5m/15m; general crypto: 0.01)
 MAKER_FEE = 0.0                # 0% maker fee on resting limit orders
+MAKER_REBATE_SHARE = 0.15      # Polymarket Tier 4 maker rebate: 15% on taker fees generated
 
 # Paper Rebate Model (modeled after the measured wallet's economics:
-# TAKER_REBATE(D) ~= 50% of day D-1 taker fees at the top volume tier, with
-# lower tiers observed at 32-44% across the 16-week history. Paper cannot
-# earn rebates, so the simulator credits the configured rate on every
-# window's taker-fee total to keep paper P&L comparable to live.)
+# TAKER_REBATE(D) ~= 50% of day D-1 taker fees at Obsidian tier ($10M+), with
+# new structure: None (0%), Gold (10%), Platinum (25%), Diamond (40%),
+# Obsidian (50%), Onyx (60%). Paper cannot earn rebates, so the simulator
+# credits the configured rate on every window's taker-fee total to keep paper
+# P&L comparable to live.)
 PAPER_REBATE_TAKER_RATE = 0.50  # default modeled refund of taker fees
-PAPER_REBATE_TIER_RANGE = (0.32, 0.44, 0.50)  # low / mid / top volume tiers
+PAPER_REBATE_TIER_RANGE = (0.25, 0.40, 0.50, 0.60)  # low / mid / top / onyx volume tiers
 
 # Wallet Benchmark (measured 21-day median,
 # docs/leaderboard-traders/ledgers/dangerously-skip-permissions/reports/

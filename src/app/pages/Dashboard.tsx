@@ -11,6 +11,7 @@ import {
   Clock,
   Crown,
   FileText,
+  Flame,
   Gauge,
   Gem,
   GitBranch,
@@ -18,12 +19,10 @@ import {
   Info,
   Layers,
   LayoutDashboard,
-  Medal,
   Percent,
   Receipt,
   RotateCcw,
   Scale,
-  Shield,
   ShieldCheck,
   Sparkles,
   Target,
@@ -220,7 +219,7 @@ export function Dashboard() {
   // the window log all read the same slice, so they can never disagree.
   const timeframe = TIMEFRAMES.find((tf) => tf.id === timeframeId) ?? TIMEFRAMES[TIMEFRAMES.length - 1]
   const cutoff = timeframeStart(timeframe, Date.now())
-  const scoped = scopeWindows(settled, cutoff, tier.rate, includeRebates, startingCapital)
+  const scoped = scopeWindows(settled, cutoff, tier.rate, includeRebates, startingCapital, tier.makerRate)
   // Capital at the start of the slice, so the curve starts where the account was.
   const baseCapital = scoped.baseCapital
   // The window log shows the same slice, pending windows included.
@@ -235,7 +234,7 @@ export function Dashboard() {
       ? window
       : {
           ...window,
-          netUsd: window.netUsd + (includeRebates ? windowRebate(window, tier.rate) : 0),
+          netUsd: window.netUsd + (includeRebates ? windowRebate(window, tier.rate, tier.makerRate) : 0),
         }
   // The API summary covers the whole run, so it can only back an all-time view
   // of every fill.
@@ -245,10 +244,18 @@ export function Dashboard() {
     timeframe.ms == null && !verifiedOnly ? summary : undefined,
     tier.rate,
     includeRebates,
+    tier.makerRate,
   )
   // Best / Worst / Average sit under the "Last N Windows" heading next to the
   // 24-bar strip, so scope them to the same trailing slice.
-  const barStats = computeKpiStats(scoped.windows.slice(-24), baseCapital, undefined, tier.rate, includeRebates)
+  const barStats = computeKpiStats(
+    scoped.windows.slice(-24),
+    baseCapital,
+    undefined,
+    tier.rate,
+    includeRebates,
+    tier.makerRate,
+  )
   const currentCapital = stats.currentCapital
   const attainable = attainableOf(scoped.windows)
   // Segment widths for the win/loss bar, so the tick labels above it land on
@@ -830,7 +837,7 @@ export function Dashboard() {
           }
           tone={stats.feesUsd > 0 ? 'danger' : 'neutral'}
           badge={verifiedOnly ? <Badge tone="neutral">maker only</Badge> : undefined}
-          tip="Polymarket's parabolic taker fee, 0.07 · p · (1 − p) per share, already charged inside each taker fill's cost. Maker fills pay none."
+          tip="Polymarket's parabolic taker fee, 0.05 · p · (1 − p) per share, already charged inside each taker fill's cost. Maker fills pay none."
         />
         <Stat
           label="Taker Rebate"
@@ -1098,12 +1105,12 @@ function Stat({
 }
 
 const TIER_META: Record<string, { icon: LucideIcon; color: string }> = {
-  bronze: { icon: Medal, color: 'text-amber-600 dark:text-amber-500' },
-  silver: { icon: Shield, color: 'text-slate-400 dark:text-slate-300' },
+  none: { icon: Ban, color: 'text-zinc-400 dark:text-zinc-500' },
   gold: { icon: Trophy, color: 'text-yellow-500 dark:text-amber-400' },
   platinum: { icon: Crown, color: 'text-sky-400 dark:text-sky-300' },
   diamond: { icon: Gem, color: 'text-cyan-400 dark:text-cyan-300' },
   obsidian: { icon: Sparkles, color: 'text-violet-400 dark:text-violet-300' },
+  onyx: { icon: Flame, color: 'text-rose-500 dark:text-rose-400' },
 }
 
 function TierBar({
@@ -1129,7 +1136,7 @@ function TierBar({
               type="button"
               onClick={() => onPick(option.id)}
               aria-pressed={tier.id === option.id}
-              title={`${option.name} · ${Math.round(option.rate * 100)}% rebate · $${option.volumeUsd.toLocaleString('en-US')} 30-day weighted volume`}
+              title={`${option.name} · ${Math.round(option.rate * 100)}% taker / ${Math.round(option.makerRate * 100)}% maker rebate · $${option.volumeUsd.toLocaleString('en-US')} 30-day weighted volume`}
               className={cx(
                 'inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11.5px] font-medium transition-colors',
                 tier.id === option.id ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground',

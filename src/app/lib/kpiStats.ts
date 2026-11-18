@@ -98,22 +98,23 @@ export function computeKpiStats(
   apiSummary?: BotPerf['summary'],
   tierRate: number = 0,
   includeRebates: boolean = true,
+  makerRate: number = MAKER_REBATE_SHARE,
 ): CalculatedKpis {
   const settled = windows.filter((w) => !w.pending)
   const pending = windows.filter((w) => w.pending)
 
   // The paper run already charges the taker fee inside costUsd, so a rebate only
-  // ever adds to a window's net. Tier rate scales the taker side; the maker side
-  // is a fixed share of the fees its fills were matched against. The toggle can
+  // ever adds to a window's net. Tier rate scales the taker side; maker rate scales
+  // the share of the fees its maker fills were matched against. The toggle can
   // take the credit away again, and every stat below then reads the same way.
-  const rebateOf = (w: PerfWindow) => (includeRebates ? windowRebate(w, tierRate) : 0)
+  const rebateOf = (w: PerfWindow) => (includeRebates ? windowRebate(w, tierRate, makerRate) : 0)
   const netOf = (w: PerfWindow) => (w.netUsd ?? 0) + rebateOf(w)
 
   const feesUsd =
     apiSummary?.feesUsd ?? settled.reduce((sum, w) => sum + (w.feesUsd ?? 0), 0)
   const takerRebateUsd = tierRate * feesUsd
   const makerRebateUsd =
-    MAKER_REBATE_SHARE * settled.reduce((sum, w) => sum + (w.makerFeeBaseUsd ?? 0), 0)
+    makerRate * settled.reduce((sum, w) => sum + (w.makerFeeBaseUsd ?? 0), 0)
   // What the account earned, whether or not the toggle counts it.
   const rebatesUsd = takerRebateUsd + makerRebateUsd
   const netBeforeRebateUsd =

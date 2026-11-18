@@ -2,6 +2,7 @@
 import json
 import unittest
 
+from bot import constants as C
 from bot import executor as E
 from bot.executor import compute_fill_usd
 from bot.fill_audit.fill_model import match_maker_print
@@ -51,8 +52,8 @@ class MatcherTests(unittest.TestCase):
 
     def test_taker_fee_math(self):
         usd, fee = compute_fill_usd(10.0, 0.50, role="TAKER", include_fee=True)
-        self.assertAlmostEqual(fee, 10 * 0.07 * 0.5 * 0.5, places=4)
-        self.assertAlmostEqual(usd, round(10 * (0.50 + 0.07 * 0.25), 2))
+        self.assertAlmostEqual(fee, 10 * C.TAKER_FEE_COEFF * 0.5 * 0.5, places=4)
+        self.assertAlmostEqual(usd, round(10 * (0.50 + C.TAKER_FEE_COEFF * 0.25), 2))
         usd_m, fee_m = compute_fill_usd(10.0, 0.50, role="MAKER")
         self.assertEqual(fee_m, 0.0)
         self.assertEqual(usd_m, 5.0)
