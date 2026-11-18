@@ -161,7 +161,7 @@ To provide direct source definitions and compiler-verified examples for your cod
 | **Bridge API** | Cross-Chain Deposits & Withdrawals | Public | Collateral bridging across EVM chains (`POST /deposit`, `GET /supported-assets`). |
 | **CLOB Market Streams** | Polymarket WebSocket Subscription Feeds | Public / Auth | WebSocket feed for Level-2 book deltas (`book`), price changes (`price_change`), and user fills (`orders`). |
 | **PolyBolt Live Stream** | High-throughput live order book stream | Public | Low-latency real-time market data streaming channel. |
-| **Trading Fees & Rebates** | [Upcoming Fee & Rebate Changes (Nov 20, 2026)](https://docs.polymarket.com/programs/fee-and-rebate-changes-november-2026) · [Library Fee Spec](../../../Library/03-exchanges-and-protocols/polymarket/05-fees-and-maker-rebates.md) | Public | Taker fee coefficient set to 0.05 for BTC 5m/15m (was 0.07) and 0.01 for other crypto. Makers pay 0% fees and earn 3%–15% maker rebates via 30-day weighted volume tiers ($wV$). |
+| **Trading Fees & Rebates** | [Polymarket Trading Fees](https://docs.polymarket.com/trading/fees) · [Library Fee Spec](../../../Library/03-exchanges-and-protocols/polymarket/05-fees-and-maker-rebates.md) | Public | Taker fee coefficient is 0.05 for BTC 5m/15m and 0.01 for other crypto. Makers pay 0% platform fees and earn 3%–15% maker rebates via 30-day weighted volume tiers ($wV$). |
 
 ---
 
