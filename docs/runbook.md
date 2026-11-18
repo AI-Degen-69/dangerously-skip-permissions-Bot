@@ -18,7 +18,7 @@ python bot/live_paper.py --once
 python bot/live_paper.py --slot <epoch>
 ```
 
-## Config (`bot/config.json`)
+## Config (`data/config.json`)
 
 - `entry`: `startAfterOpenSec` 4 (T+4s opening buffer, sbc 296–300),
   `stopBeforeCloseSec` 12 (T−12s settlement cutoff, sbc 0–12),
@@ -35,11 +35,11 @@ python bot/live_paper.py --slot <epoch>
 
 ## Files
 
-- `bot/state.json` — live fills + `updatedAtMs` heartbeat (one window owns it).
-- `bot/events.jsonl` — decision journal (open / hedge / hold / settle / skip).
-- `bot/windows_mirror/<slug>.json` — one JSON per settled window (fills + net).
-- `bot/loop.pid` / `bot/loop.log` — loop process.
-- `bot/kill` — kill-switch file (present = entries paused). See below.
+- `data/runs/<run_id>/state.json` — live fills + `updatedAtMs` heartbeat (one window owns it).
+- `data/runs/<run_id>/events.jsonl` — decision journal (open / hedge / hold / settle / skip).
+- `data/windows_mirror/<slug>.json` — one JSON per settled window (fills + net).
+- `data/loop.pid` / `data/loop.log` — loop process.
+- `data/kill` — kill-switch file (present = entries paused). See below.
 
 ## Tape verification (paper fills vs the real book)
 
@@ -93,12 +93,12 @@ upper bound. Taker fills always count. The desk shows the result as the
 
 ## Kill-switch drill (verified 2026-11-07)
 
-Loop checks `bot/kill` between windows (`wait_while_killed`, 30s poll);
+Loop checks `data/kill` between windows (`wait_while_killed`, 30s poll);
 desk shows `killSwitch: true / risk.halted: true` while present.
 
 ```sh
-touch bot/kill   # pause entries — loop prints "kill-switch present", desk halts
-rm bot/kill      # resume
+touch data/kill   # pause entries — loop prints "kill-switch present", desk halts
+rm data/kill      # resume
 ```
 
 Also via desk: Config / risk panel → kill-switch toggle (`POST /api/bot/kill-switch`).
@@ -144,4 +144,41 @@ Scale only after a profitable held-to-redeem window reconciles end-to-end.
 ## Stop / reset
 
 Desk Stop button (`POST /api/bot/stop`) or kill the loop PID.
-`POST /api/bot/reset` clears `windows_mirror/`, `state.json`, `events.jsonl`.
+`POST /api/bot/reset` clears `data/windows_mirror/` and the active run state.
+
+## Upgrade: bot/ -> data/ runtime layout
+
+Runtime state moved from `bot/` to `data/` (`data/runs/<run_id>/state.json`,
+`data/runs/<run_id>/events.jsonl`, `data/windows_mirror/`, `data/config.json`,
+`data/loop.pid`, `data/loop.log`, `data/kill`, `data/ab_test_state.json`).
+`data/config.json` is the only tracked file under `data/` (`data/*` ignored).
+
+Warning: runtime data under `data/` is local and gitignored. Pulling history
+brings code and `data/config.json` only; it never brings another machine's
+runs, mirror, state, events, PID, kill or log files. Migrate each install
+in place; do not copy `data/` between machines.
+
+Exact upgrade sequence (existing installs):
+
+```sh
+# 0. API and loop stopped; capture the old archive and replay baseline
+python -m bot.replay --runs all --rule v2.6 > /tmp/replay-before.txt
+du -sb bot/runs data 2>/dev/null; find bot/runs -name "*.json" | wc -l
+# 1. Migrate twice (second run must be a no-op)
+python scripts/migrate_runtime_data.py --dry-run
+python scripts/migrate_runtime_data.py
+python scripts/migrate_runtime_data.py
+# 2. Compare archive counts and bytes (runs + mirror)
+find data/runs -name "*.json" | wc -l; du -sb data/runs data/windows_mirror
+# 3. Check API and loop writes land in the new layout
+python bot/api.py &  # then: check data/loop.log, data/loop.pid
+python bot/live_paper.py --once  # then: check data/runs/<run_id>/state.json + events.jsonl
+# 4. Verify a settled run, clear the cache and compare replay results
+python bot/verify_run.py --dry-run
+rm -rf scratch/replay_cache /tmp/replay_cache
+python -m bot.replay --runs all --rule v2.6 > /tmp/replay-after.txt
+diff /tmp/replay-before.txt /tmp/replay-after.txt
+# 5. With the API and loop stopped, run both test commands
+python -m unittest discover -s bot/tests
+bun run typecheck
+```

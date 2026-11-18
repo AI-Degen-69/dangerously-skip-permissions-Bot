@@ -477,7 +477,7 @@ export function Config() {
           )}
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-            <span className="font-mono text-xs text-muted-foreground">bot/config.json</span>
+            <span className="font-mono text-xs text-muted-foreground">data/config.json</span>
             <div className="flex items-center gap-2">
               <Button
                 variant="ghost"

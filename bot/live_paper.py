@@ -20,8 +20,6 @@ import argparse
 import json
 import math
 import os
-import re
-import shutil
 import sys
 
 # Ensure UTF-8 output encoding across all operating systems / Windows cp1252 consoles
@@ -54,26 +52,69 @@ from bot.executor import (
     evaluate_microstructure_ladder,
     v20_max_hedge_price,
 )
-from bot.fill_audit import attainable_indexes, audit_window
+from bot.fill_audit import audit_window
 from bot.fill_model import match_maker_book_cross, match_maker_print
-from bot.risk import RiskState, assert_single_window, check_window, clip_shares, heartbeat
+from bot.risk import RiskState, assert_single_window, check_window, clip_shares
 from bot.runs import (
+    CONFIG_PATH,
+    EVENTS_PATH,
+    KILL_PATH,
+    STATE_PATH as FALLBACK_STATE_PATH,
     WINDOWS_MIRROR_DIR,
     RunWorkspace,
+    ensure_data_dir,
     find_run_id,
-    get_active_run_id,
     make_run_id,
     migrate_windows_mirror,
     set_active_run_id,
+)
+from bot.live_orders import (
+    cancel_side_orders_pure,
+    ladder_keys_pure,
+    prune_pre_sweep_orders_pure,
+    update_maker_order_pure,
+)
+from bot.live_quotes import (
+    live_bid_price_pure,
+    live_buy_price_pure,
+    live_queue_ahead_pure,
+    live_quote_pair_pure,
+    microprice_lean_pure,
+)
+from bot.live_phases import (
+    build_close_result,
+    build_close_snap,
+    classify_trade,
+    compute_imp_up,
+    desired_ladder_prices,
+    is_sweep_phase,
+    live_pair_cost as live_pair_cost_pure,
+    minute_of,
+    next_odds_history,
+    open_order_rows as open_order_rows_pure,
+    parse_window_params,
+    required_spacing as pacing_spacing,
+    should_close,
+    unhedged_blocked,
+)
+from bot.live_records import (
+    atomic_write_json_pure,
+    build_decision_record_pure,
+    compute_settlement_pure,
+    current_daily_pnl_pure,
+    risk_detail_pure,
+    risk_reason_code_pure,
+    settled_net_usd_pure,
+    stamp_attainable_pure,
 )
 from bot.signal import LeanSignal
 from bot.tape_verifier import load_book_for_window, load_prints_for_window, verify_fills
 from bot.ws import LiveBookStreamer
 
-STATE_PATH = Path("bot/state.json")
-EVENTS_PATH = Path("bot/events.jsonl")
-CONFIG_PATH = Path("bot/config.json")
-KILL_PATH = Path("bot/kill")
+# Legacy module aliases kept patchable for existing tests; new code uses the
+# per-run workspace paths (ws.state_path / ws.events_file) with the data/
+# fallbacks imported above.
+STATE_PATH = FALLBACK_STATE_PATH
 CURRENT_WORKSPACE: RunWorkspace | None = None
 _STATE_LOCK = threading.Lock()
 
@@ -81,6 +122,11 @@ _STATE_LOCK = threading.Lock()
 def get_current_workspace() -> RunWorkspace | None:
     global CURRENT_WORKSPACE
     return CURRENT_WORKSPACE
+
+
+def _state_target(ws: RunWorkspace | None):
+    """Per-run state file, or the data/ fallback when no run is active."""
+    return ws.state_path if ws is not None else STATE_PATH
 
 
 def init_run_session(run_id: str | None = None, label: str = "msr_v2") -> RunWorkspace:
@@ -96,20 +142,20 @@ def init_run_session(run_id: str | None = None, label: str = "msr_v2") -> RunWor
         ws.settle_pending_windows(WINDOWS_MIRROR_DIR)
     except Exception:
         pass
-    if ws.events_file.exists() and ws.events_file.stat().st_size > 0:
-        try:
-            shutil.copyfile(ws.events_file, EVENTS_PATH)
-        except Exception:
-            pass
-    if STATE_PATH.exists():
-        try:
-            st = json.loads(STATE_PATH.read_text())
+    # Keep this run's own state file; drop it only when it belongs to a
+    # different run or an expired window, so a fresh run never inherits it.
+    try:
+        if ws.state_path.exists():
+            st = json.loads(ws.state_path.read_text())
             end_ms = st.get("endMs")
             st_run_id = st.get("runId")
             if (st_run_id and st_run_id != ws.run_id) or (end_ms and int(end_ms) < int(time.time() * 1000)):
-                STATE_PATH.unlink(missing_ok=True)
+                ws.state_path.unlink(missing_ok=True)
+    except Exception:
+        try:
+            ws.state_path.unlink(missing_ok=True)
         except Exception:
-            STATE_PATH.unlink(missing_ok=True)
+            pass
     CURRENT_WORKSPACE = ws
     return ws
 
@@ -149,24 +195,8 @@ def run_tape_dir():
 
 
 def _stamp_attainable(fills: list[dict], prints: list[dict], condition_id: str | None, final: bool = False) -> int:
-    """Mark each fill the recorded selling could have filled.
-
-    While the window is still trading this only sets True: more selling can
-    arrive, so a False is "not yet". The close pass and the resolution audit are
-    final and write both verdicts.
-    """
-    verdicts = attainable_indexes(fills, prints, condition_id)
-    if verdicts is None:
-        return 0
-    changed = 0
-    for i, ok in verdicts.items():
-        detail = fills[i].setdefault("detail", {})
-        if not ok and not final:
-            continue
-        if detail.get("attainable") is not ok:
-            detail["attainable"] = ok
-            changed += 1
-    return changed
+    """Shell seam: delegates to pure `live_records.stamp_attainable_pure`."""
+    return stamp_attainable_pure(fills, prints, condition_id, final=final)
 
 
 def log_event(kind: str, reason: str, slug: str | None = None, **kw) -> None:
@@ -180,14 +210,19 @@ def log_event(kind: str, reason: str, slug: str | None = None, **kw) -> None:
         rec["slug"] = slug
         rec["interval"] = "5m"
     rec.update(kw)
-    EVENTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with EVENTS_PATH.open("a") as f:
-        f.write(json.dumps(rec) + "\n")
     ws = get_current_workspace()
-    if ws:
+    if ws is not None:
+        # Each run keeps its own journal; write once to the relevant run.
         try:
             ws.root.mkdir(parents=True, exist_ok=True)
             with ws.events_file.open("a") as f:
+                f.write(json.dumps(rec) + "\n")
+        except Exception:
+            pass
+    else:
+        try:
+            ensure_data_dir()
+            with EVENTS_PATH.open("a") as f:
                 f.write(json.dumps(rec) + "\n")
         except Exception:
             pass
@@ -203,30 +238,8 @@ def build_decision_record(
     quotes: dict,
     decision,
 ) -> dict:
-    up_q = (quotes.get("Up") or {})
-    down_q = (quotes.get("Down") or {})
-    return {
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "slug": slug,
-        "minute": minute,
-        "inSweepPhase": bool(in_sweep_phase),
-        "imbalance": round(float(imbalance), 1),
-        "fills": fills,
-        "cost": round(float(cost), 2),
-        "action": decision.action,
-        "outcome": decision.outcome,
-        "price": decision.price,
-        "shares": decision.shares,
-        "role": decision.role,
-        "reason": decision.reason,
-        "subReason": decision.sub_reason,
-        "projectedPairCost": decision.projected_pair_cost,
-        "shareDeficit": decision.share_deficit,
-        "quotes": {
-            "Up": {"bid": up_q.get("bid"), "ask": up_q.get("ask")},
-            "Down": {"bid": down_q.get("bid"), "ask": down_q.get("ask")},
-        },
-    }
+    """Shell seam: delegates to pure `live_records.build_decision_record_pure`."""
+    return build_decision_record_pure(slug, minute, in_sweep_phase, imbalance, fills, cost, quotes, decision)
 
 
 def log_decision(
@@ -252,74 +265,27 @@ def log_decision(
 
 
 def microprice_lean(c: PublicClient, up_id: str, down_id: str, streamer: LiveBookStreamer | None = None) -> LeanSignal:
-    """Optional lean probe from live book microprice. Kept neutral by default."""
-    if load_cfg().get("entry", {}).get("leanSource", "microprice") == "dumb":
-        return LeanSignal(lean=0.0, confidence=0.0, source="dumb")
-    if streamer is not None:
-        try:
-            return streamer.get_lean(up_id, down_id)
-        except Exception:
-            pass
+    """Shell seam: reads cfg then delegates to pure `live_quotes.microprice_lean_pure`."""
     try:
-        up_mid = float(c.get_midpoint(token_id=up_id))
-        down_mid = float(c.get_midpoint(token_id=down_id))
+        lean_source = load_cfg().get("entry", {}).get("leanSource", "microprice")
     except Exception:
-        return LeanSignal(lean=0.0, confidence=0.0, source="book-unavailable")
-    edge = (up_mid - down_mid) / 2.0
-    raw = edge * 4.0
-    lean = max(-1.0, min(1.0, raw))
-    spread = abs(up_mid + down_mid - 1.0)
-    confidence = max(0.0, min(1.0, 1.0 - spread * 5.0))
-    return LeanSignal(lean=lean, confidence=confidence, source="book-microprice", raw=round(raw, 3))
+        lean_source = "microprice"
+    return microprice_lean_pure(c, up_id, down_id, streamer=streamer, lean_source=lean_source)
 
 
 def live_buy_price(c: PublicClient, token_id: str, streamer: LiveBookStreamer | None = None) -> float | None:
-    """Best executable BUY price, or None when the book has no usable ask."""
-    if streamer is not None:
-        try:
-            px = streamer.get_buy_price(token_id)
-            if px is not None and 0.0 < px <= 1.0:
-                return px
-        except Exception:
-            pass
-    try:
-        px = float(c.get_price(token_id=token_id, side="BUY"))
-    except Exception:
-        return None
-    if not 0.0 < px <= 1.0:
-        return None
-    return px
+    """Shell seam: delegates to pure `live_quotes.live_buy_price_pure`."""
+    return live_buy_price_pure(c, token_id, streamer=streamer)
 
 
 def live_bid_price(c: PublicClient, token_id: str, streamer: LiveBookStreamer | None = None) -> float | None:
-    """Best resting bid price (for passive Maker ladder fills) from WS memory."""
-    if streamer is not None:
-        try:
-            with streamer._lock:
-                book = streamer.books.get(str(token_id))
-                if book and book.best_bid is not None and 0.0 < book.best_bid < 1.0:
-                    return book.best_bid
-        except Exception:
-            pass
-    return None
+    """Shell seam: delegates to pure `live_quotes.live_bid_price_pure`."""
+    return live_bid_price_pure(c, token_id, streamer=streamer)
 
 
 def live_queue_ahead(streamer: LiveBookStreamer | None, token_id: str, price: float) -> float | None:
-    """Shares already resting at `price` - the queue a new bid joins at the back.
-
-    None when the book has no level data for the token, so the auditor can tell
-    "nobody was ahead" from "the level could not be seen".
-    """
-    if streamer is None:
-        return None
-    try:
-        with streamer._lock:
-            book = streamer.books.get(str(token_id))
-            if book is None:
-                return None
-            return float(book.bids.get(price, 0.0))
-    except Exception:
-        return None
+    """Shell seam: delegates to pure `live_quotes.live_queue_ahead_pure`."""
+    return live_queue_ahead_pure(streamer, token_id, price)
 
 
 def live_quote_pair(
@@ -328,51 +294,23 @@ def live_quote_pair(
     down_id: str,
     streamer: LiveBookStreamer | None = None,
 ) -> dict[str, dict[str, float | None]]:
-    """Fetch {Up: {bid, ask}, Down: {bid, ask}} without extra REST calls."""
-    up_ask = live_buy_price(c, up_id, streamer=streamer)
-    down_ask = live_buy_price(c, down_id, streamer=streamer)
-    up_bid = live_bid_price(c, up_id, streamer=streamer)
-    down_bid = live_bid_price(c, down_id, streamer=streamer)
-    return {
-        "Up": {"bid": up_bid if up_bid is not None else up_ask, "ask": up_ask},
-        "Down": {"bid": down_bid if down_bid is not None else down_ask, "ask": down_ask},
-    }
+    """Shell seam: delegates to pure `live_quotes.live_quote_pair_pure`."""
+    return live_quote_pair_pure(c, up_id, down_id, streamer=streamer)
 
 
 def _atomic_write_json(path: Path, data: object) -> None:
-    raw = json.dumps(data)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(raw)
-    for _ in range(5):
-        try:
-            tmp.replace(path)
-            return
-        except OSError:
-            time.sleep(0.005)
-    try:
-        path.write_text(raw)
-    except OSError as ex:
-        print(f"warning: failed to persist {path}: {ex}", flush=True)
+    """Shell seam: delegates to pure `live_records.atomic_write_json_pure`."""
+    return atomic_write_json_pure(path, data)
 
 
 def _settled_net_usd(path: Path, day_start: int) -> float:
-    tail = path.stem.rsplit("-", 1)[-1]
-    if not tail.isdigit() or int(tail) < day_start:
-        return 0.0
-    try:
-        d = json.loads(path.read_text())
-        if not isinstance(d, dict) or d.get("pending"):
-            return 0.0
-        raw_net = d.get("net_usd")
-        return float(raw_net) if raw_net is not None else 0.0
-    except (OSError, json.JSONDecodeError, TypeError, ValueError):
-        return 0.0
+    """Shell seam: delegates to pure `live_records.settled_net_usd_pure`."""
+    return settled_net_usd_pure(path, day_start)
 
 
 def _current_daily_pnl(day_start: int) -> float:
-    if not WINDOWS_MIRROR_DIR.exists():
-        return 0.0
-    return sum(_settled_net_usd(p, day_start) for p in WINDOWS_MIRROR_DIR.glob("btc-updown-5m-*.json"))
+    """Shell seam: passes mirror dir explicitly to pure helper."""
+    return current_daily_pnl_pure(WINDOWS_MIRROR_DIR, day_start)
 
 
 def write_state(
@@ -389,7 +327,12 @@ def write_state(
     orders_posted: int | None = None,
     orders_cancelled: int | None = None,
 ) -> None:
-    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    ws = get_current_workspace()
+    target = _state_target(ws)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
     cfg = load_cfg()
     strat = cfg.get("strategy", {})
     payload = {
@@ -426,42 +369,30 @@ def write_state(
         # critical sections (the race reported in CodeRabbit review thread 2).
         try:
             with _STATE_LOCK:
-                if STATE_PATH.exists():
-                    raw = json.loads(STATE_PATH.read_text())
+                if target.exists():
+                    raw = json.loads(target.read_text())
                     if raw.get("slug") == slug and raw.get("oddsHistory"):
                         payload["oddsHistory"] = raw["oddsHistory"]
-                _atomic_write_json(STATE_PATH, payload)
+                _atomic_write_json(target, payload)
             return
         except Exception:
             pass
     with _STATE_LOCK:
-        _atomic_write_json(STATE_PATH, payload)
+        _atomic_write_json(target, payload)
 
 
 def _risk_reason_code(raw_reason: str) -> str:
-    if "kill-switch" in raw_reason:
-        return "kill-switch-engaged"
-    if "daily loss cap" in raw_reason:
-        return "daily-loss-cap"
-    if "trade cap" in raw_reason:
-        return "window-trade-cap"
-    return raw_reason
+    """Shell seam: delegates to pure `live_records.risk_reason_code_pure`."""
+    return risk_reason_code_pure(raw_reason)
 
 
 def _risk_detail(raw_reason: str, state: RiskState, trades: int) -> dict:
-    risk_cfg = load_cfg().get("risk", {})
-    default_cap = float(risk_cfg.get("dailyLossCapUsd", 500.0))
-    trade_cap = int(risk_cfg.get("maxFillsPerWindow", 500))
-
-    if "daily loss cap" in raw_reason:
-        m = re.search(r"daily loss cap \$?([0-9.]+(?:[eE][+-]?\d+)?)", raw_reason)
-        cap = float(m.group(1)) if m else default_cap
-        return {"lossUsd": round(abs(state.daily_loss_usd), 2), "capUsd": cap}
-    if "trade cap" in raw_reason:
-        m = re.search(r"trade cap (\d+)", raw_reason)
-        cap = int(m.group(1)) if m else trade_cap
-        return {"fills": trades, "cap": cap}
-    return {}
+    """Shell seam: reads risk cfg then delegates to pure helper."""
+    try:
+        risk_cfg = load_cfg().get("risk", {})
+    except Exception:
+        risk_cfg = {}
+    return risk_detail_pure(raw_reason, state.daily_loss_usd, trades, risk_cfg)
 
 
 def update_maker_order(
@@ -480,86 +411,23 @@ def update_maker_order(
     order_key: str | None = None,
     max_hedge_px: float | None = None,
 ) -> tuple[bool, bool]:
-    """Place or update a resting Maker bid without chasing falling prices downward.
-
-    Returns (changed, repriced_or_new):
-    - changed: True if an order was newly placed or modified.
-    - repriced_or_new: True if a new order was placed or repriced upward.
-
-    `order_key` keeps a ladder rung in its own slot while the order still
-    reports its real side ("Up"/"Down"); it defaults to the side itself.
-    """
-    key = order_key or outcome
-    if inv is not None and unhedged_step_cents is not None and float(unhedged_step_cents) > 0:
-        opp_outcome = "Down" if outcome == "Up" else "Up"
-        if inv[opp_outcome]["shares"] <= 0 and inv[outcome]["shares"] > 0:
-            low_px = inv[outcome].get("lowest_price")
-            if low_px is not None:
-                max_allowed = low_px - (float(unhedged_step_cents) / 100.0) + 1e-6
-                if px > max_allowed:
-                    return (False, False)
-
-    cur = open_orders.get(key)
-    if cur is not None:
-        cur_px = float(cur["price"])
-        if abs(cur_px - px) < 1e-9:
-            # Same price: keep placed_ts and queue_ahead intact.
-            if abs(float(cur["shares_left"]) - shares) > 1e-9:
-                cur["shares_left"] = shares
-                cur["deficit"] = deficit
-                return (True, False)
-            return (False, False)
-        if px < cur_px - 1e-9:
-            # If an existing resting bid violates max_hedge_px, do NOT preserve it:
-            # let it fall through to be replaced by px.
-            if max_hedge_px is not None and cur_px > max_hedge_px + 1e-9:
-                pass
-            else:
-                # Falling bid: never lower an existing resting bid; preserve limit
-                # price, placed_ts, and queue priority so falling prices fill it.
-                if shares > float(cur["shares_left"]) + 1e-9:
-                    cur["shares_left"] = shares
-                    cur["deficit"] = deficit
-                    return (True, False)
-                return (False, False)
-
-    if cur is not None:
-        cur.pop("_last_touch_ask_obs", None)
-    q_val = float(ahead) if ahead is not None else 0.0
-    open_orders[key] = {
-        "side": outcome,
-        "price": px,
-        "shares_left": shares,
-        "queue_ahead": q_val,
-        "queue_ahead_at_place": q_val,
-        "placed_ts": now_ts,
-        "reason": reason,
-        "sub_reason": sub_reason,
-        "minute": minute,
-        "deficit": deficit,
-    }
-    return (True, True)
+    """Shell seam: delegates to pure `live_orders.update_maker_order_pure`."""
+    return update_maker_order_pure(open_orders, outcome, px, shares, minute, reason, sub_reason, deficit, ahead, now_ts, inv=inv, unhedged_step_cents=unhedged_step_cents, order_key=order_key, max_hedge_px=max_hedge_px)
 
 
 def ladder_keys(open_orders: dict[str, dict], outcome: str) -> list[str]:
-    """Keys of every resting order on one side, best (highest) price first."""
-    keys = [k for k, o in open_orders.items() if o.get("side") == outcome]
-    return sorted(keys, key=lambda k: -float(open_orders[k]["price"]))
+    """Shell seam: delegates to pure `live_orders.ladder_keys_pure`."""
+    return ladder_keys_pure(open_orders, outcome)
 
 
 def cancel_side_orders(open_orders: dict[str, dict], outcome: str) -> list[dict]:
-    """Pull every rung on one side; returns the pulled orders."""
-    pulled = [open_orders.pop(k) for k in ladder_keys(open_orders, outcome)]
-    return pulled
+    """Shell seam: delegates to pure `live_orders.cancel_side_orders_pure`."""
+    return cancel_side_orders_pure(open_orders, outcome)
 
 
 def prune_pre_sweep_orders(open_orders: dict[str, dict]) -> list[dict]:
-    """Cancel pre-sweep non-hedge orders during sweep, preserving active sweep/rebalance orders."""
-    stale_keys = [
-        k for k, o in list(open_orders.items())
-        if o.get("reason") != "sweep" and o.get("sub_reason") != "rebalance-maker"
-    ]
-    return [open_orders.pop(k) for k in stale_keys]
+    """Shell seam: delegates to pure `live_orders.prune_pre_sweep_orders_pure`."""
+    return prune_pre_sweep_orders_pure(open_orders)
 
 
 def trade_window(
@@ -570,7 +438,9 @@ def trade_window(
     pre_streamer: LiveBookStreamer | None = None,
 ) -> dict:
     slug = f"btc-updown-5m-{slot}"
-    assert_single_window(slug)
+    _ws_for_guard = get_current_workspace()
+    _guard_path = _state_target(_ws_for_guard)
+    assert_single_window(slug, _guard_path)
     spec = get_window(c, slug)
     cfg = load_cfg()
     entry = cfg.get("entry", {})
@@ -579,52 +449,37 @@ def trade_window(
     strat_sym = strat.get("symbol", C.STRATEGY_SYMBOL)
     strat_name = strat.get("name", C.STRATEGY_NAME)
 
-    # Timing parameters
-    start_after_open = float(entry.get("startAfterOpenSec", entry.get("openDelaySec", C.WINDOW_OPEN_BUFFER_S)))
-    stop_before = float(entry.get("stopBeforeCloseSec", C.HARD_CUTOFF_SBC))
-    test_max_fills = entry.get("maxWindowFills") or entry.get("medianFillsTarget")
-
-    # Pricing & Sizing parameters
-    min_fill = max(0.01, float(entry.get("minFillPrice", C.PRICE_FLOOR)))
-    max_fill = min(0.99, float(entry.get("maxFillPrice", C.PRICE_CEILING)))
-    clip_default = float(entry.get("clipSharesDefault", C.CLIP_SHARES_DEFAULT))
-    max_shares = float(entry.get("maxShares", C.MAX_SHARES))
-    target_pair_cost = float(entry.get("targetPairCost", C.TARGET_PAIR_COST))
-    max_pair_cost = float(entry.get("maxPairCost", C.PAIR_COST_MAX))
-    try:
-        max_unhedged_usd = float(entry.get("maxUnhedgedUsd", C.MAX_UNHEDGED_USD))
-    except (TypeError, ValueError):
-        max_unhedged_usd = C.MAX_UNHEDGED_USD
-    try:
-        max_unhedged_shares = float(entry.get("maxUnhedgedShares", 0.0) or 0.0)
-    except (TypeError, ValueError):
-        max_unhedged_shares = 0.0
-    try:
-        ladder_levels = max(1, int(entry.get("levelsPerSide", 1) or 1))
-    except (TypeError, ValueError):
-        ladder_levels = 1
-    try:
-        ladder_spacing = float(entry.get("levelSpacing", 0.02) or 0.02)
-    except (TypeError, ValueError):
-        ladder_spacing = 0.02
-    dip_curve = entry.get("dipCurve") or None
-    clip_schedule = entry.get("clipSchedule") or None
-    rescue_ceiling = float(entry.get("rescueCeilingPrice", C.RESCUE_CEILING_PRICE))
-    rescue_max_pair_cost = float(entry.get("rescuePairCostMax", C.RESCUE_PAIR_COST_MAX))
-    sweep_before = float(entry.get("sweepBeforeCloseSec", C.HARD_CUTOFF_SBC))
-    leg1_max = entry.get("leg1MaxPrice", entry.get("maxLeg1Price", entry.get("maxFillPrice", C.PRICE_CEILING)))
-    leg2_max = entry.get("leg2MaxPrice", None)
-    taker_dip_max = entry.get("takerDipEntryMax", None)
-    late_start = entry.get("lateRescueStartSec", None)
-    late_max = entry.get("lateRescueMaxPairCost", None)
-    unhedged_step_cents = entry.get("unhedgedStepCents", None)
-    unhedged_probe_shares = entry.get("unhedgedProbeShares", None)
-
-    # Pacing parameters
-    min_spacing_move = float(entry.get("minSpacingMoveSec", 0.5))
-    min_spacing_static = float(entry.get("minSpacingStaticSec", 2.5))
-    include_taker_fee = bool(entry.get("includeTakerFee", True))
-    whole_ladder = bool(entry.get("wholeLadderClips", True))
+    # Phase 0 setup (pure): timing/pricing/pacing params live in `live_phases.parse_window_params`.
+    _wp = parse_window_params(entry)
+    start_after_open = _wp["start_after_open"]
+    stop_before = _wp["stop_before"]
+    test_max_fills = _wp["test_max_fills"]
+    min_fill = _wp["min_fill"]
+    max_fill = _wp["max_fill"]
+    clip_default = _wp["clip_default"]
+    max_shares = _wp["max_shares"]
+    target_pair_cost = _wp["target_pair_cost"]
+    max_pair_cost = _wp["max_pair_cost"]
+    max_unhedged_usd = _wp["max_unhedged_usd"]
+    max_unhedged_shares = _wp["max_unhedged_shares"]
+    ladder_levels = _wp["ladder_levels"]
+    ladder_spacing = _wp["ladder_spacing"]
+    dip_curve = _wp["dip_curve"]
+    clip_schedule = _wp["clip_schedule"]
+    rescue_ceiling = _wp["rescue_ceiling"]
+    rescue_max_pair_cost = _wp["rescue_max_pair_cost"]
+    sweep_before = _wp["sweep_before"]
+    leg1_max = _wp["leg1_max"]
+    leg2_max = _wp["leg2_max"]
+    taker_dip_max = _wp["taker_dip_max"]
+    late_start = _wp["late_start"]
+    late_max = _wp["late_max"]
+    unhedged_step_cents = _wp["unhedged_step_cents"]
+    unhedged_probe_shares = _wp["unhedged_probe_shares"]
+    min_spacing_move = _wp["min_spacing_move"]
+    min_spacing_static = _wp["min_spacing_static"]
+    include_taker_fee = _wp["include_taker_fee"]
+    whole_ladder = _wp["whole_ladder"]
 
     day_start = int(datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
     state = RiskState(daily_loss_usd=_current_daily_pnl(day_start))
@@ -666,11 +521,13 @@ def trade_window(
     stop_sync = threading.Event()
 
     def _sync_loop():
+        _sync_ws = get_current_workspace()
+        _sync_path = _state_target(_sync_ws)
         while not stop_sync.is_set():
             try:
                 with _STATE_LOCK:
-                    if STATE_PATH.exists():
-                        raw = STATE_PATH.read_text()
+                    if _sync_path.exists():
+                        raw = _sync_path.read_text()
                         if isinstance(raw, str):
                             st = json.loads(raw)
                             now_ms = int(time.time() * 1000)
@@ -684,32 +541,16 @@ def trade_window(
                             st["strategySymbol"] = strat.get("symbol", C.STRATEGY_SYMBOL)
                             st["strategyName"] = strat.get("name", C.STRATEGY_NAME)
 
-                            # Record continuous implied Up odds
-                            up_book = ws_stat.get("up_book") or {}
-                            down_book = ws_stat.get("down_book") or {}
-                            up_val = up_book.get("best_ask") if up_book.get("best_ask") is not None else up_book.get("best_bid")
-                            down_val = down_book.get("best_ask") if down_book.get("best_ask") is not None else down_book.get("best_bid")
-                            if up_val is not None and down_val is not None and (up_val + down_val) > 0:
-                                imp_up = round(up_val / (up_val + down_val), 4)
-                            elif up_val is not None:
-                                imp_up = round(up_val, 4)
-                            elif down_val is not None:
-                                imp_up = round(1.0 - down_val, 4)
-                            else:
-                                imp_up = None
-
+                            # Phase: state-sync odds (pure helpers).
+                            up_val_book = ws_stat.get("up_book") or {}
+                            down_val_book = ws_stat.get("down_book") or {}
+                            imp_up = compute_imp_up(up_val_book, down_val_book)
                             if imp_up is not None:
-                                hist = st.get("oddsHistory") or []
-                                if not hist or (now_ms - hist[-1]["t"]) >= 1500:
-                                    slot_start_ms = slot * 1000
-                                    if not hist and abs(now_ms - slot_start_ms) < 15_000:
-                                        hist.append({"t": slot_start_ms, "v": 0.5})
-                                    hist.append({"t": now_ms, "v": imp_up})
-                                    if len(hist) > 500:
-                                        hist.pop(0)
-                                    st["oddsHistory"] = hist
+                                new_hist = next_odds_history(st.get("oddsHistory"), now_ms, slot, imp_up)
+                                if new_hist is not None:
+                                    st["oddsHistory"] = new_hist
 
-                            _atomic_write_json(STATE_PATH, st)
+                            _atomic_write_json(_sync_path, st)
             except (OSError, json.JSONDecodeError, TypeError):
                 pass
             stop_sync.wait(1.0)
@@ -745,11 +586,13 @@ def trade_window(
                     # fills it last read, so without this write the API keeps
                     # serving stale statuses until the next fill calls write_state().
                     with _STATE_LOCK:
-                        if STATE_PATH.exists():
-                            st = json.loads(STATE_PATH.read_text())
+                        _verify_ws = get_current_workspace()
+                        _verify_path = _state_target(_verify_ws)
+                        if _verify_path.exists():
+                            st = json.loads(_verify_path.read_text())
                             if st.get("slug") == slug:
                                 st["fills"] = fills
-                                _atomic_write_json(STATE_PATH, st)
+                                _atomic_write_json(_verify_path, st)
                 if changed > 0 and verbose:
                     stats = {s: 0 for s in ("verified", "partial", "unverified", "pending")}
                     for f in fills:
@@ -768,9 +611,8 @@ def trade_window(
             print(f"[{slug}] {msg}", flush=True)
 
     def _live_pair_cost() -> float | None:
-        if inv["Up"]["shares"] > 0 and inv["Down"]["shares"] > 0:
-            return round((inv["Up"]["cost"] / inv["Up"]["shares"]) + (inv["Down"]["cost"] / inv["Down"]["shares"]), 4)
-        return None
+        # Phase: fill-engine helper (pure).
+        return live_pair_cost_pure(inv)
 
     # --- Fill engine -------------------------------------------------------
     # A maker order is not a fill. It rests at its price and only becomes a fill
@@ -789,23 +631,12 @@ def trade_window(
     streamer.on_print = _queue_print
 
     def _minute_of(ts: float) -> int:
-        return int(min(max((ts - slot) // 60, 0), 4))
+        # Phase: fill-engine helper (pure).
+        return minute_of(slot, ts)
 
     def _open_order_rows() -> list[dict]:
-        now_ms = int(time.time() * 1000)
-        return [
-            {
-                "side": o["side"],
-                "price": round(float(o["price"]), 4),
-                "shares": round(float(o["shares_left"]), 2),
-                "queueAhead": round(float(o["queue_ahead"]), 1),
-                "placedAtMs": int(float(o["placed_ts"]) * 1000),
-                "ageMs": max(0, now_ms - int(float(o["placed_ts"]) * 1000)),
-                "minute": o["minute"],
-                "subReason": o["sub_reason"],
-            }
-            for o in open_orders.values()
-        ]
+        # Phase: fill-engine view helper (pure).
+        return open_order_rows_pure(open_orders, int(time.time() * 1000))
 
     def _persist() -> None:
         write_state(slug, end_ms, started_ms, fills, open_orders=_open_order_rows(),
@@ -847,45 +678,8 @@ def trade_window(
                     window_bailout_latched = True
                     log(f"Window bailout latched: marginal_pair={marginal_pair:.4f} > 1.000")
 
-        # Semantic trade tagging
-        if len(fills) == 0:
-            trade_reason = "straddle-open"
-            event_reason = "straddle-open"
-            fill_kind = "entry"
-        elif len(fills) == 1:
-            trade_reason = "hedge-leg"
-            event_reason = "hedge-leg"
-            fill_kind = "entry"
-        elif sub_reason == "rescue-equalizer":
-            trade_reason = "rescue-hedge"
-            event_reason = "clip-fill"
-            fill_kind = "hedge"
-        elif minute == 4 and reason == "m4-snipe":
-            trade_reason = "m4-snipe"
-            event_reason = "m4-snipe"
-            fill_kind = "snipe"
-        elif sub_reason == "hedge-equalizer":
-            trade_reason = "hedge-equalizer"
-            event_reason = "clip-fill"
-            fill_kind = "entry"
-        elif sub_reason == "maker-dip-ladder":
-            trade_reason = "maker-dip-ladder"
-            event_reason = "clip-fill"
-            fill_kind = "entry"
-        elif sub_reason in ("rebalance-taker", "rebalance-maker"):
-            # Hydrogen v1.5: lighter-side top-up closing at most half the gap.
-            trade_reason = "balance-topup"
-            event_reason = "clip-fill"
-            fill_kind = "hedge"
-        elif sub_reason in ("balance-maker", "balance-probe", "split-ladder-maker", "two-sided-maker"):
-            # Hydrogen v1.5: concurrent accumulation tilt fill.
-            trade_reason = "balance-build"
-            event_reason = "clip-fill"
-            fill_kind = "entry"
-        else:
-            trade_reason = "straddle-balance"
-            event_reason = "clip-fill"
-            fill_kind = "entry"
+        # Phase: fill-engine tagging (pure).
+        trade_reason, event_reason, fill_kind = classify_trade(len(fills), sub_reason, minute, reason)
 
         fills.append({
             "minute": minute,
@@ -952,13 +746,7 @@ def trade_window(
                     })
                     q_used = max(0.0, q_before - max(0.0, float(order.get("queue_ahead") or 0.0)))
                     if hit is not None:
-                        if unhedged_step_cents is not None and float(unhedged_step_cents) > 0:
-                            opp_outcome = "Down" if target_outcome == "Up" else "Up"
-                            if inv[opp_outcome]["shares"] <= 0 and inv[target_outcome]["shares"] > 0:
-                                low_px = inv[target_outcome].get("lowest_price")
-                                if low_px is not None:
-                                    max_allowed = low_px - (float(unhedged_step_cents) / 100.0) + 1e-6
-                                    if order["price"] > max_allowed:
+                        if unhedged_blocked(inv, target_outcome, order["price"], unhedged_step_cents):  # Phase: unhedged guard (pure)
                                         open_orders.pop(order_key, None)
                                         remaining = max(0.0, remaining - q_used)
                                         continue
@@ -997,13 +785,7 @@ def trade_window(
                     pass
             hit = match_maker_book_cross(order, q)
             if hit is not None:
-                if unhedged_step_cents is not None and float(unhedged_step_cents) > 0:
-                    opp_outcome = "Down" if outcome == "Up" else "Up"
-                    if inv[opp_outcome]["shares"] <= 0 and inv[outcome]["shares"] > 0:
-                        low_px = inv[outcome].get("lowest_price")
-                        if low_px is not None:
-                            max_allowed = low_px - (float(unhedged_step_cents) / 100.0) + 1e-6
-                            if order["price"] > max_allowed:
+                if unhedged_blocked(inv, outcome, order["price"], unhedged_step_cents):  # Phase: unhedged guard (pure)
                                 open_orders.pop(order_key, None)
                                 continue
                 now_ts = time.time()
@@ -1090,7 +872,7 @@ def trade_window(
         nonlocal orders_posted, orders_cancelled
         opp_side = "Down" if outcome == "Up" else "Up"
         max_hedge_px = _apply_rebalance_hygiene(outcome, reason, sub_reason)
-        desired = [round(px - i * ladder_spacing, 4) for i in range(ladder_levels)]
+        desired = desired_ladder_prices(px, ladder_spacing, ladder_levels)  # Phase: ladder layout (pure)
         for key in ladder_keys(open_orders, outcome):
             order = open_orders[key]
             if not any(abs(float(order["price"]) - d) < 1e-9 for d in desired):
@@ -1184,8 +966,8 @@ def trade_window(
             else:
                 deficit_since_ts = None
             deficit_duration_sec = (float(now) - deficit_since_ts) if deficit_since_ts is not None else 0.0
-            in_sweep_phase = (now >= end and now < sweep_end and imbalance > 0.0)
-            if now >= sweep_end or (now >= end and imbalance <= 0.0):
+            in_sweep_phase = is_sweep_phase(now, end, sweep_end, imbalance)  # Phase: sweep check (pure)
+            if should_close(now, end, sweep_end, imbalance):  # Phase: exit check (pure)
                 if open_orders:
                     # Exit sweep: cancel any remaining resting bids cleanly before resolution hold.
                     _cancel_orders("sweep phase")
@@ -1218,12 +1000,12 @@ def trade_window(
                 time.sleep(max(0, sweep_end - now))
                 continue
 
-            minute = min(max((now - slot) // 60, 0), 4)
+            minute = minute_of(slot, now)  # Phase: minute bucket (pure)
 
             quotes = live_quote_pair(c, spec.up_token_id, spec.down_token_id, streamer=streamer)
             _drain_book_crosses(quotes)
             imbalance = abs(inv["Up"]["shares"] - inv["Down"]["shares"])
-            in_sweep_phase = (now >= end and now < sweep_end and imbalance > 0.0)
+            in_sweep_phase = is_sweep_phase(now, end, sweep_end, imbalance)  # Phase: sweep check (pure)
             try:
                 _depth_cap = float(entry.get("maxDepthShares", 0.0) or 0.0)
             except Exception:
@@ -1308,10 +1090,10 @@ def trade_window(
             shares = min(clip_shares(decision.shares, max_shares), max_shares)
             role = decision.role
 
-            # Anti-runaway dynamic pacing (relaxed in sweep phase to guarantee deficit close)
+            # Phase: pacing (pure helper; relaxed in sweep to guarantee deficit close)
             time_since_fill = time.time() - last_fill_ts
             is_price_move = (last_fill_px is not None and abs(px - last_fill_px) >= 0.001)
-            required_spacing = 0.5 if in_sweep_phase else (min_spacing_move if is_price_move else min_spacing_static)
+            required_spacing = pacing_spacing(in_sweep_phase, is_price_move, min_spacing_move, min_spacing_static)
             if time_since_fill < required_spacing:
                 streamer.wait_for_tick(timeout=0.25)
                 continue
@@ -1385,29 +1167,9 @@ def trade_window(
         except Exception:
             pass
 
-    # --- Close window: write run file, trigger async background settlement ---
-    maker_count = sum(1 for f in fills if (f.get("detail") or {}).get("role") == "MAKER")
-    taker_count = len(fills) - maker_count
-    result = {
-        "event_slug": slug,
-        "market": spec.question or slug,
-        "condition_id": spec.condition_id,
-        "trades": len(fills),
-        "cost_usd": round(cost, 2),
-        "payout_usd": None,
-        "net_usd": None,
-        "winner": None,
-        "pending": True,
-        "fills": fills,
-        "strategy": strat_id,
-        "strategy_symbol": strat_sym,
-        "maker_fills": maker_count,
-        "taker_fills": taker_count,
-        "fees_usd": round(total_fees_usd, 2),
-        "pair_cost": _live_pair_cost(),
-        "orders_posted": orders_posted,
-        "orders_cancelled": orders_cancelled,
-    }
+    # --- Close window (pure builders): write run file, trigger async background settlement ---
+    result = build_close_result(slug, spec.question or slug, spec.condition_id, fills, cost, strat_id, strat_sym, total_fees_usd, _live_pair_cost(), orders_posted, orders_cancelled)
+    maker_count = result["maker_fills"]
     WINDOWS_MIRROR_DIR.mkdir(parents=True, exist_ok=True)
     (WINDOWS_MIRROR_DIR / f"{slug}.json").write_text(json.dumps(result, indent=2))
     ws = get_current_workspace()
@@ -1429,24 +1191,7 @@ def trade_window(
     except Exception as ex:
         log(f"warning: failed to persist the held window state: {type(ex).__name__}")
     log(f"window closed, {len(fills)} fills, cost ${cost:.2f} — settling in background…")
-    snap = {
-        "slug": slug,
-        "market": spec.question or slug,
-        "condition_id": spec.condition_id,
-        # The auditor reads this window's prints back after resolution.
-        "tapeDir": str(_tape_dir) if _tape_dir else None,
-        "slot": slot,
-        "fills": fills,
-        "cost": round(cost, 2),
-        "strategy": C.STRATEGY_ID,
-        "strategy_symbol": C.STRATEGY_SYMBOL,
-        "maker_fills": maker_count,
-        "taker_fills": taker_count,
-        "fees_usd": round(total_fees_usd, 2),
-        "pair_cost": _live_pair_cost(),
-        "orders_posted": orders_posted,
-        "orders_cancelled": orders_cancelled,
-    }
+    snap = build_close_snap(slug, spec.question or slug, spec.condition_id, slot, fills, cost, _tape_dir, maker_count, result["taker_fills"], total_fees_usd, _live_pair_cost(), orders_posted, orders_cancelled)
     th = threading.Thread(target=settle_slug, args=(slug, snap, origin), kwargs={"budget_s": 900}, daemon=True)
     th.start()
     return result
@@ -1477,21 +1222,15 @@ def settle_slug(slug: str, snap: dict, origin: str | None, budget_s: int = 900) 
                 break
         except Exception as ex:
             print(f"[{slug}] resolve poll: {type(ex).__name__}", flush=True)
-    payout = None
-    net = None
-    # Paper-modeled taker rebate: the measured wallet is refunded ~50% of its
-    # taker fees (32-44% at lower volume tiers). Paper cannot earn a rebate,
-    # so the simulator credits the configured rate on the window's taker-fee
-    # total to keep paper P&L comparable to live economics.
-    rebate_rate = paper_rebate_rate()
+    # Paper-modeled taker rebate (see live_records.compute_settlement_pure):
+    # shell owns the cfg seam, pure module owns the math.
     taker_fees_usd = round(float(snap.get("fees_usd") or 0.0), 2)
-    rebate_usd = 0.0
-    if winner:
-        wshares = sum(f["shares"] for f in fills if f["outcome"] == winner)
-        payout = round(wshares * 1.0, 2)
-        net = round(payout - cost, 2)
-        rebate_usd = round(rebate_rate * taker_fees_usd, 2)
-    net_rebated_usd = round(net + rebate_usd, 2) if net is not None else None
+    _settlement = compute_settlement_pure(fills, cost, taker_fees_usd, winner, paper_rebate_rate())
+    payout = _settlement["payout"]
+    net = _settlement["net"]
+    rebate_usd = _settlement["rebate_usd"]
+    rebate_rate = _settlement["rebate_rate"]
+    net_rebated_usd = _settlement["net_rebated_usd"]
 
     # The definitive read of the fills: a maker fill only counts when the tape
     # shows enough taker selling behind the queue that was actually resting.
@@ -1555,10 +1294,12 @@ def settle_slug(slug: str, snap: dict, origin: str | None, budget_s: int = 900) 
     # written the next window's state.
     with _STATE_LOCK:
         try:
-            if STATE_PATH.exists():
-                st = json.loads(STATE_PATH.read_text())
+            _settle_ws = get_current_workspace()
+            _settle_path = _state_target(_settle_ws)
+            if _settle_path.exists():
+                st = json.loads(_settle_path.read_text())
                 if st.get("slug") == slug:
-                    STATE_PATH.unlink()
+                    _settle_path.unlink()
         except (OSError, ValueError):
             pass
     log_event("settle", "paper-resolve", slug,
@@ -1618,13 +1359,22 @@ def main() -> None:
         ws.finalize(status="failed")
         raise SystemExit(1)
     try:
-        (Path(__file__).resolve().parent / "loop.pid").write_text(str(os.getpid()))
+        from bot.runs import PID_PATH as _PID_PATH
+
+        ensure_data_dir()
+        _PID_PATH.write_text(str(os.getpid()))
+        try:
+            ws.pid_file.write_text(str(os.getpid()))
+        except Exception:
+            pass
     except Exception:
         pass
 
     def _sigterm_handler(signum, frame):
         try:
-            (Path(__file__).resolve().parent / "loop.pid").unlink(missing_ok=True)
+            from bot.runs import PID_PATH as _PID_PATH2
+
+            _PID_PATH2.unlink(missing_ok=True)
         except Exception:
             pass
         ws.finalize(status="interrupted")

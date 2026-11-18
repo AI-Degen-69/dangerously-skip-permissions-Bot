@@ -268,8 +268,9 @@ class TestRunScopedSessions(unittest.TestCase):
         meta = RunWorkspace(new_id, runs_root=self.tmp).read_meta()
         self.assertEqual(meta.label, "dsp_v2_6")
         self.assertEqual(meta.config_snapshot["strategy"]["symbol"], "⚡ DSP-v2.6")
-        # Fresh session starts with an empty event journal.
-        self.assertFalse((self.tmp / "events.jsonl").exists())
+        # Fresh session starts with an empty per-run event journal; the
+        # shared fallback is left untouched (no root-file deletes on switch).
+        self.assertFalse(RunWorkspace(new_id, runs_root=self.tmp).events_file.exists())
 
 
 class TestMigrateWindowsMirror(unittest.TestCase):
