@@ -219,17 +219,33 @@ function Test-UiHealth {
 }
 
 function Spawn-DetachedProcess([string]$commandLine, [string]$workingDir) {
+    # 1. CIM Win32_Process.Create with Win32_ProcessStartup ShowWindow = 0 (SW_HIDE)
     try {
+        $cimStartupClass = Get-CimClass -ClassName Win32_ProcessStartup -ErrorAction Stop
+        $cimStartup = New-CimInstance -CimClass $cimStartupClass -Property @{ ShowWindow = [uint16]0 } -ClientOnly -ErrorAction Stop
         $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
-            CommandLine      = $commandLine
-            CurrentDirectory = $workingDir
-        }
+            CommandLine               = $commandLine
+            CurrentDirectory          = $workingDir
+            ProcessStartupInformation = $cimStartup
+        } -ErrorAction Stop
         if ($res.ReturnValue -eq 0 -and $res.ProcessId -gt 0) {
             return [int]$res.ProcessId
         }
     } catch {}
 
-    # Fallback launch: avoid duplicate nested cmd.exe /c
+    # 2. WMI [wmiclass] with SW_HIDE
+    try {
+        $wmi = [wmiclass]"win32_process"
+        $startup = [wmiclass]"win32_processstartup"
+        $si = $startup.CreateInstance()
+        $si.ShowWindow = 0 # 0 = SW_HIDE
+        $res = $wmi.Create($commandLine, $workingDir, $si)
+        if ($res.ReturnValue -eq 0 -and $res.ProcessId -gt 0) {
+            return [int]$res.ProcessId
+        }
+    } catch {}
+
+    # 3. Fallback launch: avoid duplicate nested cmd.exe /c
     if ($commandLine -match '^cmd\.exe\s+/c\s+(.*)$') {
         $p = Start-Process -FilePath "cmd.exe" -ArgumentList "/c $($matches[1])" -WorkingDirectory $workingDir -WindowStyle Hidden -PassThru
     } else {
