@@ -49,7 +49,7 @@ CLOB_API_PASSPHRASE="YOUR_CLOB_PASSPHRASE"
 # ------------------------------------------------------------------------------
 # Enables 100% sponsored gas for mergePositions and ERC-20 allowances
 GASLESS_RELAYER_ENABLED=true
-POLYMARKET_RELAYER_URL="YOUR_RELAYER_SERVICE_ENDPOINT"
+POLYMARKET_RELAYER_URL="https://relayer-v2.polymarket.com/submit"
 RELAYER_API_KEY="01a01551-4415-7a54-a382-f09ad02bf050"
 RELAYER_API_KEY_ADDRESS="0x832cBcdece2724eA0174c9fbE8D584b75C872163"
 

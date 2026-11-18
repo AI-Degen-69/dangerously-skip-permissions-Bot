@@ -63,13 +63,18 @@ $$s_i(t) = \sum_{j=-m}^m c_j \cdot p_{\text{mid}}(t + j)$$
 
 ```rust
 // Pre-computed Savitzky-Golay coefficients for window size = 5, degree = 2
-const SG_WEIGHTS_M2_D2: [f64; 5] = [-0.085714, 0.342857, 0.485714, 0.342857, -0.085714];
+// Symmetric Center Weights (2-tick / 200 ms phase lag on 100 ms streaming data, optimal noise filtering):
+const SG_WEIGHTS_SYMMETRIC: [f64; 5] = [-0.085714, 0.342857, 0.485714, 0.342857, -0.085714];
+
+// Causal Right-Endpoint Weights (Zero algorithmic latency, estimates newest edge sample):
+const SG_WEIGHTS_CAUSAL: [f64; 5] = [0.085714, -0.142857, -0.085714, 0.257143, 0.885714];
 
 #[inline(always)]
-pub fn filter_mid_price(window: &[f64; 5]) -> f64 {
+pub fn filter_mid_price(window: &[f64; 5], use_causal: bool) -> f64 {
+    let weights = if use_causal { &SG_WEIGHTS_CAUSAL } else { &SG_WEIGHTS_SYMMETRIC };
     let mut filtered = 0.0;
     for i in 0..5 {
-        filtered += SG_WEIGHTS_M2_D2[i] * window[i];
+        filtered += weights[i] * window[i];
     }
     filtered
 }
@@ -234,17 +239,31 @@ $$\text{Action} = \begin{cases} \text{HOLD}, & \text{if } \Delta < \epsilon \\ \
 Where the hysteresis threshold is calibrated to the native tick size of the market ($\epsilon = 0.01\text{ USDC}$).
 
 ```rust
-pub fn evaluate_order_update(active_bid: Option<f64>, target_bid: f64, epsilon: f64) -> OrderAction {
+pub fn evaluate_order_update(
+    active_bid: Option<f64>,
+    target_bid: f64,
+    target_size: f64,
+    active_size: f64,
+    epsilon: f64,
+) -> OrderAction {
     match active_bid {
         Some(active) => {
             let displacement = (target_bid - active).abs();
-            if displacement >= epsilon {
+            if target_size == 0.0 && active_size > 0.0 {
+                OrderAction::Cancel
+            } else if displacement >= epsilon {
                 OrderAction::CancelAndReplace { new_price: target_bid }
             } else {
                 OrderAction::Hold
             }
         }
-        None => OrderAction::SubmitNew { price: target_bid }
+        None => {
+            if target_size > 0.0 {
+                OrderAction::SubmitNew { price: target_bid }
+            } else {
+                OrderAction::Hold
+            }
+        }
     }
 }
 ```
@@ -258,13 +277,20 @@ pub fn evaluate_order_update(active_bid: Option<f64>, target_bid: f64, epsilon: 
 
 Once paired executions are achieved, capital remains locked in ERC-1155 tokens until explicit contract interaction occurs. Resting indefinitely in paired outcome tokens introduces settlement counterparty drag and consumes operational collateral.
 
-### 11.1 The Merging Lifecycle
+### 11.1 Dual Settlement Lifecycle (Relayer v2 vs. Direct Fallback)
 
 The settlement pipeline continuously monitors inventory balances across both outcomes:
 
 $$Q_{\text{pairable}} = \min\left(q_{\text{UP}}, \; q_{\text{DN}}\right)$$
 
-When $Q_{\text{pairable}} > 0$, the settlement manager constructs a direct transaction calling `mergePositions` on the Polymarket CTF contract (`0x4D97DCdE725A8964c18F938002996A407217E759` on Polygon):
+When $Q_{\text{pairable}} > 0$, the settlement manager redeems collateral via one of two paths:
+
+1. **Primary Gasless Relayer Path (`GASLESS_RELAYER_ENABLED=true`):**
+   * Meta-transactions are submitted to Polymarket's Relayer endpoint (`https://relayer-v2.polymarket.com/submit`) signed with `RELAYER_API_KEY` (`01a01551-4415-7a54-a382-f09ad02bf050`).
+   * Polymarket sponsors 100% of the gas cost on Polygon (**0.00 POL** required in developer wallet).
+2. **Direct On-Chain Fallback:**
+   * Direct transaction calling `mergePositions` on the Polymarket CTF contract (`0x4D97DCdE725A8964c18F938002996A407217E759` on Polygon).
+   * Enforces minimum batch threshold $N_{\min} = \lceil \frac{10 \times \text{TxCost}_{\text{gas}}}{s^*} \rceil$ so that on-chain gas costs never exceed 10% of captured spread.
 
 ```solidity
 function mergePositions(
@@ -276,7 +302,9 @@ function mergePositions(
 ) external;
 ```
 
-Execution converts $Q_{\text{pairable}}$ units of UP and $Q_{\text{pairable}}$ units of DOWN into $Q_{\text{pairable}} \times 1.00$ units of liquid USDC.e collateral. Released capital is instantly returned to the active quoting balance, completing the round-trip arbitrage cycle.
+Execution converts $Q_{\text{pairable}}$ units of UP and $Q_{\text{pairable}}$ units of DOWN into $Q_{\text{pairable}} \times 1.00$ units of liquid USDC.e collateral. Released capital is instantly returned to the active quoting balance, completing the round-trip arbitrage cycle. Realized profit is:
+
+$$\text{Realized PnL} = Q_{\text{pairable}} \times \left[ 1.00 - \left(p_{\text{avg}}^{\text{UP}} + p_{\text{avg}}^{\text{DN}}\right) \right]$$
 
 ---
 

@@ -51,17 +51,32 @@ This specification references and adheres strictly to the official Polymarket CL
 
 ## 2. Station 1: Savitzky–Golay Filter Kernel
 
-To eliminate allocation overhead on every incoming market book update, the convolution filter operates over a statically sized stack buffer.
+To eliminate allocation overhead on every incoming market book update, the convolution filter operates over a statically sized stack buffer. 
+
+> **Algorithmic Latency vs. Causal Boundary Trade-off:**
+> * **Symmetric Weights (`SG_WEIGHTS_SYMMETRIC`):** Evaluated at the central window index ($\tau = 0$). Delivers maximum high-frequency noise suppression with zero distortion of local curvature, but incurs an algorithmic delay of $m = 2$ samples (**200 ms phase lag** on a 100 ms stream) because it estimates the price 2 ticks in the past.
+> * **Causal Boundary Mode:** Evaluates the fitted polynomial at the newest right-hand sample without future data, eliminating phase delay at the cost of higher sensitivity to boundary noise.
 
 ```rust
 // Pre-computed Savitzky-Golay convolution weights for window = 5, degree = 2
-// Weights = [-3, 12, 17, 12, -3] / 35
-const SG_WEIGHTS_M2_D2: [f64; 5] = [
+// Symmetric weights = [-3, 12, 17, 12, -3] / 35
+const SG_WEIGHTS_SYMMETRIC: [f64; 5] = [
     -0.08571428571428572,
      0.34285714285714286,
      0.48571428571428570,
      0.34285714285714286,
     -0.08571428571428572,
+];
+
+// Causal right-endpoint boundary weights for window = 5, degree = 2 (Zero algorithmic lag)
+// Analytical projection at t = 0 over historical samples [-4, -3, -2, -1, 0]:
+// Weights = [3, -8, -7, 12, 31] / 31... normalized endpoint projection
+const SG_WEIGHTS_CAUSAL: [f64; 5] = [
+     0.08571428571428572,
+    -0.14285714285714285,
+    -0.08571428571428572,
+     0.25714285714285710,
+     0.88571428571428570,
 ];
 
 pub struct MidPriceDenoisingBuffer {
@@ -88,16 +103,19 @@ impl MidPriceDenoisingBuffer {
         }
     }
 
+    /// Evaluates smoothed mid-price.
+    /// Set `use_causal = true` for zero-lag quoting, or `false` for optimal noise filtering.
     #[inline(always)]
-    pub fn get_smoothed_mid(&self) -> f64 {
+    pub fn get_smoothed_mid(&self, use_causal: bool) -> f64 {
         if self.count < 5 {
             return self.buffer[(self.index + 4) % 5];
         }
 
+        let weights = if use_causal { &SG_WEIGHTS_CAUSAL } else { &SG_WEIGHTS_SYMMETRIC };
         let mut smoothed = 0.0;
         for i in 0..5 {
             let buffer_idx = (self.index + i) % 5;
-            smoothed += SG_WEIGHTS_M2_D2[i] * self.buffer[buffer_idx];
+            smoothed += weights[i] * self.buffer[buffer_idx];
         }
         smoothed
     }
@@ -287,6 +305,7 @@ Station 8 ensures limit orders are only canceled and replaced when market drift 
 pub enum OrderAction {
     Hold,
     SubmitNew { price: f64, size: f64 },
+    Cancel { order_id: String },
     CancelAndReplace { old_order_id: String, new_price: f64, new_size: f64 },
 }
 
@@ -319,8 +338,12 @@ impl HysteresisGate {
             Some((order_id, active_price, active_size)) => {
                 let displacement = (target_quote.price - active_price).abs();
 
-                // If displacement >= 1 tick, or if size scaling changed significantly
-                if displacement >= self.epsilon || (target_quote.size == 0.0 && active_size > 0.0) {
+                // Explicit cancellation if capital capacity drops to zero
+                if target_quote.size == 0.0 && active_size > 0.0 {
+                    OrderAction::Cancel {
+                        order_id: order_id.to_string(),
+                    }
+                } else if displacement >= self.epsilon {
                     OrderAction::CancelAndReplace {
                         old_order_id: order_id.to_string(),
                         new_price: target_quote.price,
@@ -372,6 +395,10 @@ impl<S> OrderExecutionActor<S> {
 
                 let response = self.client.post_order(order).await?;
                 Ok(Some(response.order_id))
+            }
+            OrderAction::Cancel { order_id } => {
+                self.client.cancel_order(&order_id).await?;
+                Ok(None)
             }
             OrderAction::CancelAndReplace { old_order_id, new_price, new_size } => {
                 // Delete active resting order

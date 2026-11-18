@@ -33,16 +33,20 @@ The bot requires two distinct credential tiers to operate across Polymarket's hy
 | `BASE_ORDER_SIZE_UNITS`| Risk Engine | Base capital allocation per placed Bid | `10.0` (USD) |
 | `ENGINE_GAMMA`| Quantitative | CARA inventory risk aversion parameter ($\gamma$) | `0.15` |
 | `HYSTERESIS_TICK_EPSILON` | Execution Gate | Native tick cancellation deadband ($\epsilon$) | `0.01` (USDC) |
-| `EXECUTION_MODE` | Runtime Mode | Operational execution target | `SIMULATION` or `PRODUCTION` |
+| `DRY_RUN` | Operational Safety | Set to `true` for SIMULATION, `false` for PRODUCTION | `true` or `false` |
 | `GASLESS_RELAYER_ENABLED` | On-Chain Settlement | Enables zero-gas meta-transactions via Relayer | `true` or `false` |
-| `POLYMARKET_RELAYER_URL` | On-Chain Settlement | Endpoint for Polymarket Relayer v2 | Relayer submit URL |
+| `POLYMARKET_RELAYER_URL` | On-Chain Settlement | Endpoint for Polymarket Relayer v2 | `https://relayer-v2.polymarket.com/submit` |
 | `RELAYER_API_KEY` | On-Chain Settlement | Relayer API authorization key | `01a01551-4415-7a54-a382-f09ad02bf050` |
 | `RELAYER_API_KEY_ADDRESS` | On-Chain Settlement | Relayer proxy signer address | `0x832cBcdece2724eA0174c9fbE8D584b75C872163` |
 
-### 2.2 Address Distinction: Signing EOA vs. Proxy Wallet
+### 2.2 Address & Signature Type Architecture
 
-* **Signing EOA (`SIGNER_SECRET_KEY`):** Used exclusively to sign EIP-712 order hashes and authenticate L1/L2 credential derivation. The signing EOA does not hold market shares directly.
-* **Proxy Wallet (`POLYMARKET_PROXY_ADDRESS`):** The smart contract wallet (Gnosis Safe / Polymarket Proxy) holding your USDC collateral and ERC-1155 outcome tokens. All calls to Data API v2 (`GET /v2/positions`, `GET /v2/activity`) and on-chain token merges must specify the proxy address.
+* **External Wallet EOA Setup (`POLYMARKET_SIGNATURE_TYPE=0`):**
+  * When operating with a standard external wallet (MetaMask, Ledger, or private key `SIGNER_SECRET_KEY`), the developer address `0xeE3B778A783510BC833384919F709e3d2fee1624` is simultaneously the **signer**, the **maker**, and the **funder**.
+  * The wallet holds the USDC.e collateral and ERC-1155 outcome tokens directly on Polygon.
+  * In Data API v2 queries (`GET /v2/positions?user=0xeE3B778A783510BC833384919F709e3d2fee1624`), pass your EOA address directly.
+* **Smart Contract Proxy Setup (`POLYMARKET_SIGNATURE_TYPE=1` or `2`):**
+  * Used for Magic Link / Gnosis Safe setups. The `SIGNER_SECRET_KEY` signs EIP-712 orders, while a derived proxy contract holds inventory. In this mode, Data API v2 and `mergePositions` must target `POLYMARKET_PROXY_ADDRESS`.
 
 ---
 
@@ -232,6 +236,8 @@ pub struct PaperTradingEngine {
     pub active_orders: HashMap<String, SimulatedOrder>,
     pub filled_inventory_up: f64,
     pub filled_inventory_dn: f64,
+    pub cost_basis_up: f64,
+    pub cost_basis_dn: f64,
     pub realized_pnl_usdc: f64,
     pub total_pairs_merged: f64,
 }
@@ -242,6 +248,8 @@ impl PaperTradingEngine {
             active_orders: HashMap::new(),
             filled_inventory_up: 0.0,
             filled_inventory_dn: 0.0,
+            cost_basis_up: 0.0,
+            cost_basis_dn: 0.0,
             realized_pnl_usdc: 0.0,
             total_pairs_merged: 0.0,
         }
@@ -267,6 +275,9 @@ impl PaperTradingEngine {
                     volume_ahead: current_book_depth_at_price,
                     created_at: chrono::Utc::now().timestamp_millis(),
                 });
+            },
+            crate::OrderAction::Cancel { order_id } => {
+                self.active_orders.remove(&order_id);
             },
             crate::OrderAction::CancelAndReplace { old_order_id, new_price, new_size } => {
                 self.active_orders.remove(&old_order_id);
@@ -313,28 +324,44 @@ impl PaperTradingEngine {
             self.active_orders.remove(&id);
             if is_up_token {
                 self.filled_inventory_up += size;
+                self.cost_basis_up += size * price;
             } else {
                 self.filled_inventory_dn += size;
+                self.cost_basis_dn += size * price;
             }
 
-            // Trigger simulated atomic merge if pairs exist
+            // Trigger simulated atomic merge if pairable inventory exists
             let pairable = self.filled_inventory_up.min(self.filled_inventory_dn);
             if pairable > 0.0 {
+                // Exact Volume-Weighted Average Price (VWAP) calculation per leg
+                let avg_cost_up = self.cost_basis_up / self.filled_inventory_up;
+                let avg_cost_dn = self.cost_basis_dn / self.filled_inventory_dn;
+                let pair_acquisition_cost = avg_cost_up + avg_cost_dn;
+
+                // Profit calculation: 1.00 USDC collateral payout minus combined purchase costs
+                let profit = pairable * (1.00 - pair_acquisition_cost);
+                self.realized_pnl_usdc += profit;
+
+                // Deduct merged inventory and cost basis proportionally
+                self.cost_basis_up -= pairable * avg_cost_up;
+                self.cost_basis_dn -= pairable * avg_cost_dn;
                 self.filled_inventory_up -= pairable;
                 self.filled_inventory_dn -= pairable;
                 self.total_pairs_merged += pairable;
 
-                // Profit calculation: 1.00 USDC payout minus purchase price
-                let acquisition_cost = price * 2.0; 
-                let profit = pairable * (1.00 - acquisition_cost).max(0.01);
-                self.realized_pnl_usdc += profit;
-
                 println!(
-                    "⚡ [SIMULATED MERGE] Merged {:.0} pairs. Total Merged: {:.0} | Realized PnL: +${:.4} USDC",
-                    pairable, self.total_pairs_merged, self.realized_pnl_usdc
+                    "⚡ [SIMULATED MERGE] Merged {:.0} pairs. (Avg UP: ${:.3}, Avg DN: ${:.3}, Combined: ${:.3}) | Realized PnL: +${:.4} USDC",
+                    pairable, avg_cost_up, avg_cost_dn, pair_acquisition_cost, self.realized_pnl_usdc
                 );
             }
         }
+    }
+
+    /// Mark-to-market valuation for unmerged residual inventory
+    pub fn get_unrealized_pnl(&self, current_mid_up: f64, current_mid_dn: f64) -> f64 {
+        let mtm_up = (self.filled_inventory_up * current_mid_up) - self.cost_basis_up;
+        let mtm_dn = (self.filled_inventory_dn * current_mid_dn) - self.cost_basis_dn;
+        mtm_up + mtm_dn
     }
 }
 ```
