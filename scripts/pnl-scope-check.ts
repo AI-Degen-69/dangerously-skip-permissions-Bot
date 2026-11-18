@@ -61,6 +61,10 @@ assert.equal(withoutRebates.netUsd, 3)
 assert.equal(withoutRebates.netBeforeRebateUsd, 3)
 assert.equal(withoutRebates.rebatesCounted, false)
 assert.equal(withRebates.rebatesCounted, true)
+// Non-default maker rebate rate (e.g. 0.03 for Tier 1).
+const withCustomMaker = computeKpiStats(windows, 1000, undefined, tierRate, true, 0.03)
+assert.equal(withCustomMaker.rebatesUsd, 0.5 * 30 + 0.03 * 150)
+assert.equal(withCustomMaker.netUsd, 3 + (0.5 * 30 + 0.03 * 150))
 // The rebate reaches the win rate too: the losing window earns 12.5 in rebates,
 // so it closes positive and the win count moves.
 assert.equal(withoutRebates.winsCount, 1)
