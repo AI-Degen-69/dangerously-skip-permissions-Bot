@@ -12,7 +12,8 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 
-SCRIPT = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "analyze_mechanics.py"
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+CMD = [sys.executable, "-m", "scripts.leaderboard_traders.mechanics"]
 ENV = {k: v for k, v in os.environ.items() if k != "TRADES_CSV"}
 FIELDS = [
     "Proxy_Wallet", "Timestamp_UTC", "Type", "Market", "Outcome", "Side", "Price",
@@ -35,8 +36,9 @@ def run_at(path, rows):
         writer.writeheader()
         writer.writerows(rows)
     return subprocess.run(
-        [sys.executable, str(SCRIPT), str(path)],
+        [*CMD, str(path)],
         capture_output=True, text=True, encoding="utf-8", env=ENV,
+        cwd=REPO_ROOT,
     )
 
 
@@ -207,19 +209,21 @@ class AnalyzeMechanicsTests(unittest.TestCase):
 
     def test_requires_a_ledger_argument(self):
         result = subprocess.run(
-            [sys.executable, str(SCRIPT)],
+            CMD,
             capture_output=True, text=True, encoding="utf-8", env=ENV,
+            cwd=REPO_ROOT,
         )
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("usage: analyze_mechanics.py", result.stderr)
+        self.assertIn("usage: python -m scripts.leaderboard_traders.mechanics", result.stderr)
 
     def test_missing_ledger_prints_a_message(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             missing = pathlib.Path(temp_dir) / "nope.csv"
             result = subprocess.run(
-                [sys.executable, str(SCRIPT), str(missing)],
+                [*CMD, str(missing)],
                 capture_output=True, text=True, encoding="utf-8", env=ENV,
+                cwd=REPO_ROOT,
             )
 
         self.assertNotEqual(result.returncode, 0)
@@ -231,8 +235,9 @@ class AnalyzeMechanicsTests(unittest.TestCase):
             path = pathlib.Path(temp_dir) / "notes.csv"
             path.write_text("foo,bar\n1,2\n", encoding="utf-8")
             result = subprocess.run(
-                [sys.executable, str(SCRIPT), str(path)],
+                [*CMD, str(path)],
                 capture_output=True, text=True, encoding="utf-8", env=ENV,
+                cwd=REPO_ROOT,
             )
 
         self.assertNotEqual(result.returncode, 0)

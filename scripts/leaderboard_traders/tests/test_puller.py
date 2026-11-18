@@ -1,28 +1,15 @@
 import csv
 import datetime
 import io
-import importlib.util
 import os
 import pathlib
-import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
 import requests
 
-
-SCRIPT_PATH = (
-    pathlib.Path(__file__).resolve().parents[1]
-    / "scripts"
-    / "save-trades-to-csv.py"
-)
-SCRIPT_SPEC = importlib.util.spec_from_file_location(
-    "save_trades_to_csv", SCRIPT_PATH
-)
-SCRIPT = importlib.util.module_from_spec(SCRIPT_SPEC)
-sys.modules[SCRIPT_SPEC.name] = SCRIPT
-SCRIPT_SPEC.loader.exec_module(SCRIPT)
+from scripts.leaderboard_traders import puller as SCRIPT
 
 
 class FakeResponse:
@@ -337,11 +324,12 @@ class SaveTradesToCsvTests(unittest.TestCase):
                 ),
                 patch.object(SCRIPT, "fetch_activity", return_value=[]) as fetch,
                 patch.object(SCRIPT, "save_to_csv") as save,
-                patch.object(SCRIPT, "LEDGERS_DIR", temp_dir),
+                patch.object(SCRIPT, "RAW_ROOT", temp_dir),
+                patch.object(SCRIPT, "DOCS_ROOT", temp_dir),
                 patch(
                     "sys.argv",
                     [
-                        str(SCRIPT_PATH),
+                        "puller",
                         "--user",
                         "Test User",
                         "--date",
@@ -367,11 +355,12 @@ class SaveTradesToCsvTests(unittest.TestCase):
                 ),
                 patch.object(SCRIPT, "fetch_activity", return_value=[]),
                 patch.object(SCRIPT, "save_to_csv") as save,
-                patch.object(SCRIPT, "LEDGERS_DIR", temp_dir),
+                patch.object(SCRIPT, "RAW_ROOT", temp_dir),
+                patch.object(SCRIPT, "DOCS_ROOT", temp_dir),
                 patch(
                     "sys.argv",
                     [
-                        str(SCRIPT_PATH),
+                        "puller",
                         "--user",
                         "Test User",
                         "--date",
@@ -628,10 +617,11 @@ class SaveTradesToCsvTests(unittest.TestCase):
                 ),
                 patch.object(SCRIPT, "probe_oldest_activity", return_value=None),
                 patch.object(SCRIPT, "save_to_csv") as save,
-                patch.object(SCRIPT, "LEDGERS_DIR", temp_dir),
+                patch.object(SCRIPT, "RAW_ROOT", temp_dir),
+                patch.object(SCRIPT, "DOCS_ROOT", temp_dir),
                 patch(
                     "sys.argv",
-                    [str(SCRIPT_PATH), "--user", "Test User", "--date", "max"],
+                    ["puller", "--user", "Test User", "--date", "max"],
                 ),
             ):
                 SCRIPT.main()
@@ -671,10 +661,11 @@ class SaveTradesToCsvTests(unittest.TestCase):
                 ),
                 patch.object(SCRIPT, "probe_oldest_activity", return_value=None),
                 patch.object(SCRIPT, "save_to_csv"),
-                patch.object(SCRIPT, "LEDGERS_DIR", temp_dir),
+                patch.object(SCRIPT, "RAW_ROOT", temp_dir),
+                patch.object(SCRIPT, "DOCS_ROOT", temp_dir),
                 patch(
                     "sys.argv",
-                    [str(SCRIPT_PATH), "--user", "Test User", "--date", "max"],
+                    ["puller", "--user", "Test User", "--date", "max"],
                 ),
             ):
                 SCRIPT.main()
@@ -696,8 +687,9 @@ class SaveTradesToCsvTests(unittest.TestCase):
                     SCRIPT, "fetch_max_activity", return_value=([], False)
                 ) as fetch_max,
                 patch.object(SCRIPT, "save_to_csv"),
-                patch.object(SCRIPT, "LEDGERS_DIR", temp_dir),
-                patch("sys.argv", [str(SCRIPT_PATH), "--user", "Test User"]),
+                patch.object(SCRIPT, "RAW_ROOT", temp_dir),
+                patch.object(SCRIPT, "DOCS_ROOT", temp_dir),
+                patch("sys.argv", ["puller", "--user", "Test User"]),
             ):
                 SCRIPT.main()
 
@@ -717,7 +709,7 @@ class SaveTradesToCsvTests(unittest.TestCase):
             ),
             patch.object(SCRIPT, "fetch_activity") as fetch,
             patch.object(SCRIPT, "fetch_max_activity") as fetch_max,
-            patch("sys.argv", [str(SCRIPT_PATH), "--user", "Test User"]),
+            patch("sys.argv", ["puller", "--user", "Test User"]),
         ):
             with self.assertRaises(SystemExit) as stopped:
                 SCRIPT.main()
@@ -736,7 +728,7 @@ class SaveTradesToCsvTests(unittest.TestCase):
                 return_value=(SCRIPT.USER_ADDRESS, "Test User"),
             ),
             patch.object(SCRIPT, "fetch_activity") as fetch,
-            patch("sys.argv", [str(SCRIPT_PATH), "--user", "Test User"]),
+            patch("sys.argv", ["puller", "--user", "Test User"]),
         ):
             with self.assertRaises(SystemExit) as stopped:
                 SCRIPT.main()

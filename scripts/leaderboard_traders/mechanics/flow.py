@@ -11,7 +11,8 @@ One pass over the ledger answers four questions, printed as plain-text sections:
 
 Usage: python analyze_mechanics.py <ledger.csv>   (or set TRADES_CSV)
 The same Markdown report is saved as `<csv-stem>_mechanics.md` under
-`ledgers/<account>/analysis/` when the CSV sits under `ledgers/<account>/raw/`,
+`docs/leaderboard-traders/ledgers/<account>/analysis/` when the CSV sits under
+`data/leaderboard/<account>/raw/`,
 otherwise next to the CSV.
 
 Fills only: the ledger shows what it filled, never what it quoted. P&L is the
@@ -36,6 +37,11 @@ REDEEM row, so those markets count toward P&L but not toward "first side won".
 Sections 2-4 describe the buy ladder only: sells are priced into the P&L, not
 into the level or sequence tables.
 """
+from .measures import *
+from .report import *
+from scripts.leaderboard_traders.report_kit import analysis_target
+
+
 import csv
 import io
 import os
@@ -45,16 +51,13 @@ import statistics as st
 import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
-
 csv.field_size_limit(10**9)
-
 PATH = (
     next((a for a in sys.argv[1:] if a.lower().endswith(".csv")), None)
     or os.environ.get("TRADES_CSV")
 )
 if not PATH:
-    sys.exit("usage: analyze_mechanics.py <ledger.csv>  (or set TRADES_CSV)")
-
+    sys.exit("usage: python -m scripts.leaderboard_traders.mechanics <ledger.csv>  (or set TRADES_CSV)")
 REQUIRED_COLUMNS = (
     "Timestamp_UTC", "Type", "Market_Slug", "Outcome",
     "Side", "Price", "Shares", "USD_Amount",
@@ -70,132 +73,15 @@ with open(PATH, encoding="utf-8", newline="") as _header_file:
 _missing = [c for c in REQUIRED_COLUMNS if c not in _header]
 if _missing:
     sys.exit(f"{PATH} is not a ledger CSV; missing column(s): {', '.join(_missing)}")
-
-
 def _report_failure(exc_type, exc, traceback):
     """One-line failure instead of a traceback for a bad ledger."""
     print(f"Cannot analyse {PATH}: {exc}", file=sys.stderr)
-
-
 sys.excepthook = _report_failure
-
-
-def secs(iso):
-    return datetime.fromisoformat(iso).replace(tzinfo=timezone.utc).timestamp()
-
-
-def med(v):
-    return st.median(v) if v else float("nan")
-
-
-def bucket(p):
-    for hi, name in ((0.25, "<=0.25"), (0.45, "0.25-0.45"), (0.55, "0.45-0.55"),
-                     (0.75, "0.55-0.75"), (1.01, ">0.75")):
-        if p <= hi:
-            return name
-    return ">0.75"
-
-
 ORDER = ["<=0.25", "0.25-0.45", "0.45-0.55", "0.55-0.75", ">0.75"]
-
-SLUG_RE = re.compile(r"-(\d+)([mh])-(\d+)$")
-
-
-def market_clock(slug):
-    """(open epoch, duration seconds) from a slug like ...-5m-1794000000."""
-    match = SLUG_RE.search(slug)
-    if not match:
-        return None, None
-    size, unit, epoch = match.groups()
-    return int(epoch), int(size) * (3600 if unit == "h" else 60)
-
-
-def wilson(k, n):
-    """95% Wilson score interval for a proportion, so small samples show it."""
-    if n == 0:
-        return float("nan"), float("nan")
-    z = 1.96
-    p = k / n
-    denom = 1 + z * z / n
-    centre = (p + z * z / (2 * n)) / denom
-    half = z * (p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5 / denom
-    return max(0.0, centre - half), min(1.0, centre + half)
-
-
-SECTION_WIDTH = 74
-
-
-class _Indent:
-    """Prefix every printed line with two spaces.
-
-    The puller indents its status blocks; doing it at the stream keeps each
-    analysis table's own column alignment exactly as written.
-    """
-
-    def __init__(self, stream):
-        self.stream = stream
-        self.start = True
-
-    def write(self, data):
-        for ch in data:
-            if self.start and ch != "\n":
-                self.stream.write("  ")
-            self.stream.write(ch)
-            self.start = ch == "\n"
-        return len(data)
-
-    def flush(self):
-        self.stream.flush()
-
-
-def _section(title):
-    """A rule then a Markdown heading, so the terminal and saved report agree."""
-    print()
-    print("=" * SECTION_WIDTH)
-    print(f"\n## {title}\n")
-
-
-def analysis_target(csv_path: str, suffix: str) -> pathlib.Path:
-    """ledgers/<account>/analysis/ for a raw/ ledger, otherwise next to the CSV."""
-    src = pathlib.Path(csv_path).resolve()
-    if src.parent.name == "raw" and src.parent.parent.parent.name == "ledgers":
-        out_dir = src.parent.parent / "analysis"
-    else:
-        out_dir = src.parent
-    out_dir.mkdir(parents=True, exist_ok=True)
-    return out_dir / f"{src.stem}{suffix}"
-
-
-class Tee:
-    """Duplicates stdout into the in-memory report."""
-
-    def __init__(self, *streams):
-        self.streams = streams
-
-    def write(self, data):
-        for stream in self.streams:
-            stream.write(data)
-        return len(data)
-
-    def flush(self):
-        for stream in self.streams:
-            stream.flush()
-
-
-def md_table(headers, rows):
-    """A Markdown table from preformatted cell strings; blank line separates blocks."""
-    print("| " + " | ".join(headers) + " |")
-    print("|" + "|".join("---" for _ in headers) + "|")
-    for row in rows:
-        print("| " + " | ".join(row) + " |")
-
-
 sys.stdout = _Indent(sys.stdout)
 _STDOUT = sys.stdout
 _REPORT = io.StringIO()
 sys.stdout = Tee(_STDOUT, _REPORT)
-
-# ---------------------------------------------------------------- one pass
 mk = {}                                        # slug -> per-market state
 levels = defaultdict(lambda: [0.0, 0.0, 0])    # (slug, px2) -> [shares, $, prints]
 tickets = defaultdict(list)                    # price bucket -> [(shares, $, px)]
@@ -206,8 +92,6 @@ alts = []                                      # side-switch share per market
 file_end = 0.0                                 # latest trade instant in the file
 types = Counter()                              # row count per Type
 bad_rows = 0                                   # rows with an unreadable number or timestamp
-
-
 def m(slug):
     d = mk.get(slug)
     if d is None:
@@ -223,8 +107,6 @@ def m(slug):
             "t_first": [None, None], "t_last": [None, None],
         }
     return d
-
-
 for r in csv.DictReader(open(PATH, encoding="utf-8", newline="")):
     slug = r["Market_Slug"]
     typ = r["Type"]
@@ -288,18 +170,6 @@ for r in csv.DictReader(open(PATH, encoding="utf-8", newline="")):
     lv[0] += sh
     lv[1] += usd
     lv[2] += 1
-
-
-def money(d):
-    """(cash in, cash out, fees) for one market."""
-    cash_in = d["sell_usd"][0] + d["sell_usd"][1] + d["red_usd"][0] + d["red_usd"][1] + d["merge_usd"]
-    return cash_in, d["buy_usd"][0] + d["buy_usd"][1], d["fee"]
-
-
-def held(d):
-    """Shares still held per side after sells, redeems and merges."""
-    return [d["buy_sh"][i] - d["sell_sh"][i] - d["red_sh"][i] - d["merge_sh"] for i in (0, 1)]
-
 for d in mk.values():
     if d["n"] < 4:
         continue
@@ -315,7 +185,6 @@ for d in mk.values():
             switches += 1
     runs.append(run)
     alts.append(switches / (len(sides) - 1))
-
 with_fills = sum(1 for d in mk.values() if d["n"])
 print("# Wallet mechanics - computed sections")
 print(f"Ledger: {PATH}")
@@ -323,9 +192,6 @@ print(f"Markets with fills: {with_fills:,} | with a REDEEM: {len(win):,}")
 print("Rows: %s" % ", ".join(f"{k} {v:,}" for k, v in types.most_common()))
 with_clock = sum(1 for slug in mk if market_clock(slug)[0] is not None)
 print(f"Slugs with a market clock: {with_clock:,} of {len(mk):,}")
-
-# ---------------------------------------------------------------- 1. first leg
-MIN_RATE_N = 5           # below this a rate is printed as n=x, not a percentage
 rows = []
 skipped = Counter()
 for slug, d in mk.items():
@@ -359,7 +225,6 @@ for slug, d in mk.items():
                  "net_low": traded + value_low, "net_high": traded + value_high,
                  "gross_low": traded + value_low + fee, "win": w,
                  "known": value_low == value_high, "tick": side})
-
 known_rows = [r for r in rows if r["known"]]
 unresolved = [r for r in rows if not r["known"]]
 _section("1. FIRST LEG: does price/time predict the outcome?")
@@ -378,64 +243,20 @@ if skipped or bad_rows:
               skipped["still open when the file ends"],
               skipped["no market clock in the slug"],
               skipped["first fill outside the market window"], bad_rows))
-
-
-def rate(k, n):
-    """Percentage with its Wilson 95% CI, or the sample size when it is too small."""
-    if n == 0:
-        return "n/a"
-    if n < MIN_RATE_N:
-        return "n=%d" % n
-    lo, hi = wilson(k, n)
-    return "%5.1f%% [%2.0f-%2.0f]" % (100.0 * k / n, 100 * lo, 100 * hi)
-
-
-def pnl_range(low, high):
-    return "%.0f" % low if abs(high - low) < 0.5 else "%.0f..%.0f" % (low, high)
-
-
-def show(label, sel):
-    """One Markdown row of first-leg statistics, or None for an empty bucket."""
-    if not sel:
-        return None
-    known = [r for r in sel if r["known"]]
-    kcost = sum(r["cost"] for r in known)
-    bps = [r["gross_low"] / r["cost"] * 1e4 for r in known if r["cost"] > 0]
-    net = [r["net_low"] / r["cost"] * 1e4 for r in known if r["cost"] > 0]
-    won = sum(1 for r in known if r["net_low"] > 0)
-    gross_bps = sum(r["gross_low"] for r in known) / kcost * 1e4 if kcost else float("nan")
-    net_bps = sum(r["net_low"] for r in known) / kcost * 1e4 if kcost else float("nan")
-    return (label, f"{len(sel)}", f"{len(known)}", rate(won, len(known)),
-            pnl_range(sum(r["net_low"] for r in sel), sum(r["net_high"] for r in sel)),
-            f"{med(bps):.0f}", f"{gross_bps:.0f}", f"{med(net):.0f}", f"{net_bps:.0f}")
-
-
-def show_group(groups):
-    """Print the buckets that have data as one Markdown table."""
-    md_table(HDR, [row for row in (show(label, sel) for label, sel in groups) if row])
-
-
-HDR = ("bucket", "n", "known", "net>0 [95% CI]", "$pnl", "medBps", "bps", "netMed", "netBps")
 price_b = [("<=0.25", lambda r: r["px"] <= 0.25), ("0.25-0.45", lambda r: 0.25 < r["px"] <= 0.45),
            ("0.45-0.55", lambda r: 0.45 < r["px"] < 0.55), ("0.55-0.75", lambda r: 0.55 <= r["px"] <= 0.75),
            (">0.75", lambda r: r["px"] > 0.75)]
 off_b = [("0-15s", lambda r: r["off"] <= 15), ("16-30s", lambda r: 15 < r["off"] <= 30),
          ("31-60s", lambda r: 30 < r["off"] <= 60), ("61-120s", lambda r: 60 < r["off"] <= 120),
          (">120s", lambda r: r["off"] > 120)]
-
 print("\nBY FIRST-LEG PRICE")
 show_group([("all", rows)] + [(name, [r for r in rows if fn(r)]) for name, fn in price_b])
-
 print("\nBY FIRST-LEG TIME (seconds after open)")
 show_group([(name, [r for r in rows if fn(r)]) for name, fn in off_b])
-
 print("\nTHE TIGHT CASE: first leg >0.75, by time")
 show_group([(name, [r for r in rows if r["px"] > 0.75 and fn(r)]) for name, fn in off_b])
-
 print("\nTHE LATE CASE: first leg after 60s, by price")
 show_group([(name, [r for r in rows if r["off"] > 60 and fn(r)]) for name, fn in price_b])
-
-# ---------------------------------------------------------------- 2. mechanics
 firsts = []
 for slug, d in mk.items():
     a, b = d["first"]
@@ -447,16 +268,13 @@ for slug, d in mk.items():
         p1, p2, i = b[1], a[1], 1
     firsts.append({"p1": p1, "p2": p2, "lag": abs(a[0] - b[0]), "side": i,
                    "first_ts": min(a[0], b[0]), "win": win.get(slug)})
-
 _section("2. MECHANICS: first-leg decay, second-leg pricing, sizing")
 known_out = sum(1 for r in firsts if r["win"])
 print("markets with both sides bought:", len(firsts),
       " (outcome known for %d, unknown for %d)" % (known_out, len(firsts) - known_out))
-
 by = defaultdict(list)
 for r in firsts:
     by[bucket(r["p1"])].append(r)
-
 print("\n1) WHY THE FIRST LEG LANDS FAR FROM 0.50")
 trows = []
 for k in ORDER:
@@ -469,7 +287,6 @@ for k in ORDER:
     trows.append((k, str(len(sel)), str(len(judged)), f"{p1:.3f}", f"{p2:.3f}",
                   f"{total:.3f}", rate(won, len(judged))))
 md_table(("bucket", "n", "known", "p1", "p2", "sum", "first side won"), trows)
-
 print("\n2) THE SECOND LEG: target pair cost, or the live book?")
 trows = []
 for k in ORDER:
@@ -480,7 +297,6 @@ for k in ORDER:
     trows.append((k, str(len(sel)), f"{lag:.0f}", f"{med(sums):.3f}",
                   f"{q(0.25):.3f}", f"{q(0.75):.3f}"))
 md_table(("p1", "n", "lag(s)", "p1+p2", "p25", "p75"), trows)
-
 print("\n   pair sum by how long the second leg waited")
 trows = []
 for name, lo, hi in (("0-1s", 0, 1), ("2-5s", 2, 5), ("6-15s", 6, 15), ("16-30s", 16, 30),
@@ -490,7 +306,6 @@ for name, lo, hi in (("0-1s", 0, 1), ("2-5s", 2, 5), ("6-15s", 6, 15), ("16-30s"
     q = lambda x: sums[min(len(sums) - 1, int(x * len(sums)))] if sums else float("nan")
     trows.append((name, str(len(sel)), f"{med(sums):.3f}", f"{q(0.25):.3f}", f"{q(0.75):.3f}"))
 md_table(("lag", "n", "p1+p2", "p25", "p75"), trows)
-
 print("\n   spread of the pair sum")
 common = Counter(round((r["p1"] + r["p2"]) * 100) for r in firsts)
 print("   most common p1+p2 in cents:", common.most_common(5))
@@ -503,7 +318,6 @@ if firsts:
     print("   IQR of p1+p2: %.3f  sd: %.3f"
           % (q(0.75) - q(0.25),
              st.pstdev(sums) if len(sums) > 1 else 0.0))
-
 print("\n3) SIZING: fixed shares or fixed notional?")
 trows = []
 omitted = 0
@@ -522,26 +336,11 @@ for b in range(20):
 md_table(("price", "fills", "medSh", "p25Sh", "p75Sh", "med$", "medPx"), trows)
 if omitted:
     print("   (%d fills in price buckets with <200 fills not shown)" % omitted)
-
 counts = [d["n"] for d in mk.values()]
 print("\n   fills per market: median %d  mean %.1f" % (
     int(med(counts)) if counts else 0, st.mean(counts) if counts else 0.0))
 print("   cents-grid check (price mod 0.05, in cents):", price_mod.most_common(6))
-
-# ---------------------------------------------------------------- 3. levels
 _section("3. LEVELS: clip size per (market, price) level")
-
-
-def line(label, xs):
-    """One Markdown row of a distribution, or a no-data row."""
-    if not xs:
-        return (label, "0", "-", "-", "-", "-", "-", "-", "-")
-    xs = sorted(xs)
-    q = lambda x: xs[min(len(xs) - 1, int(x * len(xs)))]
-    return (label, str(len(xs)), f"{xs[0]:.2f}", f"{q(.10):.2f}", f"{q(.25):.2f}",
-            f"{q(.5):.2f}", f"{q(.75):.2f}", f"{q(.90):.2f}", f"{xs[-1]:.2f}")
-
-
 LINE_HDR = ("scope", "n", "min", "p10", "p25", "p50", "p75", "p90", "max")
 print("\nLEVEL (one price inside one market = one resting order)")
 md_table(LINE_HDR, [line("shares per level", [lv[0] for lv in levels.values()]),
@@ -557,8 +356,6 @@ md_table(LINE_HDR, [
     line("levels per market", list(levels_per_market.values())),
     line("total fills per market", [d["n"] for d in mk.values()]),
 ])
-
-# Is each level filled in one print, or built from many?
 level_n = [lv[2] for lv in levels.values()]
 multi = [n for n in level_n if n > 1]
 if level_n:
@@ -566,8 +363,6 @@ if level_n:
           % (len(multi), len(level_n), 100.0 * len(multi) / len(level_n)))
     print("prints per level: mean %.1f  p90 %d  max %d"
           % (st.mean(level_n), sorted(level_n)[int(.9 * len(level_n))], max(level_n)))
-
-# Level size vs price: does it buy more shares higher up, or fewer?
 print("\nmedian level size by price band")
 byprice = defaultdict(list)
 for (s, p), lv in levels.items():
@@ -584,8 +379,6 @@ for b in range(0, 20, 2):
 md_table(("price", "n", "med sh", "mean sh"), trows)
 if omitted:
     print("  (%d levels in price bands with <=200 levels not shown)" % omitted)
-
-# ---------------------------------------------------------------- 4. sequence
 _section("4. SEQUENCE: one side then the other, or both ladders at once?")
 n_markets = sum(1 for d in mk.values() if d["n"] >= 4)
 small = sum(1 for d in mk.values() if 0 < d["n"] < 4)
@@ -601,7 +394,6 @@ for d in mk.values():
         if max(tu, td) <= min(d["t_last"][0], d["t_last"][1]):
             overlap += 1
         gaps.append(abs(tu - td))
-
 print("markets with >=4 fills:", n_markets)
 print("markets with 1-3 fills not analysed:", small)
 print("two-sided among the analysed:", two_sided)
@@ -610,14 +402,12 @@ print("mean same-side run length: %.2f  (1.0 = perfect alternation, big = one si
 print("median share of consecutive pairs that switch side: %.0f%%" % (100 * st.median(alts) if alts else 0.0))
 print("both sides bought inside the same time span: %.1f%%"
       % (100.0 * overlap / two_sided if two_sided else 0.0))
-
 gaps.sort()
 if gaps:
     q = lambda x: gaps[min(len(gaps) - 1, int(x * len(gaps)))]
     print("\ngap between the two sides' FIRST fills (seconds):"
           "  p10 %.0f  p25 %.0f  p50 %.0f  p75 %.0f  p90 %.0f"
           % (q(.10), q(.25), q(.5), q(.75), q(.90)))
-
 sys.stdout = _STDOUT
 target = analysis_target(PATH, "_mechanics.md")
 tmp = target.with_name(target.name + ".tmp")

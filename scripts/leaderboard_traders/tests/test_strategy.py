@@ -1,21 +1,11 @@
 import contextlib
-import importlib.util
 import io
 import pathlib
-import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
-SCRIPT_PATH = (
-    pathlib.Path(__file__).resolve().parents[1]
-    / "scripts"
-    / "analyze_strategy.py"
-)
-SPEC = importlib.util.spec_from_file_location("analyze_strategy", SCRIPT_PATH)
-SCRIPT = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = SCRIPT
-SPEC.loader.exec_module(SCRIPT)
+from scripts.leaderboard_traders import strategy as SCRIPT
 
 
 class SplitThirdsTests(unittest.TestCase):

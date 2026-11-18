@@ -25,4 +25,3 @@ bot/ab_test_state.json
 data/*
 !data/config.json
 /ledgers/
-docs/leaderboard-traders/ledgers/*/raw/
