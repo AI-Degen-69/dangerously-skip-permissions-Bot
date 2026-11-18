@@ -9,7 +9,7 @@ One pass over the ledger answers four questions, printed as plain-text sections:
   3. LEVELS     how much goes on each price level, and is the clip one size?
   4. SEQUENCE   one side then the other, or both ladders at once?
 
-Usage: python analyze_mechanics.py <ledger.csv>   (or set TRADES_CSV)
+Usage: python -m scripts.leaderboard_traders.mechanics <ledger.csv>   (or set TRADES_CSV)
 The same Markdown report is saved as `<csv-stem>_mechanics.md` under
 `docs/leaderboard-traders/ledgers/<account>/analysis/` when the CSV sits under
 `data/leaderboard/<account>/raw/`,
@@ -66,7 +66,7 @@ if not os.path.isfile(PATH):
     sys.exit(
         f"Ledger not found: {PATH}\n"
         "Pass a ledger .csv path, set TRADES_CSV, or pull one first with "
-        "save-trades-to-csv.py."
+        "python -m scripts.leaderboard_traders.puller."
     )
 with open(PATH, encoding="utf-8", newline="") as _header_file:
     _header = next(csv.reader(_header_file), [])
