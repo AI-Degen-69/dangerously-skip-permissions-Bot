@@ -27,6 +27,10 @@ param (
     [switch]$NoBrowser,
 
     [Parameter()]
+    [Alias("Open")]
+    [switch]$OpenBrowser,
+
+    [Parameter()]
     [switch]$Npm,
 
     [Parameter()]
@@ -132,8 +136,36 @@ function Get-ChromePath {
     return $null
 }
 
-function Open-DashboardBrowser {
+function Test-DashboardBrowserConnected {
+    for ($i = 0; $i -lt 3; $i++) {
+        $conns = Get-NetTCPConnection -LocalPort $UI_PORT -State Established -ErrorAction SilentlyContinue
+        if ($conns) {
+            foreach ($c in $conns) {
+                $remoteConn = Get-NetTCPConnection -LocalPort $c.RemotePort -State Established -ErrorAction SilentlyContinue | Select-Object -First 1
+                $clientPid = if ($remoteConn -and $remoteConn.OwningProcess -gt 0) { $remoteConn.OwningProcess } else { $c.OwningProcess }
+                $p = Get-Process -Id $clientPid -ErrorAction SilentlyContinue
+                if ($p -and $p.ProcessName -in @("chrome", "msedge", "firefox", "brave", "opera", "vivaldi")) {
+                    return $true
+                }
+            }
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    return $false
+}
+
+function Open-DashboardBrowser([switch]$ForceOpen) {
     if ($NoBrowser) { return }
+
+    if (-not $ForceOpen -and (Test-DashboardBrowserConnected)) {
+        Write-ProfileInfo -Message "Dashboard already open in browser" -Detail "Reusing active tab ($UI_URL)"
+        try {
+            $wshell = New-Object -ComObject WScript.Shell
+            [void]$wshell.AppActivate("Up/Down Desk")
+        } catch {}
+        return
+    }
+
     $chrome = Get-ChromePath
     Write-ProfileInfo -Message "Opening dashboard in browser" -Detail $UI_URL
     if ($chrome) {
@@ -281,7 +313,8 @@ function Stop-Services {
         $proc5173 = Get-CimInstance Win32_Process -Filter "ProcessId = $p5173" -ErrorAction SilentlyContinue
         if ($proc5173) {
             $cmd = $proc5173.CommandLine
-            if ($cmd -like "*$ProjectRoot*" -or $cmd -like "*vite*" -or $cmd -like "*up-down-desk*") {
+            $isDeskUi = ($cmd -like "*$ProjectRoot*" -or $cmd -like "*vite*" -or $cmd -like "*up-down-desk*" -or $proc5173.Name -in @("node.exe", "bun.exe"))
+            if ($isDeskUi) {
                 [void]$targetPids.Add($p5173)
             } else {
                 Write-ProfileWarning -Message "Port $UI_PORT occupied by external process" -Detail "PID $p5173 ($($proc5173.Name))"
@@ -295,7 +328,8 @@ function Stop-Services {
         $proc8789 = Get-CimInstance Win32_Process -Filter "ProcessId = $p8789" -ErrorAction SilentlyContinue
         if ($proc8789) {
             $cmd = $proc8789.CommandLine
-            if ($cmd -like "*$ProjectRoot*" -or $cmd -like "*bot.api*" -or $cmd -like "*bot\api*") {
+            $isDeskApi = ($cmd -like "*$ProjectRoot*" -or $cmd -like "*bot.api*" -or $cmd -like "*bot\api*" -or $proc8789.Name -eq "python.exe")
+            if ($isDeskApi) {
                 [void]$targetPids.Add($p8789)
             } else {
                 Write-ProfileWarning -Message "Port $API_PORT occupied by external process" -Detail "PID $p8789 ($($proc8789.Name))"
@@ -376,7 +410,7 @@ function Stop-Services {
 }
 
 # 5. Start Logic
-function Start-Services {
+function Start-Services([switch]$SkipBrowser) {
     $apiHealth = Test-ApiHealth
     $uiHealth = Test-UiHealth
 
@@ -384,7 +418,9 @@ function Start-Services {
     if (-not $Force -and $apiHealth.Healthy -and $uiHealth) {
         Write-ProfileSuccess -Message "Up/Down Desk is already running and healthy"
         Show-StatusTable
-        Open-DashboardBrowser
+        if ($OpenBrowser) {
+            Open-DashboardBrowser -ForceOpen
+        }
         return $true
     }
 
@@ -479,7 +515,9 @@ function Start-Services {
     }
 
     Show-StatusTable
-    Open-DashboardBrowser
+    if (-not $SkipBrowser -and -not $NoBrowser) {
+        Open-DashboardBrowser
+    }
     return $true
 }
 
@@ -575,10 +613,18 @@ switch ($Command.ToLower()) {
     }
     "restart" {
         Write-ProfileWarning -Message "Restarting Up/Down Desk..."
+        $wasRunning = (Test-PortOccupied $UI_PORT) -or (Test-PortOccupied $API_PORT)
         $stopOk = Stop-Services
         if (-not $stopOk) { exit 1 }
-        $startOk = Start-Services
+
+        # If services were already running, existing browser tab will auto-refresh via Vite.
+        # Skip opening duplicate tab unless user explicitly passed -OpenBrowser / -Open.
+        $skip = $wasRunning -and -not $OpenBrowser
+        $startOk = Start-Services -SkipBrowser:$skip
         if (-not $startOk) { exit 1 }
+        if ($skip) {
+            Write-ProfileInfo -Message "Existing browser tab retained" -Detail "Vite will auto-refresh at $UI_URL"
+        }
     }
     "status" {
         Show-StatusTable
@@ -587,7 +633,7 @@ switch ($Command.ToLower()) {
         Show-Logs
     }
     "open" {
-        Open-DashboardBrowser
+        Open-DashboardBrowser -ForceOpen
     }
     "doctor" {
         Write-ProfileSection -Title "Up/Down Desk Doctor" -Style Info
