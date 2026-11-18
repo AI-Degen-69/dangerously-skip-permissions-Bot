@@ -128,7 +128,7 @@ from .sections import (
 __all__ = [
     "DEFAULT_PATH", "FEE_RATE", "PATH", "REQUIRED_COLUMNS",
     "SECTION_WIDTH", "Tee", "analysis_target", "build_markets",
-    "load", "main", "md", "q", "run",
+    "load", "main", "md", "q", "run", "_kv", "_section",
     "section_a", "section_b", "section_c", "section_d",
     "section_e", "section_f", "section_g", "section_h",
     "section_i", "split_thirds",

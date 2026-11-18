@@ -1,4 +1,4 @@
-"""End-to-end checks for analyze_mechanics.py on small synthetic ledgers.
+"""End-to-end checks for scripts.leaderboard_traders.mechanics on small synthetic ledgers.
 
 The script is a top-level program, so each case runs it as a subprocess against a
 temporary CSV and asserts on the printed summary lines.
