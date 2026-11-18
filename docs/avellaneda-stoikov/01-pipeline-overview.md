@@ -140,9 +140,9 @@ flowchart TD
   *Covers environment configuration, dynamic 5-minute contract discovery and rollover, paper-trading matching engine, and end-to-end `main.rs` bootstrap.*
 * 📚 **Developer Bibliography & Resource Hub:** [06-developer-bibliography-and-resources.md](./06-developer-bibliography-and-resources.md)  
   *Covers the external-wallet `.env` template, repository index, contract addresses, and core references.*
-* 🏛️ **Full Technical Specification:** [avellaneda-stoikov-engine-architecture.md](./avellaneda-stoikov-engine-architecture.md)  
-  *Covers the complete standalone technical specification, equations, and Rust actor state model.*
-* 🇮🇱 **Hebrew Architecture Overview:** [ארכיטקטורה.md](./ארכיטקטורה.md)  
-  *Covers the full Hebrew specification aligned with the 8-station pipeline and execution lifecycle.*
-* 🎨 **Color-Coded Math Reference:** [The-Math-for-Microstructure-Calibrated-Inventory-Risk-Engine.md](./The-Math-for-Microstructure-Calibrated-Inventory-Risk-Engine.md)  
-  *Covers the annotated 8-station equations with input/output breakdowns and semantic color coding.*
+* 🏛️ **Centralized Knowledge Graph:** [Library Master Map of Content](../../../Library/00-graph/README.md)  
+  *Covers the ontology, manifest, mathematical foundations, and official exchange protocol specs.*
+* 📈 **Calibration Engine Specification:** [Microstructure Calibration Engine](../../../Library/01-foundations-and-models/microstructure-calibration-engine.md)  
+  *Covers the empirical 8-station calibration engine, Savitzky-Golay filtering, and Poisson arrival intensity.*
+* 💰 **Binary Spread Capture Strategy:** [Binary Spread Capture](../../../Library/02-strategies-and-alphas/binary-spread-capture.md)  
+  *Covers sub-$1.00 complementary pairing, fee barrier accounting, and hold-to-redeem economics.*

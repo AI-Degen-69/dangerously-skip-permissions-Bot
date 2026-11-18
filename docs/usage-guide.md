@@ -148,7 +148,7 @@ Select the active strategy setup and adjust its parameters. `STRATEGY_SETUPS` in
 - **Microstructure ladder & dip curve:** `levelsPerSide` and `levelSpacing` (off-touch levels, e.g. 1 level at −1¢), `clipSchedule` (e.g. 5 shares flat), `wholeLadderClips`, `dipCurve` (`hump` or `{lo, hi, sharesLo, sharesHi}` anchors), plus `minFillPrice` / `maxFillPrice`, `minSpacingMoveSec`, `minSpacingStaticSec`, and `staticRequoteSec`.
 - **Pair-cost caps:** `targetPairCost` (~$0.960), `maxPairCost` (~$0.990) and `rescuePairCostMax` (~$1.02, the late-rescue ceiling). A pair leg opens only when the opposite ask completes it under the applicable cap.
 - **Unhedged inventory caps:** `maxUnhedgedShares` and `maxUnhedgedUsd` bound the light-side lead between hedges.
-- **`hydrogen-v1.9` three-layer imbalance defense** (documented in the setup's highlights): **Layer 1** single 5-share maker probe in 42–49¢ with T+150s / 40 sh cutoff; **Layer 2** immediate sub-par clamped maker hedging (≤$0.990) with strict resting order hygiene on lead > 0.5 sh; and **Layer 3** patient 20s delayed taker bailout (marginal pair ≥$1.07 & ask ≤72¢) with single-window freeze latch to eliminate terminal breakout tax.
+- **Three-layer imbalance defense** (configured across setup presets): **Layer 1** maker probe in 42–49¢ with time/share cutoffs; **Layer 2** immediate sub-par clamped maker hedging (≤$0.990) with strict resting order hygiene on lead > 0.5 sh; and **Layer 3** delayed taker bailout (marginal pair ≥$1.07 & ask ≤72¢) with single-window freeze latch to eliminate terminal breakout tax.
 - **Timing & risk:** `startAfterOpenSec`, `stopBeforeCloseSec`, `sweepBeforeCloseSec`, `bankrollUsd`, `dailyLossCapUsd`, `maxFillsPerWindow`, and `maxConcurrentPositions` (fixed at 1).
 - **Emergency Kill-Switch Card:** immediate red button to freeze all new orders.
 
@@ -304,3 +304,13 @@ python -X utf8 -m pytest bot/tests -q
 # Run frontend typecheck:
 bun run typecheck
 ```
+
+---
+
+## 4. Cross-Document Navigation
+
+* 🚀 **Runbook & Operations:** [runbook.md](./runbook.md) — operational loop, tape verification, kill-switch drill, paper redemption.
+* 🏛️ **System Architecture:** [architecture.md](./architecture.md) — engine/UI design, data flow, and package layout.
+* 📐 **Quantitative Foundations:** [avellaneda-stoikov/01-pipeline-overview.md](./avellaneda-stoikov/01-pipeline-overview.md) — 8-station pipeline, CTF settlement, and microstructure math.
+* 🔍 **Trader Reverse-Engineering:** [leaderboard-traders/README.md](./leaderboard-traders/README.md) — target wallet trade pulls and strategy analysis.
+* 🏛️ **Centralized Knowledge Graph:** [Library Master Map of Content](../../Library/00-graph/README.md) — formal ontology, protocol specs, contracts, fee curves.

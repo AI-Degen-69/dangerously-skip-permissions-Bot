@@ -162,19 +162,33 @@ between machines.
 
 Health check (API and loop stopped):
 
-```sh
+**PowerShell (Windows):**
+```powershell
 # 0. Capture the replay baseline
-python -m bot.replay --runs all --rule v2.6 > /tmp/replay-before.txt
-du -sb data 2>/dev/null; find data/runs -name "*.json" | wc -l
+python -m bot.replay --runs all --rule v2.6 | Out-File -FilePath "$env:TEMP/replay-before.txt" -Encoding utf8
+(Get-ChildItem -Path "data/runs" -Filter "*.json" -Recurse).Count
+
 # 1. Check API and loop writes land in the layout
-python -m bot.api &  # then: check data/loop.log, data/loop.pid
-python -m bot.live_paper --once  # then: check data/runs/<run_id>/state.json + events.jsonl
-# 2. Verify a settled run, clear the cache and compare replay results
+Start-Process python -ArgumentList "-m bot.api"
+python -m bot.live_paper --once
+
+# 2. Verify a settled run, clear cache, and compare replay results
 python bot/verify_run.py --dry-run
-rm -rf scratch/replay_cache /tmp/replay_cache
-python -m bot.replay --runs all --rule v2.6 > /tmp/replay-after.txt
-diff /tmp/replay-before.txt /tmp/replay-after.txt
-# 3. With the API and loop stopped, run both test commands
-python -m unittest discover -s bot/tests
+Remove-Item -Path "scratch/replay_cache" -Recurse -Force -ErrorAction SilentlyContinue
+python -m bot.replay --runs all --rule v2.6 | Out-File -FilePath "$env:TEMP/replay-after.txt" -Encoding utf8
+Compare-Object (Get-Content "$env:TEMP/replay-before.txt") (Get-Content "$env:TEMP/replay-after.txt")
+
+# 3. With API and loop stopped, run verification suites
+python -X utf8 -m pytest bot/tests -q
 bun run typecheck
 ```
+
+---
+
+## Cross-Document Navigation
+
+* 🏛️ **System Architecture:** [architecture.md](./architecture.md) — engine/UI design, data flow, and package layout.
+* 🖥️ **Desk User Guide:** [usage-guide.md](./usage-guide.md) — 6-page desk manual (Dashboard, Live, A/B Lab, Config, Strategy, Settings).
+* 📐 **Quantitative Foundations:** [avellaneda-stoikov/01-pipeline-overview.md](./avellaneda-stoikov/01-pipeline-overview.md) — 8-station pipeline, CTF settlement, and microstructure math.
+* 🔍 **Trader Reverse-Engineering:** [leaderboard-traders/README.md](./leaderboard-traders/README.md) — target wallet trade pulls and strategy analysis.
+* 🏛️ **Centralized Knowledge Graph:** [Library Master Map of Content](../../Library/00-graph/README.md) — formal ontology, protocol specs, contracts, fee curves.

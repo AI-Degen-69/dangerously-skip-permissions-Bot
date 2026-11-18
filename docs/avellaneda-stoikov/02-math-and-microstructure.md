@@ -202,4 +202,5 @@ $$\epsilon = 0.01\text{ USDC}$$
 * ⛓️ **CTF Smart Contract Settlement:** [04-ctf-settlement-lifecycle.md](./04-ctf-settlement-lifecycle.md)
 * 🚀 **Operational Runbook & Telemetry:** [05-operational-bootstrap-and-runbook.md](./05-operational-bootstrap-and-runbook.md)
 * 📚 **Developer Bibliography & Environment:** [06-developer-bibliography-and-resources.md](./06-developer-bibliography-and-resources.md)
-* 🎨 **Color-Coded Math Reference:** [The-Math-for-Microstructure-Calibrated-Inventory-Risk-Engine.md](./The-Math-for-Microstructure-Calibrated-Inventory-Risk-Engine.md)
+* 📈 **Empirical Calibration Engine:** [Microstructure Calibration Engine](../../../Library/01-foundations-and-models/microstructure-calibration-engine.md)
+* 🏛️ **Knowledge Graph Map:** [Library Master Map of Content](../../../Library/00-graph/README.md)

@@ -1,5 +1,8 @@
 # Polymarket Rust Engine Implementation & Verified API Reference
 
+> [!NOTE]
+> **Runtime Scope:** This document defines the low-latency Rust actor model and official Polymarket v2 API endpoints. The active execution desk in this repository (`dangerously-skip-permissions-bot`) is implemented in **Python 3.12** (`bot/`) and **React/Vite** (`src/app/`). For the canonical Rust production architecture, see [Library Rust Actor Pipeline Architecture](../../../Library/04-execution-and-infrastructure/rust-actor-pipeline-architecture.md).
+
 ## 1. Official Polymarket API v2 Specification
 
 This specification references and adheres strictly to the official Polymarket CLOB and Data API v2 protocols as documented in Polymarket's engineering references and the official `rs-clob-client-v2` (`polymarket_client_sdk_v2`) repository.

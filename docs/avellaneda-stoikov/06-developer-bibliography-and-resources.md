@@ -4,45 +4,46 @@ This document serves as the master bibliography, repository index, and configura
 
 ---
 
-## 1. Production Environment Template (External Wallet / EOA)
+## 1. Production Environment Template (Gnosis Safe Proxy Setup)
 
-Configure this environment file in your project root (`.env`). It is pre-parameterized for direct EOA interaction (Signature Type `0`), pointing to Polygon Mainnet (Chain ID `137`).
+Configure this environment file in your project root (`.env`). It is pre-parameterized for the production proxy wallet architecture matching `spread-hunter/.env`, pointing to Polygon Mainnet (Chain ID `137`).
 
 ```bash
 # ==============================================================================
 # POLYMARKET 5-MINUTE HFT BOT - ENVIRONMENT CONFIGURATION
 # ==============================================================================
-# Mode: Direct External Wallet (EOA / MetaMask)
-# Developer Public Address: 0xeE3B778A783510BC833384919F709e3d2fee1624
+# Mode: Smart Contract Proxy Funder (Gnosis Safe / Proxy)
+# Developer Signing EOA: 0x832cBcdece2724eA0174c9fbE8D584b75C872163
+# Proxy Funder Address:  0xeE3B778A783510BC833384919F709e3d2fee1624
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
 # 1. WALLET & AUTHENTICATION (LAYER 1)
 # ------------------------------------------------------------------------------
-# Your public Ethereum/Polygon address (External Wallet EOA)
-POLYMARKET_PUBLIC_ADDRESS="0xeE3B778A783510BC833384919F709e3d2fee1624"
+# Your public Ethereum/Polygon signing address (EOA that signs EIP-712 orders)
+POLYMARKET_SIGNER_ADDRESS="0x832cBcdece2724eA0174c9fbE8D584b75C872163"
 
-# Private key of the external wallet (64-character hex string)
-# Used by Alloy / Ethers-rs to generate EIP-712 order signatures
-SIGNER_SECRET_KEY="0x_YOUR_EXTERNAL_WALLET_PRIVATE_KEY_HEX_HERE"
+# Private key of the signing EOA (64-character hex string)
+# Used to generate EIP-712 order signatures and CLOB auth headers
+SIGNER_SECRET_KEY="0x_YOUR_SIGNING_EOA_PRIVATE_KEY_HEX_HERE"
 
-# Signature Type for polymarket_client_sdk_v2:
-# 0 = EOA (Standard external wallet: MetaMask, Coinbase Wallet, Ledger)
+# Signature Type:
+# 0 = EOA (Standard external wallet)
 # 1 = POLY_PROXY (Legacy Polymarket Proxy)
-# 2 = POLY_GNOSIS_SAFE (Magic Link / Email onboarding)
-# For this address, set strictly to 0:
-POLYMARKET_SIGNATURE_TYPE=0
+# 2 = POLY_GNOSIS_SAFE (TS / Rust client)
+# 3 = POLY_GNOSIS_SAFE (Python py-clob-client)
+# For this account, set strictly to 3 (Python) or 2 (TS/Rust):
+POLYMARKET_SIGNATURE_TYPE=3
 
-# In an EOA setup, your proxy address for Data API v2 queries is your EOA address
+# The Gnosis Safe proxy contract holding USDC collateral and outcome tokens
 POLYMARKET_PROXY_ADDRESS="0xeE3B778A783510BC833384919F709e3d2fee1624"
 
 # ------------------------------------------------------------------------------
 # 2. CLOB API CREDENTIALS (LAYER 2)
 # ------------------------------------------------------------------------------
-# Derived via L1 wallet signature (client.derive_api_key() in rs-clob-client-v2)
-CLOB_API_KEY="YOUR_CLOB_API_KEY_UUID"
-CLOB_API_SECRET="YOUR_CLOB_API_SECRET_BASE64"
-CLOB_API_PASSPHRASE="YOUR_CLOB_PASSPHRASE"
+CLOB_API_KEY="bb0aadb2-66be-38e0-6698-c818b397f5f5"
+CLOB_API_SECRET="bEU_Q11fSDZVZDBZmAHpwSUeZUji2mXcEtlghUzqSlI="
+CLOB_API_PASSPHRASE="b77093219c6413195975a139f448a0fa337c6a26fba5f8054eab65d179fb16db"
 
 # ------------------------------------------------------------------------------
 # 3. GASLESS RELAYER (ZERO POL REQUIRED FOR ON-CHAIN MERGES & APPROVALS)
@@ -161,21 +162,20 @@ To provide direct source definitions and compiler-verified examples for your cod
 | **Bridge API** | Cross-Chain Deposits & Withdrawals | Public | Collateral bridging across EVM chains (`POST /deposit`, `GET /supported-assets`). |
 | **CLOB Market Streams** | Polymarket WebSocket Subscription Feeds | Public / Auth | WebSocket feed for Level-2 book deltas (`book`), price changes (`price_change`), and user fills (`orders`). |
 | **PolyBolt Live Stream** | High-throughput live order book stream | Public | Low-latency real-time market data streaming channel. |
-| **Trading Fees & Rebates** | [Polymarket Trading Fees](https://docs.polymarket.com/trading/fees) · [Library Fee Spec](../../../Library/03-exchanges-and-protocols/polymarket/05-fees-and-maker-rebates.md) | Public | Taker fee coefficient is 0.05 for BTC 5m/15m and 0.01 for other crypto. Makers pay 0% platform fees and earn 3%–15% maker rebates via 30-day weighted volume tiers ($wV$). |
+| **Trading Fees & Rebates** | [Polymarket Trading Fees](https://docs.polymarket.com/trading/fees) · [Library Fee Spec](../../../Library/03-exchanges-and-protocols/polymarket/fees-and-maker-rebates.md) | Public | Taker fee coefficient is 0.05 for BTC 5m/15m and 0.01 for other crypto. Makers pay 0% platform fees and earn 3%–15% maker rebates via 30-day weighted volume tiers ($wV$). |
 
 ---
 
 ## 4. Smart Contracts on Polygon Mainnet (Chain ID: 137)
 
-These deployed smart contracts govern order matching and collateral redemption on Polygon.
+These deployed smart contracts govern order matching and collateral redemption on Polygon. Full details in [Polymarket On-Chain CTF Contracts](../../../Library/03-exchanges-and-protocols/polymarket/onchain-ctf-contracts.md).
 
-* **Conditional Token Framework (CTF):** `0x4D97DCdE725A8964c18F938002996A407217E759`  
+* **Conditional Token Framework (CTF):** `0x4D97DCd97eC945f40cF65F87097ACe5EA0476045`  
   *Interface:* `mergePositions(collateralToken, parentCollectionId, conditionId, partition, amount)`.  
   *Function:* Merges matching quantities of UP and DOWN ERC-1155 tokens to redeem underlying USDC.e collateral at a guaranteed 1:1 ratio.
-* **CTF Exchange v2:** `0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E`  
-  *Function:* Operator-matched CLOB settlement engine executing signed EIP-712 limit orders.
-* **Collateral Token (Bridged USDC.e):** `0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174`  
-  *Decimals:* 6. Standard collateral token used across all CTF binary prediction markets on Polymarket.
+* **CTF Exchange (Proxy):** `0xE111180000d2663C0091e4f400237545B87B996B`  
+  *Function:* Primary operator-matched CLOB settlement engine executing signed EIP-712 limit orders.
+* **Collateral Tokens:** Native USDC (`0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359`), Bridged USDC.e (`0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174`), and CTF pUSD Proxy (`0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB`).
 
 ---
 

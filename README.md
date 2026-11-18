@@ -49,9 +49,10 @@ python -m bot.live_paper --slot <epoch>
 `bot/live_paper` runs the window lifecycle (pre-open book discovery, oracle
 anchor, maker dip grid + lagging-leg equalizer, late-window resolution snipe,
 settlement lock); `bot/executor` holds the ladder, pair-cost gates and maker
-rebalance; `bot/constants.py` is the versioned strategy registry
-(`dsp-v2.x` / `hydrogen-v1.x` → `hydrogen-v2.0`, the current default in
-`data/config.json`).
+rebalance; `bot/constants.py` is the versioned setup registry (`STRATEGY_SETUPS`).
+Named setups (`dsp-v2.x`, `hydrogen-v1.x`, `hydrogen-v2.0`) are experimental iteration
+presets defining specific parameter variations (ladder levels, clip schedules, dip
+curves, pair-cost caps) to test and A/B benchmark the core sub-$1.00 straddle.
 
 Risk rails: `maxFillsPerWindow` (500), `dailyLossCapUsd` ($500),
 `maxConcurrentPositions`, and the kill switch — the presence of `data/kill` pauses
@@ -129,13 +130,15 @@ Other operator tools: `python bot/redeem.py --dry-run` (paper redeem batch),
 
 | Path | Contents |
 |---|---|
-| `docs/runbook.md` | Operating the loop: config, tape verification, kill-switch drill, redeem, live-gate checklist |
-| `docs/architecture.md` | Engine/UI architecture and data flow |
-| `docs/usage-guide.md` | Step-by-step desk guide (API, UI, loop, A/B, config) |
-| `docs/explanations/` | Strategy and mechanic write-ups (sizing, rebates, verified-only, DSP v2.3/v2.4) |
+| [`docs/README.md`](./docs/README.md) | Central documentation directory and cross-link navigation hub |
+| [`docs/runbook.md`](./docs/runbook.md) | Operating the loop: config, tape verification, kill-switch drill, redeem, live-gate checklist |
+| [`docs/architecture.md`](./docs/architecture.md) | Engine/UI architecture, shell/pure packages, and data flow |
+| [`docs/usage-guide.md`](./docs/usage-guide.md) | Step-by-step desk guide (API, UI, loop, A/B Lab, config, strategy) |
+| [`docs/avellaneda-stoikov/`](./docs/avellaneda-stoikov/01-pipeline-overview.md) | Quantitative 8-station pipeline, microstructure math, CTF settlement, and runbook |
+| [`docs/leaderboard-traders/`](./docs/leaderboard-traders/README.md) | Target wallet reverse-engineering: pull/analysis scripts, tests, and ledgers |
+| `docs/explanations/` | Interactive strategy and mechanic write-ups (sizing, rebates, verified-only) |
 | `docs/pr-presentations/` | Visual showcases shipped with PRs |
-| `docs/polymarket-sdks-and-api/` | Polymarket repositories, API and resource reference |
-| `docs/leaderboard-traders/` | Wallet reverse-engineering: pull/analysis scripts, tests and per-account ledgers |
+| `Library/` ([`../Library`](../Library/00-graph/README.md)) | Centralized quantitative knowledge graph (foundations, protocol specs, contracts, fee curves) |
 
 ## Hosted desk (optional)
 

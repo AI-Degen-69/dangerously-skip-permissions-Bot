@@ -36,11 +36,13 @@ the output lands in the same place whatever directory you run it from.
 
 ## Scripts
 
-| Script | Purpose | Input |
-|---|---|---|
-| `python -m scripts.leaderboard_traders.puller` | Pull Polymarket activity into the 11-column ledger CSV (`Timestamp_UTC, Type, Market, Outcome, Side, Price, Shares, USD_Amount, Condition_ID, Token_ID, Market_Slug`). `-u` username/@handle/profile URL/address, `-d` window end or `max` to crawl back until the account runs dry (also offered in the interactive date prompt, where `cancel` or Ctrl+C quits), `--days 1\|7`, `-o` override. Without `-o` the file lands in `data/leaderboard/<account>/raw/`; `max` names it after the pull itself (`<tag>_<windows>-windows_<days>-days.csv`, counting distinct market slugs and UTC days) and blocks at a checkpoint until you answer (Enter saves, `c` keeps pulling); during the crawl it autosaves `data/leaderboard/<account>/raw/<tag>_<date>_partial.csv` every 5 windows and prints an ETA once it knows the account's first fill (`--no-autosave` disables) | Polymarket data-api + gamma API |
-| `python -m scripts.leaderboard_traders.strategy` | Strategy reconstruction over any span, one week to a quarter: pair cost, rebates, timing fingerprint, per-day regime table, phase thirds. Prints the markdown and saves it to `ledgers/<account>/analysis/<csv-stem>_strategy.md` (next to the CSV when it sits outside `data/leaderboard/<account>/raw/`) | CSV argument, `TRADES_CSV`, or the default ledger |
-| `python -m scripts.leaderboard_traders.mechanics` | Wallet mechanics in one pass: first-leg price/time vs outcome (cash P&L from buys, sells, redeems and merges), first-leg decay, second-leg pricing, ticket sizing, clip size per price level, ladder order. Rates carry their sample size and a Wilson 95% CI; unresolved markets are a reported P&L range and each table names what it excluded. Prints the markdown and saves it to `ledgers/<account>/analysis/<csv-stem>_mechanics.md` (same fallback next to the CSV) | CSV argument or `TRADES_CSV` (any account, any window) |
+You can execute the suite through the unified module CLI (`python -m scripts.leaderboard_traders <cmd>`) or the standalone runner scripts:
+
+| Command | Direct Script | Purpose | Input / Target |
+|---|---|---|---|
+| `python -m scripts.leaderboard_traders fetch` | `python scripts/fetch_trader_activity.py` | Fetch Polymarket account activity into the 11-column ledger CSV (`Timestamp_UTC, Type, Market, Outcome, Side, Price, Shares, USD_Amount, Condition_ID, Token_ID, Market_Slug`). Options: `-u <wallet>`, `-d <date\|max>`, `--days <1\|7>`, `-o <path>`. Lands in `data/leaderboard/<account>/raw/`. | Polymarket Data API v2 + Gamma API |
+| `python -m scripts.leaderboard_traders strategy` | `python scripts/analyze_trader_activity.py strategy` | Strategy reconstruction: pair cost, maker/taker volume, fee rebates, timing fingerprints, phase thirds. Saves report to `ledgers/<account>/analysis/<csv-stem>_strategy.md`. | Ledger CSV path |
+| `python -m scripts.leaderboard_traders mechanics` | `python scripts/analyze_trader_activity.py mechanics` | Wallet mechanics: first-leg price/time vs outcome, first-leg decay, second-leg pricing, ticket sizing, ladder order. Saves report to `ledgers/<account>/analysis/<csv-stem>_mechanics.md`. | Ledger CSV path |
 
 Both analysers name their output after the CSV, so several spans for one account
 accumulate side by side instead of overwriting each other.
@@ -58,18 +60,19 @@ crawl. Older exports that predate the column trim still carry `Proxy_Wallet`,
 
 ```powershell
 # One week: lands in data/leaderboard/dangerously-skip-permissions/raw/dangerously_2026-11-01_to_2026-11-08.csv
-python -m scripts.leaderboard_traders.puller -u dangerously-skip-permissions -d "2026-11-08 21:35" --days 7
+python -m scripts.leaderboard_traders fetch -u dangerously-skip-permissions -d "2026-11-08 21:35" --days 7
+# (or: python scripts/fetch_trader_activity.py -u dangerously-skip-permissions -d "2026-11-08 21:35" --days 7)
 
 # Full history: crawl back until the account runs dry, then wait at the checkpoint
-python -m scripts.leaderboard_traders.puller -u dangerously-skip-permissions -d max
+python -m scripts.leaderboard_traders fetch -u dangerously-skip-permissions -d max
 
 # Rebuild every table in the strategy reports
 #   -> docs/leaderboard-traders/ledgers/dangerously-skip-permissions/analysis/dangerously_2026-11-01_to_2026-11-08_strategy.md
-python -m scripts.leaderboard_traders.strategy data/leaderboard/dangerously-skip-permissions/raw/dangerously_2026-11-01_to_2026-11-08.csv
+python -m scripts.leaderboard_traders strategy data/leaderboard/dangerously-skip-permissions/raw/dangerously_2026-11-01_to_2026-11-08.csv
 
 # Wallet mechanics for any account and window
 #   -> docs/leaderboard-traders/ledgers/dangerously-skip-permissions/analysis/dangerously_2026-07-17_to_2026-11-08_mechanics.md
-python -m scripts.leaderboard_traders.mechanics data/leaderboard/dangerously-skip-permissions/raw/dangerously_2026-07-17_to_2026-11-08.csv
+python -m scripts.leaderboard_traders mechanics data/leaderboard/dangerously-skip-permissions/raw/dangerously_2026-07-17_to_2026-11-08.csv
 
 # Tests
 python -m pytest scripts/leaderboard_traders/tests -q

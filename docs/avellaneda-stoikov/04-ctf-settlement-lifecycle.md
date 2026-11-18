@@ -7,9 +7,10 @@ Polymarket's prediction market infrastructure is anchored on the Gnosis Conditio
 ### 1.1 Verified Smart Contract Specifications
 
 * **Polygon Network ID:** `137`
-* **CTF Exchange Contract:** `0x4D97DCdE725A8964c18F938002996A407217E759`
-* **Collateral Asset:** Bridged USDC / Native USDC collateral token on Polygon.
-* **Core Contract Reference:** `ctf-exchange-v2` and `polymarket-v2-external`.
+* **Conditional Tokens Core Contract (CTF):** `0x4D97DCd97eC945f40cF65F87097ACe5EA0476045` *(owns `mergePositions` / `splitPosition`)*
+* **CTF Exchange Proxy Contract:** `0xE111180000d2663C0091e4f400237545B87B996B` *(CLOB on-chain settlement exchange)*
+* **Collateral Asset:** Native USDC (`0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359`) / Bridged USDC.e (`0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174`) / CTF pUSD Proxy (`0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB`).
+* **Canonical Protocol Reference:** [Polymarket On-Chain CTF Contracts](../../../Library/03-exchanges-and-protocols/polymarket/onchain-ctf-contracts.md) details full ABI interfaces, bytecode gas costs, and factory mechanics.
 
 ---
 
