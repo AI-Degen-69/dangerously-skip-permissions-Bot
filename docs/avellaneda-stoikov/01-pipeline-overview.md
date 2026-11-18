@@ -144,3 +144,5 @@ flowchart TD
   *Covers the complete standalone technical specification, equations, and Rust actor state model.*
 * 🇮🇱 **Hebrew Architecture Overview:** [ארכיטקטורה.md](./ארכיטקטורה.md)  
   *Covers the full Hebrew specification aligned with the 8-station pipeline and execution lifecycle.*
+* 🎨 **Color-Coded Math Reference:** [The-Math-for-Microstructure-Calibrated-Inventory-Risk-Engine.md](./The-Math-for-Microstructure-Calibrated-Inventory-Risk-Engine.md)  
+  *Covers the annotated 8-station equations with input/output breakdowns and semantic color coding.*
